@@ -1,0 +1,7 @@
+[
+  {
+    "filename": "context_01.webm",
+    "reference_transcript": "the blue jacket was a gift from my grandmother so I want to keep it",
+    "notes": "TEMPLATE ROW — copy this file to audio_labels.json, record real short context clips into data/audio_clips/ (gitignored), and manually transcribe them here as ground truth."
+  }
+]

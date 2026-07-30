@@ -1,0 +1,47 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- env / secrets ---
+.env
+*.env.local
+
+# --- model weights (vendored, large, not committed) ---
+backend/weights/*
+!backend/weights/.gitkeep
+
+# --- gitignored data (per §4: curated but not committed) ---
+backend/data/test_images/*
+!backend/data/test_images/.gitkeep
+backend/data/audio_clips/*
+!backend/data/audio_clips/.gitkeep
+
+# --- evaluation results (timestamped per run, not committed) ---
+backend/evaluation/results/*
+!backend/evaluation/results/.gitkeep
+
+# --- logs ---
+*.log
+backend/logs/
+
+# --- Node / frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Colab / ngrok local state (never commit tunnel URLs with live tokens) ---
+*.ngrok

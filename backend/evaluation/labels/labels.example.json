@@ -1,0 +1,24 @@
+[
+  {
+    "filename": "desk_01.jpg",
+    "room_type": "home office desk",
+    "cir_score": 6,
+    "self_rated": true,
+    "ground_truth_items": [
+      { "label": "keyboard", "expected_decision": "keep" },
+      { "label": "printer", "expected_decision": "sell" },
+      { "label": "cable", "expected_decision": "keep" }
+    ],
+    "notes": "TEMPLATE ROW — copy this file to labels.json and replace with real curated entries (§3 step 2)."
+  },
+  {
+    "filename": "bedroom_01.jpg",
+    "room_type": "bedroom",
+    "cir_score": 4,
+    "self_rated": false,
+    "ground_truth_items": [
+      { "label": "clothes", "expected_decision": "donate" }
+    ],
+    "notes": "Bedroom has an official CIR anchor set — self_rated: false here, unlike the desk example above."
+  }
+]

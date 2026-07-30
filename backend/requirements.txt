@@ -1,0 +1,37 @@
+# ClearSpace backend — runtime dependencies
+# Pinned deliberately: a stale transformers pin caused a silent has_file()
+# offline-mode crash in the v1 build. Re-verify these are current as of
+# project start, don't carry v1's pins forward blindly.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# --- vision / detection ---
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.47.1
+groundingdino-py==0.4.0
+Pillow==11.1.0
+opencv-python-headless==4.10.0.84
+
+# --- scene classification ---
+ftfy==6.3.1
+regex==2024.11.6
+# CLIP itself installed via git dependency — see README for exact command
+# (openai/CLIP has no PyPI release)
+
+# --- speech-to-text ---
+openai-whisper==20240930
+
+# --- LLM reasoning (local via Ollama) ---
+ollama==0.4.5
+
+# --- image generation client (calls out to Colab/ngrok, no local weights) ---
+requests==2.32.3
+
+# --- logging / util ---
+python-json-logger==3.2.1
+python-dotenv==1.0.1

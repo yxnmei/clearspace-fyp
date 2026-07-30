@@ -1,0 +1,17 @@
+# ClearSpace backend — evaluation-only dependencies
+# Kept separate from requirements.txt: these exist purely to produce the
+# §2 model comparisons (faster-whisper vs Whisper, Places365 vs CLIP) and
+# should never be a runtime dependency of the shipped app.
+#
+# Install with: pip install -r requirements.txt -r requirements-eval.txt
+
+faster-whisper==1.1.1
+
+# Places365 comparison: no maintained PyPI package — this pulls the
+# reference ResNet18-Places365 checkpoint + category file at eval time.
+# See evaluation/scripts/compare_scene_classifiers.py for the download
+# step and source URL (recorded there, not hardcoded here).
+
+scikit-learn==1.6.0   # for confusion matrices / agreement metrics
+matplotlib==3.10.0    # eval report plots only, never imported by app/
+pandas==2.2.3
