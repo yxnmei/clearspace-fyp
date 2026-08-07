@@ -31,6 +31,7 @@ from pathlib import Path
 
 from app.logging_utils import new_run_id
 from app.services.declutter_service import run_declutter
+from evaluation.scripts.run_dirs import new_run_dir
 
 
 def load_labels(labels_path: Path) -> list[dict]:
@@ -77,14 +78,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--labels", type=Path, default=Path("evaluation/labels/labels.json"))
     parser.add_argument("--images-dir", type=Path, default=Path("data/test_images"))
-    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--label", type=str, default=None,
+        help="Short description appended to the run folder name, e.g. --label baseline",
+    )
+    parser.add_argument("--out-dir", type=Path, default=None, help="Override the run output directory")
     args = parser.parse_args()
 
     labels = load_labels(args.labels)
     report = run_batch(labels, args.images_dir)
 
-    out_path = args.out or Path("evaluation/results") / f"batch_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    run_dir = args.out_dir or new_run_dir(label=args.label)
+    out_path = run_dir / "batch_eval.json"
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Wrote report to {out_path}")
 

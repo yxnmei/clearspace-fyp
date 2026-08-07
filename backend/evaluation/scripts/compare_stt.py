@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.models.whisper_stt import transcribe
+from evaluation.scripts.run_dirs import new_run_dir
 
 
 def normalized_word_error_rate(reference: str, hypothesis: str) -> float:
@@ -81,6 +82,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audio-labels", type=Path, default=Path("evaluation/labels/audio_labels.json"))
     parser.add_argument("--audio-dir", type=Path, default=Path("data/audio_clips"))
+    parser.add_argument(
+        "--label", type=str, default=None,
+        help="Short description appended to the run folder name, e.g. --label whisper-vs-faster",
+    )
     args = parser.parse_args()
 
     with args.audio_labels.open(encoding="utf-8") as f:
@@ -88,8 +93,8 @@ def main() -> None:
 
     report = run_comparison(audio_labels, args.audio_dir)
 
-    out_path = Path("evaluation/results") / f"compare_stt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    run_dir = new_run_dir(label=args.label)
+    out_path = run_dir / "compare_stt.json"
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Wrote report to {out_path}")
 
