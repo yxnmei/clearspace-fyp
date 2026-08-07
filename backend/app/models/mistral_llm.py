@@ -13,9 +13,14 @@ eval-only copies.
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
+import ollama
+
 from app.config import get_settings
+from app.core.json_repair import extract_json
+from app.logging_utils import stage_timer
 
 # §2 comparison set — kept here as the single source of truth for which
 # model names the eval harness iterates over, so evaluation/scripts/
@@ -40,21 +45,153 @@ class LLMResult:
 
 
 def build_classification_prompt(
-    detected_items: list[dict],  # [{"label": str, "confidence": float}, ...]
+    detected_items: list[dict],  # [{"label": str, "confidence": float, "position_hint": str}, ...]
     scene_label: str,
     user_context: str | None,
+    start_number: int = 1,
 ) -> str:
     """
     Confidence-gated: passes each item's detection confidence into the
     prompt rather than discarding it after detection (§3 step 5) — a
     low-confidence "cable" detection should be able to influence the
     LLM's willingness to assert e.g. "visibly broken" the way v1's
-    confidence-blind prompt couldn't.
+    confidence-blind prompt couldn't. `confidence` is optional per item
+    (ground-truth eval items don't carry one); only items with a real,
+    low confidence score get the caveat line.
 
-    Not implemented yet — depends on the §2 LLM comparison to know which
-    model's prompt-following quirks need designing around.
+    `position_hint` (optional, from core/box_descriptors.describe_box) is
+    a coarse "large, upper-left" style string. Without it, several
+    same-labelled detections (e.g. six "picture frame" boxes) are
+    indistinguishable text to the model — it has no basis to judge them
+    differently, and some models responded by inventing a non-schema
+    collective decision like "keep one, donate others" instead (real-
+    detection run, DEVLOG.md 2026-08-01). Each item also gets an explicit
+    number, echoed back in the response, so duplicates can be told apart
+    even though their label text is identical.
+
+    Items whose label AND position_hint are both identical (e.g. four
+    "picture frame"s all landing in the same coarse position bucket) still
+    render as 100%-identical text even with numbering — found in practice
+    to make weaker models silently drop one instead of treating it as
+    separate (DEVLOG.md 2026-08-07). Those get an explicit "instance X of Y"
+    tag so every line is textually unique, not just numerically distinct.
+
+    `start_number` offsets the numbering — used when classify_items() splits
+    a large detected_items list into smaller chunks (see llm_max_items_per_call),
+    so item numbers stay unique across the whole image rather than each
+    chunk restarting at 1.
     """
-    raise NotImplementedError
+    settings = get_settings()
+    lines = [
+        "You are a decluttering assistant. For each detected item below, decide "
+        'exactly one action — "keep", "sell", "donate", or "discard" — and give a '
+        "short one-sentence reason. Judge each numbered item independently, even "
+        "if another item shares the same label — use its size/position to tell "
+        "them apart, and never merge multiple items into one collective decision.",
+        "",
+        f"Room type: {scene_label}",
+    ]
+    if user_context:
+        lines.append(f"User's stated goal/context: {user_context}")
+    lines.append("")
+    lines.append("Detected items:")
+    # The label is kept alone on its own line, deliberately — an earlier
+    # version appended a low-confidence caveat directly after the quoted
+    # label (e.g. '"pillow" (low-confidence...)'); several models (mistral,
+    # phi4-mini) copied that parenthetical straight into the label field of
+    # their JSON output, breaking it. Anything descriptive now goes on its
+    # own following line instead, so there's no "text glued onto a quoted
+    # string" pattern for a model to imitate.
+    collision_keys = [(item["label"].strip().lower(), item.get("position_hint")) for item in detected_items]
+    collision_counts = Counter(collision_keys)
+    collision_seen: dict[tuple, int] = defaultdict(int)
+
+    for i, item in enumerate(detected_items, start=start_number):
+        lines.append(f'{i}. "{item["label"]}"')
+        key = (item["label"].strip().lower(), item.get("position_hint"))
+        is_colliding = collision_counts[key] > 1
+        if is_colliding:
+            collision_seen[key] += 1
+        if item.get("position_hint"):
+            hint_line = f"   (size/position: {item['position_hint']}"
+            if is_colliding:
+                hint_line += f" — instance {collision_seen[key]} of {collision_counts[key]}, a SEPARATE item"
+            lines.append(hint_line + ")")
+        elif is_colliding:
+            lines.append(f"   (instance {collision_seen[key]} of {collision_counts[key]}, a SEPARATE item)")
+
+    # Referenced by item number, not label text — with duplicate labels
+    # (several "picture frame" entries), naming just the label string can't
+    # say *which* instance is uncertain.
+    low_confidence_numbers = [
+        i
+        for i, item in enumerate(detected_items, start=start_number)
+        if item.get("confidence") is not None and item["confidence"] < settings.detection_low_confidence_cutoff
+    ]
+    if low_confidence_numbers:
+        lines.append("")
+        lines.append(
+            "Note: these numbered detections had low confidence and may be "
+            "mislabeled: " + ", ".join(f"#{n}" for n in low_confidence_numbers)
+            + ". Still make a real decision for each of them — do not use "
+            '"low-confidence" or anything other than keep/sell/donate/discard as '
+            "the decision, and do not alter any item's label text in your response."
+        )
+
+    lines.append("")
+    lines.append(
+        f"Respond with a JSON array containing exactly {len(detected_items)} elements — "
+        "one per item listed above, in the same order, no prose, no markdown fences. "
+        'Each element: {"item_number": <int, matching the number above>, '
+        '"label": <string, must match the item label above exactly>, '
+        '"decision": "keep" | "sell" | "donate" | "discard", "reason": <short string>}.'
+    )
+    lines.append("")
+    lines.append('Example, for two input items: 1. "lamp"  2. "old newspaper" (size/position: small, lower-left)')
+    lines.append(
+        '[{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "still functional and in use"}, '
+        '{"item_number": 2, "label": "old newspaper", "decision": "discard", "reason": "no longer needed"}]'
+    )
+    return "\n".join(lines)
+
+
+def _classify_one_call(
+    client: ollama.Client,
+    resolved_model: str,
+    settings,
+    detected_items: list[dict],
+    scene_label: str,
+    user_context: str | None,
+    start_number: int,
+) -> tuple[str, dict | list | None, bool, int]:
+    """One LLM call for a single chunk (<= llm_max_items_per_call items), with
+    the existing retry-on-invalid-JSON loop. Returns (raw_text, parsed, is_valid, attempts)."""
+    prompt = build_classification_prompt(detected_items, scene_label, user_context, start_number=start_number)
+
+    attempts_allowed = 1 + settings.llm_max_retries
+    raw_text = ""
+    parsed: dict | list | None = None
+    is_valid = False
+
+    for attempt in range(attempts_allowed):
+        # Deliberately NOT passing format="json": Ollama's JSON-mode grammar
+        # constrains output to a single top-level object, which made every
+        # tested model (except deepseek-r1) collapse a requested N-item array
+        # into one object regardless of prompt wording — confirmed by testing
+        # the same prompt with and without format="json" during §3 step 4.
+        # extract_json()'s existing repair fallback handles any stray prose.
+        response = client.chat(
+            model=resolved_model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": settings.llm_temperature},
+        )
+        raw_text = response["message"]["content"]
+        parsed, is_valid = extract_json(raw_text)
+        if is_valid and isinstance(parsed, list) and all(isinstance(x, dict) for x in parsed):
+            break
+        is_valid = False  # syntactically valid JSON but wrong shape still counts as a failed attempt here
+
+    return raw_text, parsed, is_valid, attempt + 1
 
 
 def classify_items(
@@ -68,7 +205,89 @@ def classify_items(
     model_name defaults to config.llm_model_name (mistral) but accepts an
     override — this is the hook evaluation/scripts/compare_llm_reasoning.py
     uses to run the same call across COMPARISON_MODELS.
+
+    Splits detected_items into chunks of at most llm_max_items_per_call —
+    a single N-item JSON array gets more fragile as N grows (one dropped
+    key breaks the whole response; found via a real 28-item detection set
+    failing even after retries). Each chunk is its own LLM call with its
+    own retry loop; results are merged back into one LLMResult so callers
+    don't need to know chunking happened at all.
+
+    Also verifies completeness per chunk: a response can be syntactically
+    valid JSON, correctly shaped, and still silently missing an item — found
+    in practice on real detections, where two same-label items sharing a
+    coarse position bucket sometimes causes one to just vanish with no
+    error (DEVLOG.md 2026-08-07). Any missing item_number — whether because
+    it was dropped from an otherwise-valid chunk response, or because the
+    whole chunk call failed validity outright (every item in it treated as
+    "missing") — gets one targeted single-item recovery call (its own retry
+    budget) rather than being silently dropped or forcing the whole chunk
+    to be redone. A whole-chunk failure still marks the overall result
+    is_valid_json=False even if every one of its items is later recovered
+    individually — the original call needed rescuing, which is worth
+    surfacing honestly rather than papering over (DEVLOG.md 2026-08-07).
     """
     settings = get_settings()
     resolved_model = model_name or settings.llm_model_name
-    raise NotImplementedError(f"Call Ollama ({resolved_model}) via app.config.ollama_host")
+    client = ollama.Client(host=settings.ollama_host)
+    chunk_size = settings.llm_max_items_per_call
+
+    chunks = [detected_items[i : i + chunk_size] for i in range(0, len(detected_items), chunk_size)] or [[]]
+
+    raw_texts: list[str] = []
+    merged_items: list = []
+    all_chunks_valid = True
+    total_attempts = 0
+    recovered_item_count = 0
+    still_missing_count = 0
+
+    with stage_timer(run_id, f"llm_classify::{resolved_model}") as t:
+        start_number = 1
+        for chunk in chunks:
+            raw_text, parsed, is_valid, attempts = _classify_one_call(
+                client, resolved_model, settings, chunk, scene_label, user_context, start_number
+            )
+            raw_texts.append(raw_text)
+            total_attempts += attempts
+
+            expected_numbers = set(range(start_number, start_number + len(chunk)))
+            if is_valid:
+                merged_items.extend(parsed)
+                returned_numbers = {item.get("item_number") for item in parsed if isinstance(item, dict)}
+            else:
+                # The whole chunk call failed validity — every item in it is
+                # "missing" and gets its own recovery attempt below, same as
+                # an item silently dropped from an otherwise-valid response.
+                # Previously this branch gave up on the chunk entirely with
+                # no recovery attempt at all (DEVLOG.md 2026-08-07).
+                returned_numbers = set()
+                all_chunks_valid = False
+
+            for missing_n in sorted(expected_numbers - returned_numbers):
+                missing_item = detected_items[missing_n - 1]
+                r_raw, r_parsed, r_valid, r_attempts = _classify_one_call(
+                    client, resolved_model, settings, [missing_item], scene_label, user_context, missing_n
+                )
+                raw_texts.append(r_raw)
+                total_attempts += r_attempts
+                if r_valid and r_parsed:
+                    merged_items.extend(r_parsed)
+                    recovered_item_count += 1
+                else:
+                    still_missing_count += 1
+                    all_chunks_valid = False  # a targeted retry still failing is worth surfacing, not hiding
+            start_number += len(chunk)
+
+        t.meta["n_chunks"] = len(chunks)
+        t.meta["total_attempts"] = total_attempts
+        t.meta["recovered_item_count"] = recovered_item_count
+        t.meta["still_missing_count"] = still_missing_count
+        t.meta["is_valid_json"] = all_chunks_valid
+
+    return LLMResult(
+        raw_text="\n---chunk---\n".join(raw_texts),
+        parsed_json=merged_items if all_chunks_valid else (merged_items or None),
+        is_valid_json=all_chunks_valid,
+        model_name=resolved_model,
+        prompt_version=CLASSIFICATION_PROMPT_VERSION,
+    )
