@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     llm_model_name: str = "mistral"  # overridden per-run by eval scripts when comparing §2 candidates
     llm_temperature: float = 0.2
     llm_max_retries: int = 2  # for JSON-validity failures, see core/json_repair.py
+    # A single N-item JSON array gets more fragile as N grows — one dropped
+    # key breaks the whole response. Chunk requests larger than this into
+    # multiple calls instead (see mistral_llm.classify_items). Found via a
+    # real 28-item detection set breaking mid-response even after retries.
+    llm_max_items_per_call: int = 10
 
     # --- speech-to-text ---
     whisper_model_size: str = "base"
