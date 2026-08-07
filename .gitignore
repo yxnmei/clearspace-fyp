@@ -45,3 +45,10 @@ Thumbs.db
 
 # --- Colab / ngrok local state (never commit tunnel URLs with live tokens) ---
 *.ngrok
+
+# --- internal dev notes: local-only, not part of the public-facing repo ---
+# (decided when doing a documentation pass for external/examiner sharing —
+# these track internal rebuild rationale and day-to-day debugging, kept
+# for personal continuity across sessions but not meant to be public)
+/DEVLOG.md
+/PROJECT_SPEC.md
