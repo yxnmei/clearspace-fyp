@@ -36,6 +36,21 @@ from evaluation.scripts.run_dirs import new_run_dir
 # Edit here to add/change what's being tested. `None` reproduces the
 # existing 2026-08-05 zero-context baseline exactly, so it's always
 # included first as the point of comparison — don't remove it.
+#
+# 2026-08-08 follow-up (see DEVLOG.md same date): the first pass showed
+# aggressive context helped (sell 0.125->0.625, discard 0.375->0.417) but
+# conservative didn't (sell fell to 0.0). Two confounds were never
+# isolated: (1) direction — sell/discard-leaning vs keep-leaning intent,
+# and (2) phrasing structure — aggressive was a direct "lean toward X"
+# instruction, conservative was an "only flag as X if Y" hedge/gate. The
+# two new variants below hold phrasing structure constant across
+# direction, so a shift can be attributed to one confound and not both:
+# "conservative-decisive" keeps conservative's keep-leaning intent but
+# rephrased as a direct instruction (no "only if" gating), matching
+# aggressive's structure; "moderate" is a direction-neutral decisive
+# baseline (asks for a confident per-item call, no lean either way) to
+# see where a no-direction-but-still-decisive framing lands relative to
+# the directional variants and the zero-context baseline.
 CONTEXT_VARIANTS: dict[str, str | None] = {
     "none (2026-08-05 baseline)": None,
     "aggressive": (
@@ -49,14 +64,27 @@ CONTEXT_VARIANTS: dict[str, str | None] = {
         "only suggest selling or donating items I've genuinely not used "
         "in a long time."
     ),
+    "conservative-decisive": (
+        "I'm quite sentimental about my belongings and want to hold onto "
+        "most of them. Please lean toward keeping items rather than "
+        "selling or discarding them — but still make a clear, confident "
+        "individual call for each one rather than defaulting to keep out "
+        "of caution."
+    ),
+    "moderate": (
+        "I'd like a general decluttering pass on this room. Please make a "
+        "clear, confident keep/sell/donate/discard call for each item "
+        "based on its own merits, without leaning toward any particular "
+        "outcome."
+    ),
 }
 
 
-def run_comparison(labels: list[dict], model_name: str) -> dict:
+def run_comparison(labels: list[dict], model_name: str, variants: dict[str, str | None]) -> dict:
     results: dict[str, dict] = {}
     majority_class_baseline = compute_majority_class_baseline(labels)
 
-    for variant_name, context_string in CONTEXT_VARIANTS.items():
+    for variant_name, context_string in variants.items():
         decision_counts: Counter[str] = Counter()
         valid_json_count = 0
         total_calls = 0
@@ -138,13 +166,29 @@ def main() -> None:
         "--label", type=str, default=None,
         help="Short description appended to the run folder name, e.g. --label context-test",
     )
+    parser.add_argument(
+        "--variants", type=str, default=None,
+        help="Comma-separated subset of CONTEXT_VARIANTS keys to run (e.g. "
+             "--variants \"conservative-decisive,moderate\"), so a follow-up "
+             "run doesn't have to re-run already-known variants. Default: all.",
+    )
     args = parser.parse_args()
     model_name = args.model
 
     with args.labels.open(encoding="utf-8") as f:
         labels = json.load(f)
 
-    report = run_comparison(labels, model_name)
+    if args.variants:
+        requested = [name.strip() for name in args.variants.split(",")]
+        unknown = [name for name in requested if name not in CONTEXT_VARIANTS]
+        if unknown:
+            known = ", ".join(repr(k) for k in CONTEXT_VARIANTS)
+            raise SystemExit(f"Unknown --variants entries {unknown}. Known: {known}")
+        variants = {name: CONTEXT_VARIANTS[name] for name in requested}
+    else:
+        variants = CONTEXT_VARIANTS
+
+    report = run_comparison(labels, model_name, variants)
 
     run_dir = new_run_dir(label=args.label)
     out_path = run_dir / "compare_user_context.json"

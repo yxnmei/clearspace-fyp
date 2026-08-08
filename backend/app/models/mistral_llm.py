@@ -32,7 +32,7 @@ COMPARISON_MODELS = ["mistral", "qwen3:8b", "gemma2:2b", "phi4-mini", "deepseek-
 # design. Not in COMPARISON_MODELS; don't add without revisiting that
 # constraint explicitly.
 
-CLASSIFICATION_PROMPT_VERSION = "v1"  # bump on any prompt-template change — versioned per §3 step 5
+CLASSIFICATION_PROMPT_VERSION = "v2"  # bump on any prompt-template change — versioned per §3 step 5
 
 
 @dataclass
@@ -80,14 +80,32 @@ def build_classification_prompt(
     a large detected_items list into smaller chunks (see llm_max_items_per_call),
     so item numbers stay unique across the whole image rather than each
     chunk restarting at 1.
+
+    Prompt v2 (2026-08-08): added a standing decisiveness instruction,
+    independent of `user_context`. `evaluation/scripts/compare_user_context.py`
+    found that a "moderate" user_context string with no directional lean at
+    all — just an explicit instruction to commit to a confident per-item
+    call instead of defaulting to keep — beat both an "aggressive"
+    (sell/discard-leaning) and a "conservative" (keep-leaning) framing on
+    discard/donate agreement (DEVLOG.md 2026-08-08). That instruction is
+    baked in here as a base-prompt line so every request benefits from it,
+    including the common case where `user_context` is None, rather than
+    requiring a user to type an equivalent framing themselves. Not yet
+    re-verified against `compare_llm_reasoning.py`'s numbers — a
+    system-prompt version of this instruction isn't guaranteed to
+    reproduce the user_context-string version's effect exactly; treat as
+    unconfirmed until re-run (see DEVLOG.md).
     """
     settings = get_settings()
     lines = [
         "You are a decluttering assistant. For each detected item below, decide "
         'exactly one action — "keep", "sell", "donate", or "discard" — and give a '
-        "short one-sentence reason. Judge each numbered item independently, even "
-        "if another item shares the same label — use its size/position to tell "
-        "them apart, and never merge multiple items into one collective decision.",
+        "short one-sentence reason. Make a clear, confident decision for each item "
+        'on its own merits — do not default to "keep" out of caution or '
+        "uncertainty; only choose it when it's genuinely the best call for that "
+        "specific item. Judge each numbered item independently, even if another "
+        "item shares the same label — use its size/position to tell them apart, "
+        "and never merge multiple items into one collective decision.",
         "",
         f"Room type: {scene_label}",
     ]
