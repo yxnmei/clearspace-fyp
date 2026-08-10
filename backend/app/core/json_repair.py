@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}|\[.*\]", re.DOTALL)
 # A comma immediately before a closing ] or } (allowing intervening
@@ -32,15 +33,58 @@ def _strip_trailing_commas(text: str) -> str:
     return _TRAILING_COMMA_RE.sub(r"\1", text)
 
 
-def _try_parse(text: str) -> tuple[dict | list | None, bool]:
+@dataclass
+class JsonExtraction:
+    """Same verdict as the (parsed, is_valid) tuple extract_json() returns,
+    plus `was_repaired` — whether a clean parse actually needed help.
+    `was_repaired` is True for BOTH failure modes extract_json() silently
+    recovers from: a trailing-comma fix, and pulling the JSON out of
+    surrounding prose/markdown fences (extraction itself counts as a
+    repair, even if the extracted block then parses with no further
+    fixing needed — the model still didn't produce clean output). Exists
+    because item-level ItemValidity (raw_valid vs mechanically_repaired,
+    see app.models.mistral_llm) needs this distinction; extract_json()
+    itself never did and still doesn't."""
+
+    parsed: dict | list | None
+    is_valid: bool
+    was_repaired: bool
+
+
+def _try_parse_detailed(text: str) -> JsonExtraction:
     try:
-        return json.loads(text), True
+        return JsonExtraction(json.loads(text), True, False)
     except json.JSONDecodeError:
         pass
     try:
-        return json.loads(_strip_trailing_commas(text)), True
+        return JsonExtraction(json.loads(_strip_trailing_commas(text)), True, True)
     except json.JSONDecodeError:
-        return None, False
+        return JsonExtraction(None, False, False)
+
+
+def extract_json_detailed(raw_text: str) -> JsonExtraction:
+    """
+    Same extraction strategy as extract_json() (direct parse -> trailing-
+    comma repair -> extract first {...}/[...] block -> trailing-comma
+    repair on the block), but reports whether any repair step was needed
+    to get there. extract_json() is now a thin wrapper over this — see
+    its own docstring; this function is the one place the strategy is
+    implemented.
+    """
+    result = _try_parse_detailed(raw_text)
+    if result.is_valid:
+        return result
+
+    match = _JSON_BLOCK_RE.search(raw_text)
+    if not match:
+        return JsonExtraction(None, False, False)
+
+    block_result = _try_parse_detailed(match.group(0))
+    if not block_result.is_valid:
+        return block_result
+    # Extracting from surrounding prose is itself a repair, even when the
+    # extracted block then parsed cleanly with no trailing-comma fix.
+    return JsonExtraction(block_result.parsed, True, True)
 
 
 def extract_json(raw_text: str) -> tuple[dict | list | None, bool]:
@@ -49,13 +93,10 @@ def extract_json(raw_text: str) -> tuple[dict | list | None, bool]:
     trailing-comma repair fallback), then falls back to extracting the
     first {...} or [...] block (models often wrap JSON in prose or
     markdown fences despite instructions not to), repaired the same way.
+
+    Unchanged in signature and behaviour — a thin wrapper over
+    extract_json_detailed(), kept so every existing caller (both eval
+    scripts, this module's own original test suite) needs zero changes.
     """
-    parsed, ok = _try_parse(raw_text)
-    if ok:
-        return parsed, ok
-
-    match = _JSON_BLOCK_RE.search(raw_text)
-    if not match:
-        return None, False
-
-    return _try_parse(match.group(0))
+    result = extract_json_detailed(raw_text)
+    return result.parsed, result.is_valid

@@ -1,25 +1,33 @@
 """
-LLM reasoning: Mistral 7B via Ollama (chosen, §2 — local, privacy-preserving,
-structured JSON output; not yet compared against alternatives — marked
-"run early this time").
+LLM reasoning: local Ollama models, wired up under this mistral_llm.py
+filename from the first candidate tried (§2) — retained as-is, not
+renamed, per this task's explicit scope boundary.
+
+phi4-mini is the evidence-backed production default (app.config.Settings
+.llm_model_name; PROJECT_SPEC.md §2, 2026-08-05 comparison) — chosen as
+the least-bad of five candidates, not as conclusively superior. The other
+four candidates from that comparison remain preserved below in
+COMPARISON_MODELS, including mistral itself, so
+evaluation/scripts/compare_llm_reasoning.py can keep re-running against
+all five.
 
 `model_name` is a parameter, not a hardcoded constant, specifically so
-evaluation/scripts/compare_llm_reasoning.py can call this same function
-once per candidate in §2's comparison set (qwen3:8b, gemma2:2b, phi4-mini,
-deepseek-r1:7b) without duplicating the prompt-building or JSON-parsing
-logic. One implementation, swappable model — not four near-identical
+evaluation scripts can call this same function once per candidate in
+COMPARISON_MODELS without duplicating the prompt-building or JSON-parsing
+logic. One implementation, swappable model — not five near-identical
 eval-only copies.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import ollama
 
 from app.config import get_settings
-from app.core.json_repair import extract_json
+from app.core.json_repair import extract_json_detailed
+from app.core.schemas import ItemValidity
 from app.logging_utils import stage_timer
 
 # §2 comparison set — kept here as the single source of truth for which
@@ -42,6 +50,24 @@ class LLMResult:
     is_valid_json: bool
     model_name: str
     prompt_version: str
+    # item_number -> low-level parse/recovery provenance for that number,
+    # as classify_items() itself observed it. Additive field (default
+    # empty dict) — every existing construction site is classify_items()
+    # itself, which now always populates one entry per expected item
+    # number in the call; any other caller (fakes, older code) omitting
+    # it gets a safe empty default, never a fabricated value.
+    #
+    # This is a HINT only, not authoritative: it reflects whether JSON
+    # parsed cleanly/needed repair/needed classify_items()'s own missing-
+    # item recovery — it says nothing about whether the item's *decision*
+    # is actually a legal enum value or its *reason* non-blank, and it
+    # says nothing about duplicate/unexpected item_numbers across the
+    # whole response (classify_items() only sees one chunk at a time).
+    # app.services.declutter_service.run_declutter() is what turns this
+    # hint plus real identity/content validation into the authoritative
+    # ItemValidity assigned to each item_id — it explicitly must NOT
+    # treat a missing/unknown hint here as ItemValidity.RAW_VALID.
+    item_provenance: dict[int, ItemValidity] = field(default_factory=dict)
 
 
 def build_classification_prompt(
@@ -181,15 +207,19 @@ def _classify_one_call(
     scene_label: str,
     user_context: str | None,
     start_number: int,
-) -> tuple[str, dict | list | None, bool, int]:
+) -> tuple[str, dict | list | None, bool, bool, int]:
     """One LLM call for a single chunk (<= llm_max_items_per_call items), with
-    the existing retry-on-invalid-JSON loop. Returns (raw_text, parsed, is_valid, attempts)."""
+    the existing retry-on-invalid-JSON loop. Returns
+    (raw_text, parsed, is_valid, was_repaired, attempts) — was_repaired is
+    extract_json_detailed()'s verdict for whichever attempt ultimately
+    succeeded (False if every attempt failed outright)."""
     prompt = build_classification_prompt(detected_items, scene_label, user_context, start_number=start_number)
 
     attempts_allowed = 1 + settings.llm_max_retries
     raw_text = ""
     parsed: dict | list | None = None
     is_valid = False
+    was_repaired = False
 
     for attempt in range(attempts_allowed):
         # Deliberately NOT passing format="json": Ollama's JSON-mode grammar
@@ -197,19 +227,22 @@ def _classify_one_call(
         # tested model (except deepseek-r1) collapse a requested N-item array
         # into one object regardless of prompt wording — confirmed by testing
         # the same prompt with and without format="json" during §3 step 4.
-        # extract_json()'s existing repair fallback handles any stray prose.
+        # extract_json_detailed()'s existing repair fallback handles any
+        # stray prose.
         response = client.chat(
             model=resolved_model,
             messages=[{"role": "user", "content": prompt}],
             options={"temperature": settings.llm_temperature},
         )
         raw_text = response["message"]["content"]
-        parsed, is_valid = extract_json(raw_text)
+        extraction = extract_json_detailed(raw_text)
+        parsed, is_valid, was_repaired = extraction.parsed, extraction.is_valid, extraction.was_repaired
         if is_valid and isinstance(parsed, list) and all(isinstance(x, dict) for x in parsed):
             break
         is_valid = False  # syntactically valid JSON but wrong shape still counts as a failed attempt here
+        was_repaired = False
 
-    return raw_text, parsed, is_valid, attempt + 1
+    return raw_text, parsed, is_valid, was_repaired, attempt + 1
 
 
 def classify_items(
@@ -220,9 +253,12 @@ def classify_items(
     model_name: str | None = None,
 ) -> LLMResult:
     """
-    model_name defaults to config.llm_model_name (mistral) but accepts an
-    override — this is the hook evaluation/scripts/compare_llm_reasoning.py
-    uses to run the same call across COMPARISON_MODELS.
+    model_name defaults to settings.llm_model_name (deliberately not
+    restated as a literal model name here — see this module's docstring;
+    that default is config.py's own single source of truth and would
+    otherwise drift again) but accepts an override — this is the hook
+    evaluation/scripts/compare_llm_reasoning.py uses to run the same call
+    across COMPARISON_MODELS.
 
     Splits detected_items into chunks of at most llm_max_items_per_call —
     a single N-item JSON array gets more fragile as N grows (one dropped
@@ -258,32 +294,47 @@ def classify_items(
     total_attempts = 0
     recovered_item_count = 0
     still_missing_count = 0
+    # item_number -> low-level provenance, populated for every expected
+    # item_number across the whole call (every chunk plus every missing-
+    # item recovery below) — see LLMResult.item_provenance's own
+    # docstring for why this is a hint, not the authoritative validity.
+    item_provenance: dict[int, ItemValidity] = {}
 
     with stage_timer(run_id, f"llm_classify::{resolved_model}") as t:
         start_number = 1
         for chunk in chunks:
-            raw_text, parsed, is_valid, attempts = _classify_one_call(
+            raw_text, parsed, is_valid, was_repaired, attempts = _classify_one_call(
                 client, resolved_model, settings, chunk, scene_label, user_context, start_number
             )
             raw_texts.append(raw_text)
             total_attempts += attempts
 
             expected_numbers = set(range(start_number, start_number + len(chunk)))
+            returned_numbers: set[int] = set()
             if is_valid:
                 merged_items.extend(parsed)
-                returned_numbers = {item.get("item_number") for item in parsed if isinstance(item, dict)}
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    n = item.get("item_number")
+                    # bool is an int subclass — excluded explicitly, same
+                    # convention as core/id_mapping.map_item_numbers.
+                    if isinstance(n, int) and not isinstance(n, bool) and n in expected_numbers:
+                        returned_numbers.add(n)
+                        item_provenance[n] = (
+                            ItemValidity.MECHANICALLY_REPAIRED if was_repaired else ItemValidity.RAW_VALID
+                        )
             else:
                 # The whole chunk call failed validity — every item in it is
                 # "missing" and gets its own recovery attempt below, same as
                 # an item silently dropped from an otherwise-valid response.
                 # Previously this branch gave up on the chunk entirely with
                 # no recovery attempt at all (DEVLOG.md 2026-08-07).
-                returned_numbers = set()
                 all_chunks_valid = False
 
             for missing_n in sorted(expected_numbers - returned_numbers):
                 missing_item = detected_items[missing_n - 1]
-                r_raw, r_parsed, r_valid, r_attempts = _classify_one_call(
+                r_raw, r_parsed, r_valid, _r_repaired, r_attempts = _classify_one_call(
                     client, resolved_model, settings, [missing_item], scene_label, user_context, missing_n
                 )
                 raw_texts.append(r_raw)
@@ -291,9 +342,11 @@ def classify_items(
                 if r_valid and r_parsed:
                     merged_items.extend(r_parsed)
                     recovered_item_count += 1
+                    item_provenance[missing_n] = ItemValidity.RECOVERY_USED
                 else:
                     still_missing_count += 1
                     all_chunks_valid = False  # a targeted retry still failing is worth surfacing, not hiding
+                    item_provenance[missing_n] = ItemValidity.STILL_INVALID
             start_number += len(chunk)
 
         t.meta["n_chunks"] = len(chunks)
@@ -308,4 +361,5 @@ def classify_items(
         is_valid_json=all_chunks_valid,
         model_name=resolved_model,
         prompt_version=CLASSIFICATION_PROMPT_VERSION,
+        item_provenance=item_provenance,
     )
