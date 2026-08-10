@@ -34,7 +34,14 @@ def _position_label(cx: float, cy: float) -> str:
     if row == "middle":
         return col
     if col == "center":
-        return row
+        # Bare "upper"/"lower" read as ambiguous — easy to mistake for "top
+        # third of the frame, any column" rather than "top third, center
+        # column specifically" (found during manual position_zone
+        # annotation of evaluation/labels/labels.json, DEVLOG.md 2026-08-09).
+        # "left"/"right" alone don't have the same problem — "the left
+        # side, vertically centered" is the natural reading — so only this
+        # branch needed the explicit "-center" suffix.
+        return f"{row}-center"
     return f"{row}-{col}"
 
 

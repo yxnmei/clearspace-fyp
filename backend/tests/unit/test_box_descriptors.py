@@ -31,6 +31,14 @@ def test_full_width_middle_band_reports_center():
     assert result == "large, center"
 
 
-def test_full_width_upper_band_reports_row_only():
+def test_full_width_upper_band_reports_upper_center():
+    # center column (spans full width) + upper row — "upper" alone would be
+    # ambiguous ("top third, any column" vs "top third, center column"), so
+    # this resolves to the explicit "upper-center" (see _position_label).
     result = describe_box((0.0, 0.0, 1.0, 0.3))
-    assert result == "large, upper"
+    assert result == "large, upper-center"
+
+
+def test_full_width_lower_band_reports_lower_center():
+    result = describe_box((0.0, 0.7, 1.0, 1.0))
+    assert result == "large, lower-center"
