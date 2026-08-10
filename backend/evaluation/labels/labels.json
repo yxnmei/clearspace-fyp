@@ -99,7 +99,7 @@
       { "label": "study desk", "expected_decision": "keep", "position_zone": "right" },
       { "label": "chair", "expected_decision": "keep", "position_zone": "lower-right" },
       { "label": "printer", "expected_decision": "keep", "position_zone": "right" },
-      { "label": "shoe rack", "expected_decision": "keep", "position_zone": "lower right" },
+      { "label": "shoe rack", "expected_decision": "keep", "position_zone": "lower-right" },
       { "label": "laptop", "expected_decision": "keep", "position_zone": "right" },
       { "label": "keyboard", "expected_decision": "keep", "position_zone": "right" },
       { "label": "books and textbooks", "expected_decision": "keep", "position_zone": "right" },
@@ -177,7 +177,6 @@
       { "label": "watch", "expected_decision": "keep", "position_zone": "left" },
       { "label": "earbuds case", "expected_decision": "keep", "position_zone": "lower-right" },
       { "label": "skincare box", "expected_decision": "keep", "position_zone": "left" }
-
     ],
     "notes": "Self-rated (no official CIR anchor set exists for desks; scored by eye against nearest anchor severity). Desk surface is fully occupied with multiple mugs, personal-care items, and loose cables, but nothing is piled or blocking use."
   },
@@ -218,7 +217,6 @@
       { "label": "small dish/tray", "expected_decision": "keep", "position_zone": "right" },
       { "label": "router", "expected_decision": "keep", "position_zone": "right"},
       { "label": "phone stand", "expected_decision": "sell", "position_zone": "lower-right"}
-
     ],
     "notes": "Self-rated (no official CIR anchor set exists for desks; scored by eye against nearest anchor severity). Dense mix of tech, personal, and decorative items covering nearly the entire surface with no clear workspace remaining."
   },
@@ -285,7 +283,6 @@
       { "label": "sponge/scrubber", "expected_decision": "keep", "position_zone": "lower-left" },
       { "label": "pink plastic basin", "expected_decision": "donate", "position_zone": "lower-center" },
       { "label": "mugs", "expected_decision": "donate", "position_zone": "lower-right" }
-      
     ],
     "notes": "Rated against official CIR Kitchen anchors. Countertop and overhead rack are fully loaded with cookware and dishware, but the sink and workspace remain functional and accessible."
   }
