@@ -14,6 +14,8 @@ presenting duplicates as interchangeable text.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 _SMALL_LARGE_THRESHOLDS = (0.05, 0.20)  # area fraction: < small, < large, >= large
 
 
@@ -45,14 +47,31 @@ def _position_label(cx: float, cy: float) -> str:
     return f"{row}-{col}"
 
 
-def describe_box(box_xyxy: tuple[float, float, float, float]) -> str:
+@dataclass
+class BoxDescriptor:
+    relative_size: str
+    position: str
+
+
+def describe_box_parts(box_xyxy: tuple[float, float, float, float]) -> BoxDescriptor:
     """
     box_xyxy must be normalized to [0, 1] (see grounding_dino.RawDetection).
-    Returns something like "large, upper-left" — coarse and cheap on
-    purpose; this exists to make same-labelled items distinguishable in an
-    LLM prompt, not to be a precise spatial description.
+    relative_size/position separately, not one combined string — added for
+    app.core.schemas.DetectedItem, which carries them as two distinct
+    fields (see app/services/analysis_service.py). describe_box() below is
+    now a thin wrapper over this; no behaviour change to its own output.
     """
     x1, y1, x2, y2 = box_xyxy
     area_fraction = max(0.0, x2 - x1) * max(0.0, y2 - y1)
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    return f"{_size_label(area_fraction)}, {_position_label(cx, cy)}"
+    return BoxDescriptor(relative_size=_size_label(area_fraction), position=_position_label(cx, cy))
+
+
+def describe_box(box_xyxy: tuple[float, float, float, float]) -> str:
+    """
+    Returns something like "large, upper-left" — coarse and cheap on
+    purpose; this exists to make same-labelled items distinguishable in an
+    LLM prompt, not to be a precise spatial description.
+    """
+    parts = describe_box_parts(box_xyxy)
+    return f"{parts.relative_size}, {parts.position}"

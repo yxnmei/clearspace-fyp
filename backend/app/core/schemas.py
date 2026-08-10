@@ -31,16 +31,18 @@ label correction ("this is a storage box, not a book") is a different
 user action, handled by the existing /override route, and may justify
 re-running the LLM — that route is out of scope for this module.
 
-Deliberately NOT included yet (this session's task boundary): StageTiming,
-Reorganise placement/zone schemas, and image-generation request/result
-schemas — their actual shape depends on service contracts (including the
-still-unconfirmed Colab depth-map question) that haven't been designed
-yet. Adding them now would be guessing ahead of that design, not a shared
-base anything here actually needs.
+Deliberately NOT included yet (this session's task boundary): Reorganise
+placement/zone schemas and image-generation request/result schemas —
+their actual shape depends on service contracts (including the still-
+unconfirmed Colab depth-map question) that haven't been designed yet.
+Adding them now would be guessing ahead of that design, not a shared base
+anything here actually needs. StageTiming *is* included, below — it's
+what AnalysisResult (app/services/analysis_service.py) actually needs now.
 """
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Annotated, Literal
 
@@ -356,3 +358,86 @@ class ItemNumberMappingResult(BaseModel):
         (is_strictly_valid) — a response can be usable without being
         clean."""
         return len(self.warnings) == 0
+
+
+class SceneClassification(BaseModel):
+    """CLIP's classify_scene() output, reshaped into a validated schema —
+    the field names/shape match its real return dict exactly
+    ({"label", "confidence", "all_scores"}), so no adapter is needed
+    between the real function and this model. all_scores keeps every
+    candidate's score, not just the top-1 — needed for the §8 per-stage
+    evaluation (confidence distribution, not just pass/fail)."""
+
+    label: NonEmptyStr
+    confidence: float = Field(ge=0.0, le=1.0)
+    all_scores: dict[str, float]
+
+    @model_validator(mode="after")
+    def _check_scores_consistent(self) -> "SceneClassification":
+        if not self.all_scores:
+            raise ValueError("all_scores must not be empty")
+        for name, score in self.all_scores.items():
+            if not name.strip():
+                raise ValueError(f"all_scores contains a blank candidate name: {name!r}")
+            if not math.isfinite(score):
+                raise ValueError(f"all_scores[{name!r}] is not finite: {score!r}")
+            if not (0.0 <= score <= 1.0):
+                raise ValueError(f"all_scores[{name!r}] out of [0, 1] range: {score!r}")
+        if self.label not in self.all_scores:
+            raise ValueError(f"label {self.label!r} is not a key in all_scores")
+        # Deliberately isclose, not ==: confidence and all_scores[label] may
+        # have travelled through independent rounding (e.g. serialization)
+        # even when they represent the same underlying score. Not requiring
+        # all_scores to sum to 1 — softmax already guarantees that upstream;
+        # re-checking it here would be redundant, not an added safeguard.
+        if not math.isclose(self.confidence, self.all_scores[self.label], rel_tol=1e-6, abs_tol=1e-9):
+            raise ValueError(
+                f"confidence {self.confidence!r} is inconsistent with "
+                f"all_scores[{self.label!r}]={self.all_scores[self.label]!r}"
+            )
+        return self
+
+
+class AnalysisWarning(BaseModel):
+    """One non-fatal problem found during analyse_image() — currently
+    only "malformed_detection" exists (a single detection's box/confidence
+    /label failed validation and was skipped; the rest of the analysis
+    still proceeds). A plain Literal, not a full Enum, since there's only
+    one kind so far — extend to an Enum if/when a second kind is needed."""
+
+    kind: Literal["malformed_detection"]
+    source_detection_index: int | None = None
+    detail: str
+
+
+class StageTiming(BaseModel):
+    stage: NonEmptyStr
+    duration_ms: float = Field(ge=0.0)
+
+
+class AnalysisResult(BaseModel):
+    """The shared output of analyse_image() (app/services/analysis_service.py)
+    — what Declutter, Reorganise, and Both all build on. Deliberately
+    excludes decisions, LLM output, and anything downstream of this: this
+    is the boundary object those stages consume, not what they produce.
+
+    items is ordered deterministically (see DetectedItem's own docstring
+    for the exact spatial-ordering rule) and every item_id is guaranteed
+    unique within this one result — enforced here, by this model itself,
+    not only by analyse_image() calling validate_unique_item_ids() before
+    construction. That matters because AnalysisResult will later be
+    reconstructed directly from frontend/API payloads (e.g. on a /confirm
+    or Both-continuation request), a path analyse_image() is never on —
+    without a model-level check, a payload with duplicate item_ids could
+    slip through unvalidated."""
+
+    run_id: NonEmptyStr
+    scene: SceneClassification
+    items: list[DetectedItem]
+    warnings: list[AnalysisWarning]
+    stage_timings: list[StageTiming]
+
+    @model_validator(mode="after")
+    def _check_unique_item_ids(self) -> "AnalysisResult":
+        validate_unique_item_ids(self.items)
+        return self

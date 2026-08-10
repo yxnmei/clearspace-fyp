@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from app.core.schemas import (
     AiDecision,
+    AnalysisResult,
     BoundingBox,
     ConfirmedDecision,
     Decision,
@@ -18,6 +19,7 @@ from app.core.schemas import (
     DetectedItem,
     MappedLLMItem,
     RunContext,
+    SceneClassification,
     validate_unique_item_ids,
 )
 
@@ -208,3 +210,98 @@ def test_degenerate_box_is_rejected():
 def test_inverted_box_is_rejected():
     with pytest.raises(ValidationError):
         BoundingBox(x1=0.6, y1=0.1, x2=0.2, y2=0.5)  # x2 < x1
+
+
+# --- SceneClassification ---
+
+
+def _scene(**overrides) -> dict:
+    defaults = dict(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9, "kitchen": 0.1})
+    defaults.update(overrides)
+    return defaults
+
+
+def test_scene_classification_valid_rounded_floating_point_values():
+    # Classic float-representation quirk: 0.1 + 0.2 style imprecision.
+    # confidence and all_scores[label] represent the same underlying score
+    # but aren't bit-identical — isclose, not ==, must accept this.
+    sc = SceneClassification(label="bedroom", confidence=0.30000000000000004, all_scores={"bedroom": 0.3, "kitchen": 0.7})
+    assert sc.label == "bedroom"
+
+
+def test_scene_classification_empty_all_scores_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(all_scores={}))
+
+
+def test_scene_classification_negative_score_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(all_scores={"bedroom": 0.9, "kitchen": -0.1}))
+
+
+def test_scene_classification_score_above_one_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(all_scores={"bedroom": 1.5, "kitchen": 0.1}, confidence=1.5))
+
+
+def test_scene_classification_non_finite_score_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(all_scores={"bedroom": 0.9, "kitchen": float("nan")}))
+
+
+def test_scene_classification_selected_label_absent_from_all_scores_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(label="bathroom"))  # "bathroom" not a key in all_scores
+
+
+def test_scene_classification_confidence_inconsistent_with_selected_score_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(confidence=0.5))  # all_scores["bedroom"] is 0.9, not 0.5
+
+
+def test_scene_classification_blank_candidate_name_is_rejected():
+    with pytest.raises(ValidationError):
+        SceneClassification(**_scene(all_scores={"bedroom": 0.9, "   ": 0.1}))
+
+
+def test_scene_classification_does_not_require_scores_to_sum_to_one():
+    # Deliberately not checked — softmax already guarantees this upstream;
+    # this model shouldn't reject a hand-built fixture just because its
+    # scores don't happen to sum to exactly 1.
+    sc = SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9, "kitchen": 0.3})
+    assert sc.label == "bedroom"
+
+
+# --- AnalysisResult ---
+
+
+def _scene_classification() -> SceneClassification:
+    return SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9, "kitchen": 0.1})
+
+
+def test_analysis_result_rejects_duplicate_item_ids_even_when_constructed_directly():
+    # Not routed through analyse_image()/validate_unique_item_ids() at
+    # all — this simulates AnalysisResult being reconstructed straight
+    # from a frontend/API payload, the path this model-level check exists
+    # for (see AnalysisResult's docstring).
+    duplicate_items = [_item("item_001", index=0), _item("item_001", index=1)]
+    with pytest.raises(ValidationError):
+        AnalysisResult(
+            run_id="run_1",
+            scene=_scene_classification(),
+            items=duplicate_items,
+            warnings=[],
+            stage_timings=[],
+        )
+
+
+def test_analysis_result_accepts_unique_item_ids():
+    items = [_item("item_001", index=0), _item("item_002", index=1)]
+    result = AnalysisResult(
+        run_id="run_1",
+        scene=_scene_classification(),
+        items=items,
+        warnings=[],
+        stage_timings=[],
+    )
+    assert len(result.items) == 2
