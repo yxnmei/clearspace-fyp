@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # --- LLM reasoning ---
     ollama_host: str = "http://localhost:11434"
-    llm_model_name: str = "mistral"  # overridden per-run by eval scripts when comparing §2 candidates
+    llm_model_name: str = "phi4-mini"  # evidence-backed production default — see PROJECT_SPEC.md §2, 2026-08-05 comparison
     llm_temperature: float = 0.2
     llm_max_retries: int = 2  # for JSON-validity failures, see core/json_repair.py
     # A single N-item JSON array gets more fragile as N grows — one dropped
