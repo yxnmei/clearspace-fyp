@@ -31,6 +31,21 @@ export function uploadImage({ file, path, context }) {
   return request("/upload", { method: "POST", body: form });
 }
 
+// Decision confirmation (Keep/Sell/Donate/Discard overrides + exclusion)
+// — JSON body, distinct from overrideItem() below, which is the future
+// *label-correction* endpoint (/override) and still unimplemented on the
+// backend. Never send `declutter` reshaped/stripped: it's the exact
+// validated nested object POST /upload returned, round-tripped whole so
+// the backend can revalidate it (provenance/warnings/validity/timings
+// included) rather than trusting anything the client claims about it.
+export function confirmDecisions({ runId, declutter, overrides = [] }) {
+  return request("/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, declutter, overrides }),
+  });
+}
+
 export function overrideItem({ itemId, newLabel, runId }) {
   const form = new FormData();
   form.append("item_id", itemId);
