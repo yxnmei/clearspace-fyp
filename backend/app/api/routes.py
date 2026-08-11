@@ -5,7 +5,8 @@ loading, no prompt construction, no orchestration logic — that all lives
 in services/ so it's reachable from evaluation scripts too (§4).
 
 Endpoints mirror the v1 design (§3 step 6), kept because it worked:
-  POST /upload      -> scene classification + detection + (declutter) LLM classification
+  POST /upload           -> scene classification + detection + (declutter) LLM classification
+  POST /confirm           -> deterministic user decision confirmation + confirmed Keep-item handoff
   POST /override     -> re-run LLM reasoning for one item after user edits its label
   POST /transcribe    -> Whisper transcript for user review before it affects context
   POST /generate        -> zone plan + product recs + image-gen via Colab/ngrok
@@ -17,6 +18,15 @@ and app.services.declutter_service.run_declutter() directly — no
 label-cleanup/prompt/mapping/semantic/recovery logic is reimplemented
 here, only HTTP parsing, dependency resolution, and error-type -> status-
 code translation.
+
+/confirm vs /override — deliberately two different endpoints, not one:
+/confirm applies a user's Keep/Sell/Donate/Discard decision override (or
+exclusion), keyed by item_id, entirely deterministically — it never calls
+an LLM. /override is a *label correction* ("this is a storage box, not a
+book"), which may justify re-running the LLM's reasoning for that one
+item — see app/core/schemas.py's DecisionOverride docstring for the full
+distinction. /override remains unimplemented in this task; only /confirm
+is real.
 
 Lazy model loading: importing this module (or app.main, which imports
 it) must never import torch/CLIP/Grounding DINO/ollama or their concrete
@@ -39,9 +49,10 @@ from __future__ import annotations
 from typing import Callable, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
-from app.core.schemas import AnalysisResult, NonEmptyStr
+from app.core.confirmation import ConfirmationInputError
+from app.core.schemas import AnalysisResult, DecisionOverride, NonEmptyStr
 from app.logging_utils import new_run_id
 from app.services.analysis_service import (
     DetectionError,
@@ -50,6 +61,11 @@ from app.services.analysis_service import (
     SceneClassificationError,
     SceneClassifier,
     analyse_image,
+)
+from app.services.confirmation_service import (
+    ConfirmationResult,
+    IncompleteDeclutterError,
+    confirm_declutter_result,
 )
 from app.services.declutter_service import (
     DeclutterReasoningError,
@@ -191,6 +207,56 @@ def upload(
     # typed failure modes above) is deliberately left uncaught here —
     # it becomes FastAPI's default 500, not a disguised success.
     return DeclutterUploadResponse(run_id=run_id, path="declutter", analysis=analysis, declutter=declutter)
+
+
+# --- /confirm ------------------------------------------------------------
+
+
+class ConfirmationRequest(BaseModel):
+    """Request body for POST /confirm — JSON, not multipart (no file
+    upload is involved). `declutter` is the frontend's round-tripped
+    DeclutterResult from /upload's response — pydantic reconstructs and
+    revalidates it here, including DeclutterResult's own is_complete
+    computed field: a client-supplied "is_complete": true in the raw JSON
+    is simply ignored (computed fields are never constructor input), so
+    it can never make an actually-incomplete result look complete to
+    confirm_declutter_result() below."""
+
+    run_id: NonEmptyStr
+    declutter: DeclutterResult
+    overrides: list[DecisionOverride] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_run_id_consistency(self) -> "ConfirmationRequest":
+        if self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match declutter.run_id")
+        return self
+
+
+@router.post("/confirm", response_model=ConfirmationResult)
+async def confirm(request: ConfirmationRequest) -> ConfirmationResult:
+    """
+    Deterministic and stateless — no model dependency providers here
+    (unlike /upload): confirmation never calls a model, so an ordinary
+    `async def` handler is appropriate (nothing here blocks the event
+    loop, unlike /upload's real CLIP/Grounding DINO/Ollama calls).
+    """
+    try:
+        return confirm_declutter_result(request.declutter, request.overrides)
+    except IncompleteDeclutterError as exc:
+        raise HTTPException(
+            status_code=409, detail="all Declutter items must be resolved before confirmation"
+        ) from exc
+    except ConfirmationInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid decision overrides") from exc
+    # Deliberately NOT a bare `except ValueError` — pydantic's own
+    # ValidationError is a ValueError subclass, so that would risk
+    # mislabeling an internal ConfirmationResult invariant failure (a
+    # genuine programming error) as "invalid decision overrides". Any
+    # exception other than the two typed ones above is deliberately left
+    # uncaught — FastAPI's default 500, not a disguised success, per
+    # this codebase's existing failure-policy convention (see /upload
+    # above).
 
 
 @router.post("/override")

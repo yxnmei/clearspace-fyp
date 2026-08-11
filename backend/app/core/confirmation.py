@@ -13,6 +13,18 @@ from __future__ import annotations
 from app.core.schemas import AiDecision, ConfirmedDecision, Decision, DecisionOverride
 
 
+class ConfirmationInputError(ValueError):
+    """Malformed confirmation inputs — a duplicate item_id in
+    ai_decisions, a duplicate override for the same item_id, or an
+    override referencing an item_id that isn't in ai_decisions. A
+    ValueError subclass (not an unrelated exception type) so existing
+    `except ValueError`/`pytest.raises(ValueError)` callers keep working
+    unchanged; callers that need to distinguish "malformed caller input"
+    from any other ValueError (e.g. a pydantic ValidationError, which is
+    also a ValueError subclass) should catch this type specifically —
+    see app/api/routes.py's /confirm handler."""
+
+
 def confirm_decisions(
     ai_decisions: list[AiDecision],
     overrides: list[DecisionOverride] | None = None,
@@ -27,9 +39,9 @@ def confirm_decisions(
     can never drift from that invariant regardless of how a
     ConfirmedDecision is constructed.
 
-    Raises ValueError (not a warning) on malformed *caller* input — a
-    duplicate item_id in ai_decisions, a duplicate override for the same
-    item_id, or an override referencing an item_id that isn't in
+    Raises ConfirmationInputError (not a warning) on malformed *caller*
+    input — a duplicate item_id in ai_decisions, a duplicate override for
+    the same item_id, or an override referencing an item_id that isn't in
     ai_decisions — since these are client/programming errors, not LLM
     output ambiguity (which id_mapping.py handles separately, by warning).
     """
@@ -38,15 +50,15 @@ def confirm_decisions(
     seen_ai_ids: set[str] = set()
     for ai in ai_decisions:
         if ai.item_id in seen_ai_ids:
-            raise ValueError(f"duplicate item_id in ai_decisions: {ai.item_id!r}")
+            raise ConfirmationInputError(f"duplicate item_id in ai_decisions: {ai.item_id!r}")
         seen_ai_ids.add(ai.item_id)
 
     overrides_by_id: dict[str, DecisionOverride] = {}
     for override in overrides:
         if override.item_id in overrides_by_id:
-            raise ValueError(f"duplicate override for item_id: {override.item_id!r}")
+            raise ConfirmationInputError(f"duplicate override for item_id: {override.item_id!r}")
         if override.item_id not in seen_ai_ids:
-            raise ValueError(f"override references unknown item_id: {override.item_id!r}")
+            raise ConfirmationInputError(f"override references unknown item_id: {override.item_id!r}")
         overrides_by_id[override.item_id] = override
 
     confirmed: list[ConfirmedDecision] = []

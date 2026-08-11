@@ -8,7 +8,7 @@ separate from decision_changed, and Keep-filtering.
 
 import pytest
 
-from app.core.confirmation import confirm_decisions, confirmed_keep_ids
+from app.core.confirmation import ConfirmationInputError, confirm_decisions, confirmed_keep_ids
 from app.core.schemas import AiDecision, ConfirmedDecision, Decision, DecisionOverride
 
 
@@ -81,7 +81,7 @@ def test_excluded_keep_item_does_not_enter_confirmed_keep_filtering():
 
 def test_duplicate_ai_decision_ids_are_rejected():
     ai_decisions = [_ai("item_001", "keep"), _ai("item_001", "donate")]
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfirmationInputError):
         confirm_decisions(ai_decisions)
 
 
@@ -91,15 +91,21 @@ def test_duplicate_override_ids_are_rejected():
         DecisionOverride(item_id="item_001", decision=Decision.DONATE),
         DecisionOverride(item_id="item_001", excluded=True),
     ]
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfirmationInputError):
         confirm_decisions(ai_decisions, overrides)
 
 
 def test_override_referencing_unknown_item_id_raises():
     ai_decisions = [_ai("item_001", "keep")]
     overrides = [DecisionOverride(item_id="item_999", decision=Decision.DISCARD)]
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfirmationInputError):
         confirm_decisions(ai_decisions, overrides)
+
+
+def test_confirmation_input_error_is_a_value_error_subclass():
+    # Backward compatibility: any existing `except ValueError`/
+    # `pytest.raises(ValueError)` caller must keep working unchanged.
+    assert issubclass(ConfirmationInputError, ValueError)
 
 
 def test_keep_to_discard_override_removes_item_from_downstream_keep_set():
