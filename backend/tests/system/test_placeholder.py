@@ -1,11 +1,12 @@
-"""Placeholder — see README.md. Delete once the first real system test lands."""
+"""Placeholder — see README.md. Delete once the first real system test lands.
+
+test_upload_declutter_returns_classified_items (the /upload placeholder)
+was removed here once /upload's declutter path was implemented — see
+tests/system/test_upload_declutter.py for the real, fake-backed
+replacement. test_generate_returns_reorganised_image below is still an
+honest placeholder: /generate (Reorganise/image-gen) is not implemented."""
 
 import pytest
-
-
-@pytest.mark.skip(reason="No /upload implementation yet — §3 build order step 6 not reached.")
-def test_upload_declutter_returns_classified_items():
-    pass
 
 
 @pytest.mark.requires_colab
