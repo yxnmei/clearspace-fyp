@@ -1,4 +1,4 @@
-import { decisionColor, formatConfidence } from "../utils/format";
+import { decisionColor, formatConfidence, itemNumberLabel } from "../utils/format";
 
 const DECISIONS = [
   { value: "keep", label: "Keep" },
@@ -11,14 +11,45 @@ const DECISIONS = [
 // useDeclutterFlow's setDecisionOverride/setItemExcluded, keyed only by
 // item.item_id (never clean_label — two items sharing a label render as
 // two independent cards with independent state, purely by item_id).
-export default function DeclutterItemCard({ item, onDecisionChange, onExcludedChange }) {
+//
+// isActive/onActivate/onDeactivate/registerRef connect this card to its
+// box in AnalysedRoomPanel (owned by the parent DeclutterReview, not this
+// component): hovering or focusing the card marks it active, which is
+// what makes the overlay highlight the matching box, and a box click
+// scrolls/focuses back to this card via the ref registered here. All four
+// are optional/no-op by default so this component still works completely
+// standalone (e.g. in isolation in a test) without the overlay wired up —
+// none of the card's own review functionality depends on them.
+export default function DeclutterItemCard({
+  item,
+  onDecisionChange,
+  onExcludedChange,
+  isActive = false,
+  onActivate = () => {},
+  onDeactivate = () => {},
+  registerRef = () => {},
+}) {
   const groupName = `decision-${item.item_id}`;
 
   return (
-    <li className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+    <li
+      ref={(el) => registerRef(item.item_id, el)}
+      tabIndex={-1}
+      aria-current={isActive ? "true" : undefined}
+      onMouseEnter={onActivate}
+      onMouseLeave={onDeactivate}
+      onFocus={onActivate}
+      onBlur={onDeactivate}
+      className={`rounded-lg border bg-white p-4 shadow-sm ${isActive ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-200"}`}
+    >
       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="font-medium text-stone-900">{item.clean_label}</p>
+          <p className="font-medium text-stone-900">
+            <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-stone-800 text-[11px] font-semibold text-white">
+              {itemNumberLabel(item.item_id)}
+            </span>
+            {item.clean_label}
+          </p>
           <p className="text-xs text-stone-500">
             item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
             {formatConfidence(item.confidence)} detection confidence

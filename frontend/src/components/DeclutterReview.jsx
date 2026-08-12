@@ -1,4 +1,6 @@
+import { useRef, useState } from "react";
 import { formatConfidence } from "../utils/format";
+import AnalysedRoomPanel from "./AnalysedRoomPanel";
 import DeclutterItemCard from "./DeclutterItemCard";
 import ConfirmationSummary from "./ConfirmationSummary";
 
@@ -7,10 +9,19 @@ import ConfirmationSummary from "./ConfirmationSummary";
 // distinguishes (resolved expected / unresolved expected / contextual)
 // and dispatches setDecisionOverride/setItemExcluded/confirm. No
 // orchestration or API calls live here.
+//
+// activeItemId/showAllBoxes/itemRefs are purely local presentational UI
+// state for linking the analysed-room overlay to the item list — not
+// workflow state, so (matching DeclutterUploadForm's existing local-state
+// convention) they stay here rather than in useDeclutterFlow. itemRefs
+// covers all three categories (resolved cards, unresolved and contextual
+// list entries), since AnalysedRoomPanel draws boxes for all of them and
+// a box click must be able to reach any of them.
 export default function DeclutterReview({
   analysis,
   declutter,
   reviewItems,
+  imageUrl,
   setDecisionOverride,
   setItemExcluded,
   confirm,
@@ -18,6 +29,38 @@ export default function DeclutterReview({
   confirmationError,
   confirmation,
 }) {
+  const [activeItemId, setActiveItemId] = useState(null);
+  // Defaults to true so the analysed image visibly shows its detection
+  // boxes as soon as results appear — a false default left the panel
+  // looking box-free (undiscoverable, and at odds with the guidance text
+  // telling the user to review the highlighted image). Users can still
+  // turn this off, and activating one item already quietens the rest.
+  const [showAllBoxes, setShowAllBoxes] = useState(true);
+  const itemRefs = useRef(new Map());
+
+  function registerItemRef(itemId, el) {
+    if (el) itemRefs.current.set(itemId, el);
+    else itemRefs.current.delete(itemId);
+  }
+
+  function activateItem(itemId) {
+    setActiveItemId(itemId);
+  }
+
+  function deactivateItem(itemId) {
+    // Guards against a blur/mouseleave on item A clobbering item B's
+    // freshly-set active state when focus/hover moves directly from one
+    // item to another within the same tick.
+    setActiveItemId((current) => (current === itemId ? null : current));
+  }
+
+  function focusItem(itemId) {
+    const el = itemRefs.current.get(itemId);
+    if (!el) return;
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center" });
+    el.focus();
+  }
+
   const resolvedItems = reviewItems.filter((item) => item.is_expected && !item.is_unresolved);
   const unresolvedItems = reviewItems.filter((item) => item.is_expected && item.is_unresolved);
   const contextualItems = reviewItems.filter((item) => !item.is_expected);
@@ -49,11 +92,13 @@ export default function DeclutterReview({
             </dd>
           </div>
           <div>
-            <dt className="text-stone-500">Detected items</dt>
+            {/* Renamed from "Detected items" — this is a count of returned
+                boxes, not a claim of detection completeness (§6). */}
+            <dt className="text-stone-500">Candidate detections</dt>
             <dd className="text-stone-900">{analysis.items.length}</dd>
           </div>
           <div>
-            <dt className="text-stone-500">Actionable items</dt>
+            <dt className="text-stone-500">Candidates sent for suggestions</dt>
             <dd className="text-stone-900">{declutter.expected_item_ids.length}</dd>
           </div>
           <div>
@@ -61,7 +106,7 @@ export default function DeclutterReview({
             <dd className="text-stone-900">{contextualItems.length}</dd>
           </div>
           <div>
-            <dt className="text-stone-500">Analysis warnings</dt>
+            <dt className="text-stone-500">Processing warnings</dt>
             <dd className="text-stone-900">{analysis.warnings.length}</dd>
           </div>
           <div>
@@ -71,23 +116,41 @@ export default function DeclutterReview({
         </dl>
       </section>
 
-      {/* --- Resolved, expected items --- */}
+      {/* --- Resolved, expected items, alongside the analysed-room overlay --- */}
       <section>
         <h2 className="mb-3 text-lg font-medium text-stone-900">3. Review each item</h2>
-        {resolvedItems.length === 0 ? (
-          <p className="text-sm text-stone-500">No resolved actionable items yet.</p>
-        ) : (
-          <ul className="space-y-3">
-            {resolvedItems.map((item) => (
-              <DeclutterItemCard
-                key={item.item_id}
-                item={item}
-                onDecisionChange={setDecisionOverride}
-                onExcludedChange={setItemExcluded}
-              />
-            ))}
-          </ul>
-        )}
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+          <div className="lg:sticky lg:top-4 lg:w-[42%] lg:flex-shrink-0">
+            <AnalysedRoomPanel
+              imageUrl={imageUrl}
+              items={reviewItems}
+              activeItemId={activeItemId}
+              onBoxClick={focusItem}
+              showAllBoxes={showAllBoxes}
+              onToggleShowAllBoxes={setShowAllBoxes}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            {resolvedItems.length === 0 ? (
+              <p className="text-sm text-stone-500">No resolved actionable items yet.</p>
+            ) : (
+              <ul className="space-y-3">
+                {resolvedItems.map((item) => (
+                  <DeclutterItemCard
+                    key={item.item_id}
+                    item={item}
+                    onDecisionChange={setDecisionOverride}
+                    onExcludedChange={setItemExcluded}
+                    isActive={item.item_id === activeItemId}
+                    onActivate={() => activateItem(item.item_id)}
+                    onDeactivate={() => deactivateItem(item.item_id)}
+                    registerRef={registerItemRef}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* --- Unresolved expected items --- */}
@@ -100,7 +163,17 @@ export default function DeclutterReview({
           </p>
           <ul className="space-y-2">
             {unresolvedItems.map((item) => (
-              <li key={item.item_id} className="rounded-md border border-red-200 bg-white p-3 text-sm">
+              <li
+                key={item.item_id}
+                ref={(el) => registerItemRef(item.item_id, el)}
+                tabIndex={0}
+                aria-current={item.item_id === activeItemId ? "true" : undefined}
+                onMouseEnter={() => activateItem(item.item_id)}
+                onMouseLeave={() => deactivateItem(item.item_id)}
+                onFocus={() => activateItem(item.item_id)}
+                onBlur={() => deactivateItem(item.item_id)}
+                className={`rounded-md border bg-white p-3 text-sm ${item.item_id === activeItemId ? "border-stone-900 ring-1 ring-stone-900" : "border-red-200"}`}
+              >
                 <span className="font-medium text-stone-900">{item.clean_label}</span>{" "}
                 <span className="text-stone-500">
                   (item_id: <code>{item.item_id}</code>, {item.position}, {item.relative_size})
@@ -121,7 +194,17 @@ export default function DeclutterReview({
           </p>
           <ul className="space-y-2">
             {contextualItems.map((item) => (
-              <li key={item.item_id} className="rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700">
+              <li
+                key={item.item_id}
+                ref={(el) => registerItemRef(item.item_id, el)}
+                tabIndex={0}
+                aria-current={item.item_id === activeItemId ? "true" : undefined}
+                onMouseEnter={() => activateItem(item.item_id)}
+                onMouseLeave={() => deactivateItem(item.item_id)}
+                onFocus={() => activateItem(item.item_id)}
+                onBlur={() => deactivateItem(item.item_id)}
+                className={`rounded-md border bg-white p-3 text-sm text-stone-700 ${item.item_id === activeItemId ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-200"}`}
+              >
                 <span className="font-medium">{item.clean_label}</span>{" "}
                 <span className="text-stone-500">
                   (item_id: <code>{item.item_id}</code>, {item.position}, {item.relative_size})

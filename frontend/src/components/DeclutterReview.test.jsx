@@ -45,6 +45,7 @@ function makeResolvedReviewItem(overrides = {}) {
     position: "upper-left",
     relative_size: "small",
     confidence: 0.8,
+    box: { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.3 },
     ai_decision: "keep",
     ai_reason: "still useful",
     item_validity: "raw_valid",
@@ -64,6 +65,7 @@ function baseProps(overrides = {}) {
     analysis: makeAnalysis(),
     declutter: makeDeclutter(),
     reviewItems: [],
+    imageUrl: "blob:mock-preview",
     setDecisionOverride: vi.fn(),
     setItemExcluded: vi.fn(),
     confirm: vi.fn(),
@@ -87,8 +89,13 @@ describe("DeclutterReview", () => {
     render(<DeclutterReview {...props} />);
 
     expect(ddFor("Scene")).toMatch(/bedroom/i);
-    expect(ddFor("Detected items")).toBe("3");
-    expect(ddFor("Actionable items")).toBe("2");
+    expect(ddFor("Candidate detections")).toBe("3");
+    expect(ddFor("Candidates sent for suggestions")).toBe("2");
+  });
+
+  test("shows the detection-limitation guidance near the analysed image", () => {
+    render(<DeclutterReview {...baseProps()} />);
+    expect(screen.getByText(/ai detection may miss or misidentify belongings/i)).toBeInTheDocument();
   });
 
   test("two same-label items render as two distinct cards using item_id", async () => {
@@ -121,6 +128,7 @@ describe("DeclutterReview", () => {
       position: "center",
       relative_size: "large",
       confidence: 0.9,
+      box: { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
       ai_decision: null,
       ai_reason: null,
       item_validity: null,
@@ -151,6 +159,7 @@ describe("DeclutterReview", () => {
       position: "center",
       relative_size: "small",
       confidence: 0.5,
+      box: { x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4 },
       ai_decision: null,
       ai_reason: null,
       item_validity: "still_invalid",
@@ -220,5 +229,140 @@ describe("DeclutterReview", () => {
     rerender(<DeclutterReview {...baseProps({ confirmationStatus: "idle", confirmation: null })} />);
 
     expect(screen.queryByRole("heading", { name: /decisions confirmed/i })).not.toBeInTheDocument();
+  });
+
+  test("hovering an item card highlights its box in the analysed-room panel", async () => {
+    const user = userEvent.setup();
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_004", clean_label: "picture frame" }),
+      makeResolvedReviewItem({ item_id: "item_006", clean_label: "picture frame" }),
+    ];
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_004", "item_006"] }),
+      reviewItems,
+    });
+    render(<DeclutterReview {...props} />);
+
+    // All boxes are visible by default, so both are already on the page.
+    const cards = screen.getAllByText("picture frame").map((el) => el.closest("li"));
+    await user.hover(cards[0]);
+
+    expect(screen.getByRole("button", { name: /detection 4/i })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("button", { name: /detection 6/i })).not.toHaveAttribute("aria-current");
+  });
+
+  test("clicking a box scrolls to and focuses the corresponding item card", async () => {
+    const user = userEvent.setup();
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_004", clean_label: "picture frame" }),
+      makeResolvedReviewItem({ item_id: "item_006", clean_label: "vase" }),
+    ];
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_004", "item_006"] }),
+      reviewItems,
+    });
+    render(<DeclutterReview {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /detection 6/i }));
+
+    const vaseCard = screen.getByText("vase").closest("li");
+    expect(vaseCard).toHaveFocus();
+  });
+
+  test("Show all boxes is on by default, so every candidate detection's box is already visible", () => {
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    render(
+      <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
+    );
+
+    expect(screen.getByRole("checkbox", { name: /show all boxes/i })).toBeChecked();
+    expect(screen.getByRole("button", { name: /detection 1/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /detection 2/i })).toBeInTheDocument();
+  });
+
+  test("turning Show all boxes off hides the boxes without hiding any item from the list", async () => {
+    const user = userEvent.setup();
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    render(
+      <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: /show all boxes/i })); // was checked -> unchecks it
+
+    expect(screen.getByRole("checkbox", { name: /show all boxes/i })).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: /detection 1/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /detection 2/i })).not.toBeInTheDocument();
+    // Neither item disappeared from the item list itself.
+    expect(screen.getByText("lamp")).toBeInTheDocument();
+    expect(screen.getByText("chair")).toBeInTheDocument();
+  });
+
+  test("with Show all boxes off, activating an item still shows just its own box", async () => {
+    const user = userEvent.setup();
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    render(
+      <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: /show all boxes/i })); // turn all-boxes off
+    expect(screen.queryAllByRole("button", { name: /^Detection/i })).toHaveLength(0);
+
+    await user.hover(screen.getByText("chair").closest("li"));
+
+    const boxes = screen.getAllByRole("button", { name: /^Detection/i });
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]).toHaveAttribute("aria-label", expect.stringContaining("Detection 2"));
+    expect(boxes[0]).toHaveAttribute("aria-current", "true");
+  });
+
+  test("unresolved and contextual entries can also become the active/highlighted item", async () => {
+    const user = userEvent.setup();
+    const unresolvedItem = {
+      item_id: "item_003",
+      clean_label: "cable",
+      position: "center",
+      relative_size: "small",
+      confidence: 0.5,
+      box: { x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4 },
+      ai_decision: null,
+      ai_reason: null,
+      item_validity: "still_invalid",
+      is_expected: true,
+      is_unresolved: true,
+      review_decision: null,
+      review_excluded: false,
+      review_user_reason: null,
+      decision_changed: false,
+      has_decision_override: false,
+    };
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_003"], unresolved_item_ids: ["item_003"] }),
+      reviewItems: [unresolvedItem],
+    });
+    render(<DeclutterReview {...props} />);
+
+    await user.hover(screen.getByText("cable").closest("li"));
+
+    expect(screen.getByRole("button", { name: /detection 3/i })).toHaveAttribute("aria-current", "true");
+  });
+
+  test("responsive structure: both the analysed image and the full item list are always present in the DOM", () => {
+    const reviewItems = [makeResolvedReviewItem({ item_id: "item_001" })];
+    render(<DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001"] }), reviewItems })} />);
+
+    // No JS media-query branching hides either side — layout is CSS-only
+    // (flex-col on mobile, lg:flex-row on desktop), so both the image and
+    // the item list exist in the DOM regardless of viewport.
+    expect(screen.getByRole("img", { name: /detected item outlines/i })).toBeInTheDocument();
+    expect(screen.getByText("lamp")).toBeInTheDocument();
   });
 });

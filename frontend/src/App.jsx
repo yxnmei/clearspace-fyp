@@ -10,7 +10,9 @@ import DeclutterPage from "./components/DeclutterPage";
 export default function App() {
   return (
     <div className="min-h-screen bg-stone-50">
-      <div className="mx-auto max-w-3xl p-6">
+      {/* Widened from max-w-3xl: the analysed-room panel + item list need
+          room to sit side by side on desktop (DeclutterReview §3). */}
+      <div className="mx-auto max-w-5xl p-6">
         <h1 className="mb-2 text-2xl font-semibold text-stone-900">ClearSpace</h1>
         <p className="mb-6 text-stone-600">
           Photograph a room to get AI-suggested Keep / Sell / Donate / Discard decisions for what's in it, then

@@ -83,4 +83,78 @@ describe("DeclutterItemCard", () => {
 
     expect(screen.getByRole("radio", { name: "Discard" })).toHaveFocus();
   });
+
+  test("shows a visible item number badge derived from item_id", () => {
+    render(<DeclutterItemCard item={makeReviewItem({ item_id: "item_012" })} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+    expect(screen.getByText("12")).toBeInTheDocument();
+  });
+
+  test("hovering the card calls onActivate; leaving calls onDeactivate", async () => {
+    const user = userEvent.setup();
+    const onActivate = vi.fn();
+    const onDeactivate = vi.fn();
+    render(
+      <DeclutterItemCard
+        item={makeReviewItem()}
+        onDecisionChange={vi.fn()}
+        onExcludedChange={vi.fn()}
+        onActivate={onActivate}
+        onDeactivate={onDeactivate}
+      />
+    );
+
+    await user.hover(screen.getByText("picture frame"));
+    expect(onActivate).toHaveBeenCalled();
+
+    await user.unhover(screen.getByText("picture frame"));
+    expect(onDeactivate).toHaveBeenCalled();
+  });
+
+  test("focusing a control inside the card calls onActivate; focusing away calls onDeactivate", async () => {
+    const user = userEvent.setup();
+    const onActivate = vi.fn();
+    const onDeactivate = vi.fn();
+    render(
+      <div>
+        <DeclutterItemCard
+          item={makeReviewItem()}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+          onActivate={onActivate}
+          onDeactivate={onDeactivate}
+        />
+        <button type="button">outside</button>
+      </div>
+    );
+
+    await user.tab(); // focuses the checked radio inside the card
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onDeactivate).not.toHaveBeenCalled();
+
+    screen.getByRole("button", { name: "outside" }).focus(); // focus leaves the card entirely
+    expect(onDeactivate).toHaveBeenCalled();
+  });
+
+  test("isActive renders an aria-current marker for the overlay to key off of", () => {
+    const { rerender } = render(
+      <DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} isActive={false} />
+    );
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+
+    rerender(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} isActive={true} />);
+    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
+  });
+
+  test("registerRef is called with the item's item_id and the DOM node on mount, and with null on unmount", () => {
+    const registerRef = vi.fn();
+    const { unmount } = render(
+      <DeclutterItemCard item={makeReviewItem({ item_id: "item_005" })} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} registerRef={registerRef} />
+    );
+
+    expect(registerRef).toHaveBeenCalledWith("item_005", expect.any(HTMLElement));
+
+    unmount();
+
+    expect(registerRef).toHaveBeenCalledWith("item_005", null);
+  });
 });
