@@ -37,6 +37,28 @@ DINO/Ollama dependencies, no dependency overrides:
   dedicated marker, run manually) or performed as a documented manual
   smoke test rather than an automated pytest test — see `DEVLOG.md`
   (local-only) for the 2026-08-11 example of the latter.
+- **2026-08-11 manual run (first time the HTTP layer itself, not just
+  the underlying service functions, was exercised with real models):**
+  `TestClient` against the real `app.main.app`, no dependency overrides
+  — `POST /upload` (`path=declutter`,
+  `backend/data/test_images/bedroom02.jpg`) then `POST /confirm` with no
+  overrides, using
+  `C:\Users\yanme\anaconda3\envs\clearspace-fyp\python.exe` with Ollama
+  running and `phi4-mini` pulled. Both HTTP requests returned **200**
+  (`/confirm` is deterministic confirmation logic and does not invoke a
+  model): `/upload` in ~81s (28/28 items resolved, `is_complete=True`,
+  `is_strictly_valid=False`), `/confirm` in ~0.01s (28 confirmed
+  decisions, 11 confirmed non-excluded Keep items). Full numbers in
+  `DEVLOG.md` (local-only) under the same date; JSON responses were not
+  committed anywhere, only this summary.
+  - **Precondition, not yet fixed:** the current configuration resolves
+    Grounding DINO's config/weight paths
+    (`grounding_dino_config_path`/`grounding_dino_weights_path` in
+    `app/config.py`, both relative strings under `weights/`) relative to
+    the process working directory. Launching outside `backend/` causes
+    detection startup failure (a real `503` was hit and confirmed this
+    way before the run above succeeded). Run pytest, uvicorn, and any
+    manual script like this one from `backend/` until that's fixed.
 
 **Colab image-generation tests** (`/generate`, the Reorganise path) have
 a **manual precondition that can never be automated the way
