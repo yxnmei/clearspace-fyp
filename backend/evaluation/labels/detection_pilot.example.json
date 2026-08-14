@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source_labels_json_git_blob": "REPLACE-WITH-REAL-BLOB-HASH-AT-ANNOTATION-TIME",
+  "note": "EXAMPLE/FIXTURE ONLY — not real annotation. Copy this file to detection_pilot.json and replace with real, human-adjudicated entries for the 5-image pilot set (bedroom01, bedroom02, bedroom04, bedroom05, desk03 — see the Grounding DINO evaluation plan in DEVLOG.md). Before annotating for real, pin source_labels_json_git_blob to the actual current hash via: git hash-object backend/evaluation/labels/labels.json — so a future reader can tell exactly which labels.json content this annotation pass was done against. This file intentionally contains only ground-truth instances; detector candidates and human adjudications come from an actual detector run reviewed by a person, not from a static fixture — see evaluation/metrics/detection_evaluation.py for those structures.",
+  "images": [
+    {
+      "filename": "bedroom02.jpg",
+      "ground_truth_instances": [
+        {
+          "instance_id": "bedroom02.jpg::gt0",
+          "canonical_label": "necklace",
+          "position_zone": "upper-left",
+          "actionability": "actionable",
+          "notes": "Example only. Illustrates a real historical case: Grounding DINO has mislabeled this object 'jewelry' (usable_but_broad) and, before the 2026-08-07 vocabulary change, 'cable' (wrong) — see DEVLOG.md 2026-08-07."
+        },
+        {
+          "instance_id": "bedroom02.jpg::gt1",
+          "canonical_label": "desk",
+          "position_zone": "left",
+          "actionability": "contextual",
+          "notes": "Example only. Room-structure/fixture-like item — not normally an individually reviewable Keep/Sell/Donate/Discard decision, per the actionable/contextual definition in labels/README.md."
+        },
+        {
+          "instance_id": "bedroom02.jpg::gt2",
+          "canonical_label": "small decorative object on shelf",
+          "position_zone": "center",
+          "actionability": "uncertain",
+          "notes": "Example only. Illustrates insufficient evidence to defend actionable vs. contextual from the photo alone — excluded from the primary actionable denominator, reported separately, never guessed."
+        }
+      ]
+    }
+  ]
+}
