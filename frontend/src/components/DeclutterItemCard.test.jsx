@@ -4,10 +4,11 @@ import { describe, expect, test, vi } from "vitest";
 import DeclutterItemCard from "./DeclutterItemCard";
 
 function makeReviewItem(overrides = {}) {
+  const cleanLabel = overrides.clean_label ?? "picture frame";
   return {
     item_id: "item_001",
     raw_phrase: "picture frame painting",
-    clean_label: "picture frame",
+    clean_label: cleanLabel,
     position: "upper-left",
     relative_size: "small",
     confidence: 0.45,
@@ -21,6 +22,9 @@ function makeReviewItem(overrides = {}) {
     review_user_reason: null,
     decision_changed: false,
     has_decision_override: false,
+    corrected_label: null,
+    label_source: "detector",
+    effective_label: cleanLabel,
     ...overrides,
   };
 }
@@ -156,5 +160,116 @@ describe("DeclutterItemCard", () => {
     unmount();
 
     expect(registerRef).toHaveBeenCalledWith("item_005", null);
+  });
+
+  test("displays effective_label, not clean_label, when the item has been corrected", () => {
+    render(
+      <DeclutterItemCard
+        item={makeReviewItem({ clean_label: "box", corrected_label: "hoodie", label_source: "user", effective_label: "hoodie" })}
+        onDecisionChange={vi.fn()}
+        onExcludedChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText("hoodie")).toBeInTheDocument();
+    expect(screen.queryByText("box")).not.toBeInTheDocument();
+  });
+
+  test("shows a Corrected by you badge only when label_source is user", () => {
+    const { rerender } = render(
+      <DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />
+    );
+    expect(screen.queryByText("Corrected by you")).not.toBeInTheDocument();
+
+    rerender(
+      <DeclutterItemCard
+        item={makeReviewItem({ corrected_label: "hoodie", label_source: "user", effective_label: "hoodie" })}
+        onDecisionChange={vi.fn()}
+        onExcludedChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Corrected by you")).toBeInTheDocument();
+  });
+
+  describe("label correction control", () => {
+    test("opening the form submits item_id plus the trimmed label", async () => {
+      const user = userEvent.setup();
+      const onCorrectLabel = vi.fn();
+      render(
+        <DeclutterItemCard item={makeReviewItem({ item_id: "item_004" })} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} onCorrectLabel={onCorrectLabel} />
+      );
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      const input = screen.getByLabelText(/corrected label/i);
+      await user.clear(input);
+      await user.type(input, "  hoodie  ");
+      await user.click(screen.getByRole("button", { name: /submit correction/i }));
+
+      expect(onCorrectLabel).toHaveBeenCalledWith("item_004", "hoodie");
+    });
+
+    test("a blank label cannot be submitted", async () => {
+      const user = userEvent.setup();
+      const onCorrectLabel = vi.fn();
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} onCorrectLabel={onCorrectLabel} />);
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      const input = screen.getByLabelText(/corrected label/i);
+      await user.clear(input);
+
+      expect(screen.getByRole("button", { name: /submit correction/i })).toBeDisabled();
+      expect(onCorrectLabel).not.toHaveBeenCalled();
+    });
+
+    test("the toggle button is disabled while correctionDisabled is true", () => {
+      render(
+        <DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} correctionDisabled={true} />
+      );
+      expect(screen.getByRole("button", { name: /wrong label/i })).toBeDisabled();
+    });
+
+    test("duplicate submission is disabled while this item is being corrected, and the pending state is accessible", async () => {
+      const user = userEvent.setup();
+      render(
+        <DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} isCorrecting={true} />
+      );
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+
+      expect(screen.getByRole("button", { name: /correcting/i })).toBeDisabled();
+      expect(screen.getByLabelText(/corrected label/i)).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent(/correcting label/i);
+    });
+
+    test("an item-local failure is shown accessibly without losing the entered correction", async () => {
+      const user = userEvent.setup();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem()}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+          correctionError="Label correction failed"
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      const input = screen.getByLabelText(/corrected label/i);
+      await user.clear(input);
+      await user.type(input, "hoodie");
+
+      expect(screen.getByRole("alert")).toHaveTextContent("Label correction failed");
+      expect(input).toHaveValue("hoodie"); // not cleared by the error
+    });
+
+    test("cancel closes the form without submitting", async () => {
+      const user = userEvent.setup();
+      const onCorrectLabel = vi.fn();
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} onCorrectLabel={onCorrectLabel} />);
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+      expect(screen.queryByLabelText(/corrected label/i)).not.toBeInTheDocument();
+      expect(onCorrectLabel).not.toHaveBeenCalled();
+    });
   });
 });

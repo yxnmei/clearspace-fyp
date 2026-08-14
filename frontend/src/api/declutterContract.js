@@ -1,16 +1,26 @@
 // Pure functions only — unit-tested (§4), no React/DOM/fetch here. See
 // utils/format.js for the same convention.
 //
-// Adapts the backend's nested POST /upload (path="declutter") response —
-// { run_id, path, analysis: {...AnalysisResult}, declutter: {...DeclutterResult} }
-// — into a flat, item_id-joined shape the UI can render directly, without
-// ever joining by label text or inventing an `id` alias (item_id is the
-// only identity that exists on either side of the join). `analysis` and
-// `declutter` are returned intact — their warnings/timings/provenance/
-// validity/completeness fields are never stripped, only read from.
+// Adapts the backend's nested POST /upload (path="declutter") and POST
+// /override responses — both shaped { run_id, analysis: {...
+// AnalysisResult}, declutter: {...DeclutterResult} }, /upload alone also
+// carrying `path` — into a flat, item_id-joined shape the UI can render
+// directly, without ever joining by label text or inventing an `id`
+// alias (item_id is the only identity that exists on either side of the
+// join). `analysis` and `declutter` are returned intact — their
+// warnings/timings/provenance/validity/completeness fields are never
+// stripped, only read from.
+//
+// Both responses share the exact same join/invariant logic —
+// _normaliseAnalysisDeclutterEnvelope, below — since /override's
+// response IS a full (analysis, declutter) pair, not a delta/patch (see
+// app/api/routes.py's OverrideResponse docstring): the only thing that
+// differs between the two public functions is /upload's additional
+// `path === "declutter"` requirement, which /override's response never
+// carries at all.
 
 function fail(message) {
-  throw new Error(`normaliseDeclutterUploadResponse: ${message}`);
+  throw new Error(`declutterContract: ${message}`);
 }
 
 function isPlainObject(value) {
@@ -42,10 +52,41 @@ function extractItemIds(entries, entryName) {
   });
 }
 
-export function normaliseDeclutterUploadResponse(response) {
+// DetectedItem's label-correction provenance (app/core/schemas.py):
+// corrected_label is the only stored value; label_source/effective_label
+// are backend-computed and must agree with it structurally — this check
+// re-verifies that agreement client-side too, rather than trusting a
+// response that claims label_source="user" with no corrected_label (or
+// any other contradiction) at face value.
+function requireLabelProvenanceConsistent(detection, name) {
+  const { corrected_label: correctedLabel, label_source: labelSource, effective_label: effectiveLabel } = detection;
+
+  if (correctedLabel !== null && !(typeof correctedLabel === "string" && correctedLabel.trim() !== "")) {
+    fail(`${name}.corrected_label must be null or a non-empty string`);
+  }
+
+  const expectedSource = correctedLabel !== null ? "user" : "detector";
+  if (labelSource !== expectedSource) {
+    fail(
+      `${name}.label_source (${JSON.stringify(labelSource)}) does not agree with corrected_label ` +
+        `(${JSON.stringify(correctedLabel)})`
+    );
+  }
+
+  const expectedEffective = correctedLabel !== null ? correctedLabel : detection.clean_label;
+  if (effectiveLabel !== expectedEffective) {
+    fail(`${name}.effective_label does not equal corrected_label ?? clean_label`);
+  }
+}
+
+// Shared by normaliseDeclutterUploadResponse and normaliseOverrideResponse
+// — every invariant below applies identically to both, since /override's
+// response is a full (analysis, declutter) pair like /upload's, never a
+// delta. `requireDeclutterPath` is the one dimension that differs.
+function normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath }) {
   if (!isPlainObject(response)) fail("response must be an object");
 
-  if (response.path !== "declutter") {
+  if (requireDeclutterPath && response.path !== "declutter") {
     fail(`expected path "declutter", got ${JSON.stringify(response.path)}`);
   }
 
@@ -67,6 +108,8 @@ export function normaliseDeclutterUploadResponse(response) {
 
   const detectionIds = extractItemIds(detections, "analysis.items");
   requireNoDuplicates(detectionIds, "detection item_id");
+
+  detections.forEach((detection, i) => requireLabelProvenanceConsistent(detection, `analysis.items[${i}]`));
 
   const decisionIds = extractItemIds(decisions, "declutter.ai_decisions");
   requireNoDuplicates(decisionIds, "decision item_id");
@@ -147,7 +190,8 @@ export function normaliseDeclutterUploadResponse(response) {
   // Join order follows analysis.items (the backend's own documented
   // deterministic spatial ordering) — never decision-array order, and
   // never label text. `{...detection}` copies every original detection
-  // field through unchanged; no `id` alias is ever introduced.
+  // field through unchanged (including corrected_label/label_source/
+  // effective_label) — no `id` alias is ever introduced.
   const items = detections.map((detection) => {
     const itemId = detection.item_id;
     const isExpected = expectedIdSet.has(itemId);
@@ -165,4 +209,18 @@ export function normaliseDeclutterUploadResponse(response) {
   });
 
   return { runId, analysis, declutter, items };
+}
+
+export function normaliseDeclutterUploadResponse(response) {
+  return normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath: true });
+}
+
+// POST /override's response — see app/api/routes.py's OverrideResponse:
+// { run_id, analysis, declutter }, no `path` field at all (it isn't one
+// of the three declutter/reorganise/both upload paths, it's a
+// correction to an existing run). Same shape and same invariants as
+// /upload's response otherwise, since it's a full (analysis, declutter)
+// pair, not a patch — reuses the identical join/validation logic above.
+export function normaliseOverrideResponse(response) {
+  return normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath: false });
 }

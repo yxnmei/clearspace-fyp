@@ -32,6 +32,9 @@ export default function DeclutterPage() {
     setDecisionOverride,
     setItemExcluded,
     confirm,
+    correctLabel,
+    correctingItemId,
+    correctionError,
   } = useDeclutterFlow();
 
   const [submittedFile, setSubmittedFile] = useState(null);
@@ -61,6 +64,9 @@ export default function DeclutterPage() {
           confirmationStatus={confirmationStatus}
           confirmationError={confirmationError}
           confirmation={confirmation}
+          correctLabel={correctLabel}
+          correctingItemId={correctingItemId}
+          correctionError={correctionError}
         />
       )}
     </div>

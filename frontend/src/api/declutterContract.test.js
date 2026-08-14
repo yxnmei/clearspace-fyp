@@ -1,14 +1,23 @@
 import { describe, expect, test } from "vitest";
-import { normaliseDeclutterUploadResponse } from "./declutterContract";
+import { normaliseDeclutterUploadResponse, normaliseOverrideResponse } from "./declutterContract";
 
 function makeDetection(overrides = {}) {
+  const cleanLabel = overrides.clean_label ?? "lamp";
+  const correctedLabel = "corrected_label" in overrides ? overrides.corrected_label : null;
   return {
     item_id: "item_001",
     raw_phrase: "lamp",
-    clean_label: "lamp",
+    clean_label: cleanLabel,
     position: "upper-left",
     relative_size: "small",
     confidence: 0.8,
+    // Real /upload and /override responses always carry these three —
+    // label_source/effective_label are backend-computed from
+    // corrected_label, so the defaults here agree with the "no
+    // correction" case unless a test overrides corrected_label.
+    corrected_label: correctedLabel,
+    label_source: correctedLabel !== null ? "user" : "detector",
+    effective_label: correctedLabel !== null ? correctedLabel : cleanLabel,
     ...overrides,
   };
 }
@@ -426,5 +435,251 @@ describe("normaliseDeclutterUploadResponse", () => {
 
     expect(result.items[0].item_id).toBe("item_001");
     expect("id" in result.items[0]).toBe(false);
+  });
+
+  // --- label-correction provenance (shared by both normalisers — see
+  // normaliseOverrideResponse's own describe block below for the
+  // override-specific scenarios) ---
+
+  test("a corrected label with self-consistent label_source/effective_label is accepted", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [makeDetection({ item_id: "item_001", clean_label: "box", corrected_label: "hoodie" })],
+      },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [makeDecision({ item_id: "item_001" })],
+        item_validity: { item_001: "raw_valid" },
+      },
+    });
+
+    const result = normaliseDeclutterUploadResponse(response);
+
+    expect(result.items[0].clean_label).toBe("box"); // never overwritten
+    expect(result.items[0].corrected_label).toBe("hoodie");
+    expect(result.items[0].label_source).toBe("user");
+    expect(result.items[0].effective_label).toBe("hoodie");
+  });
+
+  test("rejects a blank (non-null) corrected_label", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [
+          makeDetection({
+            item_id: "item_001",
+            corrected_label: "   ",
+            label_source: "user",
+            effective_label: "   ",
+          }),
+        ],
+      },
+    });
+    expect(() => normaliseDeclutterUploadResponse(response)).toThrow(/corrected_label must be null or a non-empty string/);
+  });
+
+  test("rejects label_source=\"user\" with no corrected_label", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [
+          makeDetection({ item_id: "item_001", clean_label: "box", corrected_label: null, label_source: "user" }),
+        ],
+      },
+    });
+    expect(() => normaliseDeclutterUploadResponse(response)).toThrow(/label_source.*does not agree/);
+  });
+
+  test("rejects label_source=\"detector\" when corrected_label is present", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [
+          makeDetection({
+            item_id: "item_001",
+            clean_label: "box",
+            corrected_label: "hoodie",
+            label_source: "detector",
+          }),
+        ],
+      },
+    });
+    expect(() => normaliseDeclutterUploadResponse(response)).toThrow(/label_source.*does not agree/);
+  });
+
+  test("rejects an effective_label that does not equal corrected_label when corrected", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [
+          makeDetection({
+            item_id: "item_001",
+            clean_label: "box",
+            corrected_label: "hoodie",
+            effective_label: "something-else",
+          }),
+        ],
+      },
+    });
+    expect(() => normaliseDeclutterUploadResponse(response)).toThrow(/effective_label does not equal/);
+  });
+
+  test("rejects an effective_label that does not equal clean_label when uncorrected", () => {
+    const response = baseResponse({
+      analysis: {
+        items: [makeDetection({ item_id: "item_001", clean_label: "box", effective_label: "not-box" })],
+      },
+    });
+    expect(() => normaliseDeclutterUploadResponse(response)).toThrow(/effective_label does not equal/);
+  });
+});
+
+describe("normaliseOverrideResponse", () => {
+  function baseOverrideResponse({ runId = "run_abc", analysis = {}, declutter = {} } = {}) {
+    return {
+      run_id: runId,
+      analysis: baseAnalysis({ run_id: runId, ...analysis }),
+      declutter: baseDeclutter({ run_id: runId, ...declutter }),
+    };
+  }
+
+  test("has no path field, and is still accepted", () => {
+    const response = baseOverrideResponse({
+      analysis: { items: [makeDetection({ item_id: "item_001", clean_label: "box", corrected_label: "hoodie" })] },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [makeDecision({ item_id: "item_001", decision: "sell" })],
+        item_validity: { item_001: "mechanically_repaired" },
+      },
+    });
+    expect(response.path).toBeUndefined();
+
+    const result = normaliseOverrideResponse(response);
+
+    expect(result.runId).toBe("run_abc");
+    expect(result.items[0].effective_label).toBe("hoodie");
+  });
+
+  test("a successful correction of a resolved item is joined correctly", () => {
+    const response = baseOverrideResponse({
+      analysis: {
+        items: [makeDetection({ item_id: "item_001", clean_label: "box", corrected_label: "hoodie" })],
+      },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [makeDecision({ item_id: "item_001", decision: "sell", reason: "still wearable" })],
+        item_validity: { item_001: "mechanically_repaired" },
+      },
+    });
+
+    const result = normaliseOverrideResponse(response);
+
+    expect(result.items[0]).toMatchObject({
+      item_id: "item_001",
+      corrected_label: "hoodie",
+      label_source: "user",
+      effective_label: "hoodie",
+      ai_decision: "sell",
+      ai_reason: "still wearable",
+      item_validity: "mechanically_repaired",
+      is_expected: true,
+      is_unresolved: false,
+    });
+  });
+
+  test("a successful correction resolving a previously unresolved item", () => {
+    const response = baseOverrideResponse({
+      analysis: {
+        items: [makeDetection({ item_id: "item_001", clean_label: "thing", corrected_label: "hoodie" })],
+      },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [makeDecision({ item_id: "item_001", decision: "donate", reason: "x" })],
+        unresolved_item_ids: [],
+        item_validity: { item_001: "raw_valid" },
+        is_complete: true,
+      },
+    });
+
+    const result = normaliseOverrideResponse(response);
+
+    expect(result.items[0].is_unresolved).toBe(false);
+    expect(result.items[0].ai_decision).toBe("donate");
+    expect(result.declutter.is_complete).toBe(true);
+  });
+
+  test("a failed correction leaves the item unresolved but keeps the corrected label", () => {
+    const response = baseOverrideResponse({
+      analysis: {
+        items: [makeDetection({ item_id: "item_001", clean_label: "thing", corrected_label: "hoodie" })],
+      },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [],
+        unresolved_item_ids: ["item_001"],
+        item_validity: { item_001: "still_invalid" },
+        is_complete: false,
+      },
+    });
+
+    const result = normaliseOverrideResponse(response);
+
+    expect(result.items[0].is_unresolved).toBe(true);
+    expect(result.items[0].ai_decision).toBeNull();
+    expect(result.items[0].corrected_label).toBe("hoodie"); // preserved despite failure
+    expect(result.items[0].effective_label).toBe("hoodie");
+  });
+
+  test("two same-label items remain independent after only one is corrected", () => {
+    const response = baseOverrideResponse({
+      analysis: {
+        items: [
+          makeDetection({ item_id: "item_004", clean_label: "picture frame", corrected_label: "painting" }),
+          makeDetection({ item_id: "item_006", clean_label: "picture frame" }),
+        ],
+      },
+      declutter: {
+        expected_item_ids: ["item_004", "item_006"],
+        ai_decisions: [
+          makeDecision({ item_id: "item_004", decision: "keep" }),
+          makeDecision({ item_id: "item_006", decision: "discard" }),
+        ],
+        item_validity: { item_004: "raw_valid", item_006: "raw_valid" },
+      },
+    });
+
+    const result = normaliseOverrideResponse(response);
+
+    const item004 = result.items.find((i) => i.item_id === "item_004");
+    const item006 = result.items.find((i) => i.item_id === "item_006");
+    expect(item004.effective_label).toBe("painting");
+    expect(item004.label_source).toBe("user");
+    expect(item006.effective_label).toBe("picture frame"); // untouched
+    expect(item006.label_source).toBe("detector");
+  });
+
+  test("rejects a response whose analysis.run_id does not match the top-level run_id", () => {
+    const response = baseOverrideResponse();
+    response.analysis.run_id = "different_run";
+    expect(() => normaliseOverrideResponse(response)).toThrow(/run_id/);
+  });
+
+  test("rejects a response whose declutter.run_id does not match the top-level run_id", () => {
+    const response = baseOverrideResponse();
+    response.declutter.run_id = "different_run";
+    expect(() => normaliseOverrideResponse(response)).toThrow(/run_id/);
+  });
+
+  test("rejects a contradictory corrected-label/label_source pair, same as upload", () => {
+    const response = baseOverrideResponse({
+      analysis: {
+        items: [
+          makeDetection({ item_id: "item_001", clean_label: "box", corrected_label: "hoodie", label_source: "detector" }),
+        ],
+      },
+    });
+    expect(() => normaliseOverrideResponse(response)).toThrow(/label_source.*does not agree/);
+  });
+
+  test("does not require or reject a path field either way", () => {
+    const withPath = baseOverrideResponse();
+    withPath.path = "declutter"; // a stray path field must not be required NOR cause rejection
+    expect(() => normaliseOverrideResponse(withPath)).not.toThrow();
   });
 });

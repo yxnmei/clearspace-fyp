@@ -38,10 +38,12 @@ function makeDeclutter(overrides = {}) {
 }
 
 function makeResolvedReviewItem(overrides = {}) {
+  const cleanLabel = overrides.clean_label ?? "lamp";
+  const correctedLabel = "corrected_label" in overrides ? overrides.corrected_label : null;
   return {
     item_id: "item_001",
     raw_phrase: "lamp",
-    clean_label: "lamp",
+    clean_label: cleanLabel,
     position: "upper-left",
     relative_size: "small",
     confidence: 0.8,
@@ -56,6 +58,9 @@ function makeResolvedReviewItem(overrides = {}) {
     review_user_reason: null,
     decision_changed: false,
     has_decision_override: false,
+    corrected_label: correctedLabel,
+    label_source: correctedLabel !== null ? "user" : "detector",
+    effective_label: correctedLabel !== null ? correctedLabel : cleanLabel,
     ...overrides,
   };
 }
@@ -364,5 +369,162 @@ describe("DeclutterReview", () => {
     // the item list exist in the DOM regardless of viewport.
     expect(screen.getByRole("img", { name: /detected item outlines/i })).toBeInTheDocument();
     expect(screen.getByText("lamp")).toBeInTheDocument();
+  });
+
+  test("an unresolved item's correction control works and reaches correctLabel", async () => {
+    const user = userEvent.setup();
+    const correctLabel = vi.fn();
+    const unresolvedItem = {
+      item_id: "item_003",
+      clean_label: "cable",
+      position: "center",
+      relative_size: "small",
+      confidence: 0.5,
+      box: { x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4 },
+      ai_decision: null,
+      ai_reason: null,
+      item_validity: "still_invalid",
+      is_expected: true,
+      is_unresolved: true,
+      review_decision: null,
+      review_excluded: false,
+      review_user_reason: null,
+      decision_changed: false,
+      has_decision_override: false,
+      corrected_label: null,
+      label_source: "detector",
+      effective_label: "cable",
+    };
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_003"], unresolved_item_ids: ["item_003"] }),
+      reviewItems: [unresolvedItem],
+      correctLabel,
+    });
+    render(<DeclutterReview {...props} />);
+
+    await user.click(screen.getByRole("button", { name: /wrong label/i }));
+    const input = screen.getByLabelText(/corrected label/i);
+    await user.clear(input);
+    await user.type(input, "charger");
+    await user.click(screen.getByRole("button", { name: /submit correction/i }));
+
+    expect(correctLabel).toHaveBeenCalledWith("item_003", "charger");
+  });
+
+  test("a corrected but still-unresolved item preserves its corrected label and stays visibly unresolved", () => {
+    const unresolvedItem = {
+      item_id: "item_003",
+      clean_label: "cable",
+      position: "center",
+      relative_size: "small",
+      confidence: 0.5,
+      box: { x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4 },
+      ai_decision: null,
+      ai_reason: null,
+      item_validity: "still_invalid",
+      is_expected: true,
+      is_unresolved: true,
+      review_decision: null,
+      review_excluded: false,
+      review_user_reason: null,
+      decision_changed: false,
+      has_decision_override: false,
+      corrected_label: "charger",
+      label_source: "user",
+      effective_label: "charger",
+    };
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_003"], unresolved_item_ids: ["item_003"] }),
+      reviewItems: [unresolvedItem],
+    });
+    render(<DeclutterReview {...props} />);
+
+    expect(screen.getByText("charger")).toBeInTheDocument();
+    expect(screen.queryByText("cable")).not.toBeInTheDocument();
+    expect(screen.getByText("Corrected by you")).toBeInTheDocument();
+    expect(screen.getByText(/no valid ai decision was produced/i)).toBeInTheDocument();
+  });
+
+  test("contextual items display effective_label but offer no correction control", () => {
+    const contextualItem = {
+      item_id: "item_099",
+      clean_label: "wall",
+      position: "center",
+      relative_size: "large",
+      confidence: 0.9,
+      box: { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+      ai_decision: null,
+      ai_reason: null,
+      item_validity: null,
+      is_expected: false,
+      is_unresolved: false,
+      review_decision: null,
+      review_excluded: false,
+      review_user_reason: null,
+      decision_changed: false,
+      has_decision_override: false,
+      corrected_label: null,
+      label_source: "detector",
+      effective_label: "wall",
+    };
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: [] }),
+      reviewItems: [contextualItem],
+    });
+    render(<DeclutterReview {...props} />);
+
+    expect(screen.getByText("wall")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /wrong label/i })).not.toBeInTheDocument();
+  });
+
+  test("confirmation is disabled while a correction is in flight", () => {
+    const reviewItems = [makeResolvedReviewItem({ item_id: "item_001" })];
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_001"] }),
+      reviewItems,
+      correctingItemId: "item_001",
+    });
+    render(<DeclutterReview {...props} />);
+
+    expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeDisabled();
+  });
+
+  test("every correction control is disabled while any single correction is in flight", () => {
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }),
+      reviewItems,
+      correctingItemId: "item_001",
+    });
+    render(<DeclutterReview {...props} />);
+
+    const wrongLabelButtons = screen.getAllByRole("button", { name: /wrong label|correcting/i });
+    expect(wrongLabelButtons.length).toBeGreaterThan(0);
+    wrongLabelButtons.forEach((button) => expect(button).toBeDisabled());
+  });
+
+  test("a correction error only appears next to the item it belongs to", async () => {
+    const user = userEvent.setup();
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    const props = baseProps({
+      declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }),
+      reviewItems,
+      correctionError: { itemId: "item_001", message: "Label correction failed" },
+    });
+    render(<DeclutterReview {...props} />);
+
+    const wrongLabelButtons = screen.getAllByRole("button", { name: /wrong label/i });
+    for (const button of wrongLabelButtons) {
+      await user.click(button); // open every card's correction form
+    }
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1); // only item_001's form shows the error
+    expect(screen.getByRole("alert")).toHaveTextContent("Label correction failed");
   });
 });

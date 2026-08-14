@@ -77,6 +77,42 @@ describe("ConfirmationSummary", () => {
     expect(items[1]).toHaveTextContent(/\(left\)/);
   });
 
+  test("a corrected Keep item's summary entry shows effective_label, not clean_label", () => {
+    const confirmation = {
+      runId: "run1",
+      confirmedDecisions: [makeConfirmedDecision({ item_id: "item_001" })],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 0,
+      excludedCount: 0,
+      response: {},
+    };
+    const reviewItems = [
+      { item_id: "item_001", clean_label: "box", corrected_label: "hoodie", effective_label: "hoodie", position: "left" },
+    ];
+
+    render(<ConfirmationSummary confirmation={confirmation} reviewItems={reviewItems} />);
+
+    const entry = screen.getAllByRole("listitem")[0];
+    expect(entry).toHaveTextContent("hoodie");
+    expect(entry).not.toHaveTextContent("box");
+  });
+
+  test("an uncorrected Keep item's summary entry falls back to clean_label", () => {
+    const confirmation = {
+      runId: "run1",
+      confirmedDecisions: [makeConfirmedDecision({ item_id: "item_001" })],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 0,
+      excludedCount: 0,
+      response: {},
+    };
+    const reviewItems = [{ item_id: "item_001", clean_label: "lamp", position: "left" }];
+
+    render(<ConfirmationSummary confirmation={confirmation} reviewItems={reviewItems} />);
+
+    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("lamp");
+  });
+
   test("shows a message when no items were confirmed as Keep", () => {
     const confirmation = {
       runId: "run1",

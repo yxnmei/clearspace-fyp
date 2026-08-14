@@ -134,4 +134,21 @@ describe("AnalysedRoomPanel", () => {
     expect(unresolvedBox.className).not.toBe(contextualBox.className);
     expect(unresolvedBox.className).not.toBe(resolvedBox.className);
   });
+
+  test("a corrected item's box accessible label shows effective_label, not clean_label", () => {
+    render(
+      <AnalysedRoomPanel
+        {...baseProps({
+          items: [makeItem({ item_id: "item_001", clean_label: "box", corrected_label: "hoodie", effective_label: "hoodie" })],
+        })}
+      />
+    );
+    expect(screen.getByRole("button", { name: /detection 1: hoodie/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /detection 1: box/i })).not.toBeInTheDocument();
+  });
+
+  test("an uncorrected item's box accessible label falls back to clean_label", () => {
+    render(<AnalysedRoomPanel {...baseProps({ items: [makeItem({ item_id: "item_001", clean_label: "lamp" })] })} />);
+    expect(screen.getByRole("button", { name: /detection 1: lamp/i })).toBeInTheDocument();
+  });
 });

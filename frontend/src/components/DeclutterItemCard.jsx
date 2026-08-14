@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { decisionColor, formatConfidence, itemNumberLabel } from "../utils/format";
 
 const DECISIONS = [
@@ -6,6 +7,90 @@ const DECISIONS = [
   { value: "donate", label: "Donate" },
   { value: "discard", label: "Discard" },
 ];
+
+// Shared by DeclutterItemCard (resolved items) and DeclutterReview's
+// unresolved-items list — a label correction is available for both (see
+// each call site for why), so the form itself lives here once rather
+// than being duplicated. Collapsed to a single "Wrong label?" toggle
+// until opened, so it doesn't visually compete with the primary decision
+// controls on every card by default.
+//
+// isCorrecting/correctionDisabled/correctionError are the UI's local
+// reflection of useDeclutterFlow's correctingItemId/correctionError —
+// this component never calls the API itself (onCorrectLabel is the only
+// way out), matching every other control in this file.
+export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled, correctionError, onCorrectLabel }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [labelInput, setLabelInput] = useState("");
+
+  function handleOpen() {
+    setLabelInput(item.effective_label ?? item.clean_label);
+    setIsOpen(true);
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    const trimmed = labelInput.trim();
+    if (!trimmed) return; // blank labels are never submitted — button is also disabled below
+    onCorrectLabel(item.item_id, trimmed);
+  }
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={handleOpen}
+        disabled={correctionDisabled}
+        className="text-xs font-medium text-stone-600 underline decoration-dotted hover:text-stone-900 disabled:cursor-not-allowed disabled:text-stone-300"
+      >
+        Wrong label? Correct it
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-1">
+      <label htmlFor={`correct-label-${item.item_id}`} className="mb-1 block text-xs font-medium text-stone-700">
+        Corrected label
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          id={`correct-label-${item.item_id}`}
+          type="text"
+          value={labelInput}
+          onChange={(event) => setLabelInput(event.target.value)}
+          disabled={isCorrecting}
+          className="rounded-md border border-stone-300 px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
+        />
+        <button
+          type="submit"
+          disabled={isCorrecting || labelInput.trim() === ""}
+          className="rounded-md bg-stone-800 px-3 py-1 text-xs font-medium text-white hover:bg-stone-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+        >
+          {isCorrecting ? "Correcting…" : "Submit correction"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsOpen(false)}
+          disabled={isCorrecting}
+          className="text-xs text-stone-500 underline disabled:cursor-not-allowed disabled:text-stone-300"
+        >
+          Cancel
+        </button>
+      </div>
+      {isCorrecting && (
+        <p role="status" className="sr-only">
+          Correcting label for {item.effective_label ?? item.clean_label}…
+        </p>
+      )}
+      {correctionError && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {correctionError}
+        </p>
+      )}
+    </form>
+  );
+}
 
 // One card per resolved, expected item — decision controls call back to
 // useDeclutterFlow's setDecisionOverride/setItemExcluded, keyed only by
@@ -28,8 +113,13 @@ export default function DeclutterItemCard({
   onActivate = () => {},
   onDeactivate = () => {},
   registerRef = () => {},
+  onCorrectLabel = () => {},
+  isCorrecting = false,
+  correctionDisabled = false,
+  correctionError = null,
 }) {
   const groupName = `decision-${item.item_id}`;
+  const displayLabel = item.effective_label ?? item.clean_label;
 
   return (
     <li
@@ -48,7 +138,7 @@ export default function DeclutterItemCard({
             <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-stone-800 text-[11px] font-semibold text-white">
               {itemNumberLabel(item.item_id)}
             </span>
-            {item.clean_label}
+            {displayLabel}
           </p>
           <p className="text-xs text-stone-500">
             item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
@@ -56,6 +146,11 @@ export default function DeclutterItemCard({
           </p>
         </div>
         <div className="flex gap-2">
+          {item.label_source === "user" && (
+            <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">
+              Corrected by you
+            </span>
+          )}
           {item.decision_changed && (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
               Changed
@@ -103,6 +198,16 @@ export default function DeclutterItemCard({
         />
         Exclude this item — it will not be sent for confirmation or reach later stages
       </label>
+
+      <div className="mt-3 border-t border-stone-100 pt-3">
+        <LabelCorrectionControl
+          item={item}
+          isCorrecting={isCorrecting}
+          correctionDisabled={correctionDisabled}
+          correctionError={correctionError}
+          onCorrectLabel={onCorrectLabel}
+        />
+      </div>
     </li>
   );
 }

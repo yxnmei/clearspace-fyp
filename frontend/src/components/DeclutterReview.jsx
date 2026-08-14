@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { formatConfidence } from "../utils/format";
 import AnalysedRoomPanel from "./AnalysedRoomPanel";
-import DeclutterItemCard from "./DeclutterItemCard";
+import DeclutterItemCard, { LabelCorrectionControl } from "./DeclutterItemCard";
 import ConfirmationSummary from "./ConfirmationSummary";
 
 // Renders the joined reviewItems useDeclutterFlow already built — this
@@ -28,7 +28,20 @@ export default function DeclutterReview({
   confirmationStatus,
   confirmationError,
   confirmation,
+  correctLabel = () => {},
+  correctingItemId = null,
+  correctionError = null,
 }) {
+  // Any correction in flight disables every item's correction control
+  // (not just the one being corrected) — see useDeclutterFlow's
+  // correctLabel docstring for why cross-item corrections are serialized
+  // rather than run concurrently. correctionErrorFor scopes the shared
+  // { itemId, message } error down to the one card it actually belongs
+  // to, so a failure on one item never appears next to another.
+  const correctionDisabled = correctingItemId !== null;
+  function correctionErrorFor(itemId) {
+    return correctionError && correctionError.itemId === itemId ? correctionError.message : null;
+  }
   const [activeItemId, setActiveItemId] = useState(null);
   // Defaults to true so the analysed image visibly shows its detection
   // boxes as soon as results appear — a false default left the panel
@@ -77,7 +90,8 @@ export default function DeclutterReview({
 
   const totalDurationMs = (analysis.stage_timings ?? []).reduce((sum, stage) => sum + stage.duration_ms, 0);
 
-  const confirmDisabled = confirmationStatus === "confirming" || !declutter || unresolvedCount > 0;
+  const confirmDisabled =
+    confirmationStatus === "confirming" || !declutter || unresolvedCount > 0 || correctingItemId !== null;
 
   return (
     <div className="mt-6 space-y-6">
@@ -145,6 +159,10 @@ export default function DeclutterReview({
                     onActivate={() => activateItem(item.item_id)}
                     onDeactivate={() => deactivateItem(item.item_id)}
                     registerRef={registerItemRef}
+                    onCorrectLabel={correctLabel}
+                    isCorrecting={correctingItemId === item.item_id}
+                    correctionDisabled={correctionDisabled}
+                    correctionError={correctionErrorFor(item.item_id)}
                   />
                 ))}
               </ul>
@@ -159,7 +177,8 @@ export default function DeclutterReview({
           <h2 className="mb-2 text-sm font-medium text-red-900">Unresolved items ({unresolvedItems.length})</h2>
           <p className="mb-3 text-sm text-red-800">
             The AI could not produce a valid decision for these items. Confirmation is blocked until every item is
-            resolved — no decision can be fabricated for them here.
+            resolved — no decision can be fabricated for them here. If the detected label looks wrong, correcting it
+            lets ClearSpace retry its reasoning for just this one item.
           </p>
           <ul className="space-y-2">
             {unresolvedItems.map((item) => (
@@ -174,11 +193,25 @@ export default function DeclutterReview({
                 onBlur={() => deactivateItem(item.item_id)}
                 className={`rounded-md border bg-white p-3 text-sm ${item.item_id === activeItemId ? "border-stone-900 ring-1 ring-stone-900" : "border-red-200"}`}
               >
-                <span className="font-medium text-stone-900">{item.clean_label}</span>{" "}
+                <span className="font-medium text-stone-900">{item.effective_label ?? item.clean_label}</span>{" "}
+                {item.label_source === "user" && (
+                  <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">
+                    Corrected by you
+                  </span>
+                )}{" "}
                 <span className="text-stone-500">
                   (item_id: <code>{item.item_id}</code>, {item.position}, {item.relative_size})
                 </span>
                 <p className="mt-1 text-red-700">No valid AI decision was produced for this item.</p>
+                <div className="mt-2">
+                  <LabelCorrectionControl
+                    item={item}
+                    isCorrecting={correctingItemId === item.item_id}
+                    correctionDisabled={correctionDisabled}
+                    correctionError={correctionErrorFor(item.item_id)}
+                    onCorrectLabel={correctLabel}
+                  />
+                </div>
               </li>
             ))}
           </ul>
@@ -205,7 +238,7 @@ export default function DeclutterReview({
                 onBlur={() => deactivateItem(item.item_id)}
                 className={`rounded-md border bg-white p-3 text-sm text-stone-700 ${item.item_id === activeItemId ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-200"}`}
               >
-                <span className="font-medium">{item.clean_label}</span>{" "}
+                <span className="font-medium">{item.effective_label ?? item.clean_label}</span>{" "}
                 <span className="text-stone-500">
                   (item_id: <code>{item.item_id}</code>, {item.position}, {item.relative_size})
                 </span>

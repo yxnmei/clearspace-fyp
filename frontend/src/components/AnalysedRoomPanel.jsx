@@ -56,7 +56,7 @@ export default function AnalysedRoomPanel({ imageUrl, items, activeItemId, onBox
                 key={item.item_id}
                 type="button"
                 onClick={() => onBoxClick(item.item_id)}
-                aria-label={`Detection ${itemNumberLabel(item.item_id)}: ${item.clean_label}`}
+                aria-label={`Detection ${itemNumberLabel(item.item_id)}: ${item.effective_label ?? item.clean_label}`}
                 aria-current={isActive ? "true" : undefined}
                 className={boxClassName(item, isActive, isQuiet)}
                 style={{

@@ -65,7 +65,7 @@ export default function ConfirmationSummary({ confirmation, reviewItems }) {
               {matched && (
                 <>
                   {" — "}
-                  {matched.clean_label}
+                  {matched.effective_label ?? matched.clean_label}
                   {matched.position && <span className="text-stone-500"> ({matched.position})</span>}
                 </>
               )}
