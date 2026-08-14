@@ -67,6 +67,23 @@ _model_cache = None  # loaded lazily, cached at module level — the checkpoint
 # is large enough that reloading it per call would dominate latency in both
 # the eval harness (called once per image) and the live API.
 
+# backend/ (this file's grandparent) — computed from this file's own location,
+# not the process working directory. settings.grounding_dino_*_path default to
+# relative strings (e.g. "weights/..."); resolving those against os.getcwd()
+# meant launching uvicorn/pytest from the repo root instead of backend/ caused
+# a real startup 503 (see DEVLOG.md / tests/system/README.md, 2026-08-11).
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _resolve_backend_path(configured: str) -> Path:
+    """Resolves a configured model path against `_BACKEND_ROOT`, independent
+    of the process working directory. Absolute paths pass through unchanged
+    (still usable as-is, per an explicit override)."""
+    path = Path(configured)
+    if path.is_absolute():
+        return path
+    return _BACKEND_ROOT / path
+
 
 def load_model():
     """
@@ -80,8 +97,8 @@ def load_model():
     from groundingdino.util.inference import load_model as _load_model
 
     settings = get_settings()
-    config_path = Path(settings.grounding_dino_config_path)
-    weights_path = Path(settings.grounding_dino_weights_path)
+    config_path = _resolve_backend_path(settings.grounding_dino_config_path)
+    weights_path = _resolve_backend_path(settings.grounding_dino_weights_path)
     if not config_path.exists() or not weights_path.exists():
         raise FileNotFoundError(
             f"Grounding DINO config/weights not found at {config_path} / {weights_path} "
