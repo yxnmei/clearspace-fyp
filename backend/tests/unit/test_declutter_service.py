@@ -36,6 +36,8 @@ from app.models.mistral_llm import LLMResult
 from app.services.declutter_service import (
     DeclutterReasoningError,
     DeclutterResult,
+    ReclassifyItemResult,
+    reclassify_item,
     run_declutter,
 )
 
@@ -624,6 +626,323 @@ def test_empty_actionable_set_is_complete_and_strictly_valid():
 
     assert result.is_complete is True
     assert result.is_strictly_valid is True
+
+
+# ---------------------------------------------------------------------------
+# reclassify_item() — POST /override's service-level implementation
+# ---------------------------------------------------------------------------
+
+
+def _base_run(item_count: int = 1, decisions: list[str] | None = None) -> tuple[AnalysisResult, DeclutterResult]:
+    """A genuine, validator-passing (analysis, declutter) pair, produced
+    by run_declutter() itself (not hand-assembled) — exactly the shape
+    reclassify_item() actually receives in production."""
+    decisions = decisions or ["keep"] * item_count
+    items = [_item(n) for n in range(1, item_count + 1)]
+    analysis = _analysis(items)
+    main = _llm_result(
+        [_ai_dict(n, d) for n, d in enumerate(decisions, start=1)],
+        item_provenance={n: ItemValidity.RAW_VALID for n in range(1, item_count + 1)},
+    )
+    declutter = run_declutter(analysis, user_context=None, llm_classifier=FakeLLMClassifier([main]))
+    return analysis, declutter
+
+
+def test_reclassify_item_success_reports_truthful_raw_valid_not_hardcoded_recovery_used():
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert isinstance(result, ReclassifyItemResult)
+    assert result.declutter.item_validity["item_001"] == ItemValidity.RAW_VALID  # NOT RECOVERY_USED
+    assert result.declutter.is_complete is True
+
+
+def test_reclassify_item_success_reports_truthful_mechanically_repaired():
+    # This is the specific case that would have been mislabeled by
+    # blindly reusing _targeted_recovery's hardcoded-RECOVERY_USED
+    # convention — the fresh call's own provenance hint must survive
+    # into the result unchanged.
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.MECHANICALLY_REPAIRED})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.MECHANICALLY_REPAIRED
+
+
+def test_reclassify_item_success_reports_truthful_recovery_used():
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RECOVERY_USED})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.RECOVERY_USED
+
+
+def test_reclassify_item_untrusted_provenance_is_not_trusted_as_a_decision():
+    analysis, declutter = _base_run()
+    # Mapped and semantically valid, but the wrapper never vouched for it
+    # (no provenance hint at all) — same conservative rule as
+    # run_declutter()'s main pass.
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    assert "item_001" not in {ai.item_id for ai in result.declutter.ai_decisions}
+    assert "item_001" in result.declutter.unresolved_item_ids
+    assert any(w.item_id == "item_001" for w in result.declutter.provenance_warnings)
+
+
+def test_reclassify_item_mapping_failure_produces_item_id_keyed_recovery_failure():
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([], item_provenance={})  # item_number 1 entirely absent
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    assert "item_001" in result.declutter.unresolved_item_ids
+    failures = [f for f in result.declutter.recovery_failures if f.item_id == "item_001"]
+    assert len(failures) == 1
+    assert failures[0].stage == "mapping"
+
+
+def test_reclassify_item_semantic_failure_produces_item_id_keyed_recovery_failure():
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result(
+        [_ai_dict(1, "bad-decision")], item_provenance={1: ItemValidity.RAW_VALID}
+    )
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    failures = [f for f in result.declutter.recovery_failures if f.item_id == "item_001"]
+    assert len(failures) == 1
+    assert failures[0].stage == "semantic"
+
+
+def test_reclassify_item_classifier_exception_produces_item_id_keyed_recovery_failure():
+    analysis, declutter = _base_run()
+    classifier = FakeLLMClassifier([RuntimeError("ollama unreachable")])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    failures = [f for f in result.declutter.recovery_failures if f.item_id == "item_001"]
+    assert len(failures) == 1
+    assert failures[0].stage == "call"
+    assert failures[0].exception_type == "RuntimeError"
+
+
+def test_reclassify_item_never_appends_locally_renumbered_warnings_to_run_wide_lists():
+    # The correction call always numbers its one item "1" locally,
+    # regardless of the item's real position — mapping_warnings/
+    # semantic_errors (item_number-keyed, no item_id) must stay exactly
+    # as they were, never gain a misleading "item_number: 1" entry from
+    # this call.
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([], item_provenance={})  # triggers a mapping failure
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.mapping_warnings == declutter.mapping_warnings
+    assert result.declutter.semantic_errors == declutter.semantic_errors
+
+
+@pytest.mark.parametrize(
+    "response_or_exc",
+    [
+        _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID}),  # success
+        _llm_result([], item_provenance={}),  # failure
+    ],
+    ids=["success", "failure"],
+)
+def test_reclassify_item_preserves_identity_and_box_either_way(response_or_exc):
+    analysis, declutter = _base_run()
+    original = analysis.items[0]
+    classifier = FakeLLMClassifier([response_or_exc])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    corrected = result.analysis.items[0]
+    assert corrected.item_id == original.item_id
+    assert corrected.box == original.box
+    assert corrected.raw_phrase == original.raw_phrase
+    assert corrected.clean_label == original.clean_label  # never overwritten
+    assert corrected.confidence == original.confidence
+    assert corrected.position == original.position
+    assert corrected.relative_size == original.relative_size
+    assert corrected.source_detection_index == original.source_detection_index
+    assert corrected.item_role == original.item_role
+    assert corrected.item_role_source == original.item_role_source
+
+
+def test_reclassify_item_failure_still_preserves_the_users_correction_attempt():
+    analysis, declutter = _base_run()
+    classifier = FakeLLMClassifier([RuntimeError("boom")])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    corrected = result.analysis.items[0]
+    assert corrected.corrected_label == "hoodie"
+    assert corrected.label_source == "user"
+    assert corrected.effective_label == "hoodie"
+    # ...even though the reclassification itself failed:
+    assert result.declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    assert "item_001" not in {ai.item_id for ai in result.declutter.ai_decisions}
+
+
+def test_reclassify_item_leaves_other_items_completely_untouched():
+    analysis, declutter = _base_run(item_count=2, decisions=["keep", "donate"])
+    original_item_002 = analysis.items[1]
+    original_ai_002 = next(ai for ai in declutter.ai_decisions if ai.item_id == "item_002")
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.analysis.items[1] == original_item_002
+    assert result.declutter.item_validity["item_002"] == ItemValidity.RAW_VALID
+    new_ai_002 = next(ai for ai in result.declutter.ai_decisions if ai.item_id == "item_002")
+    assert new_ai_002 == original_ai_002
+
+
+def test_reclassify_item_scene_and_user_context_pass_through_unchanged():
+    items = [_item(1)]
+    analysis = _analysis(items, scene_label="kitchen")
+    main = _llm_result([_ai_dict(1, "keep")], item_provenance={1: ItemValidity.RAW_VALID})
+    declutter = run_declutter(analysis, user_context="downsizing", llm_classifier=FakeLLMClassifier([main]))
+
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context="downsizing", llm_classifier=classifier
+    )
+
+    assert len(classifier.calls) == 1
+    call = classifier.calls[0]
+    assert call["scene_label"] == "kitchen"
+    assert call["user_context"] == "downsizing"
+
+
+def test_reclassify_item_sends_effective_label_not_clean_label_to_the_llm():
+    analysis, declutter = _base_run()
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert classifier.calls[0]["detected_items"] == [
+        {"label": "hoodie", "confidence": 0.9, "position_hint": "small, upper-left"}
+    ]
+
+
+def test_reclassify_item_only_calls_the_classifier_once():
+    analysis, declutter = _base_run(item_count=2, decisions=["keep", "donate"])
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert len(classifier.calls) == 1  # only the target item, never a cascade over the rest
+
+
+def test_reclassify_item_supersedes_a_prior_recovery_failure_for_the_same_item():
+    items = [_item(1)]
+    analysis = _analysis(items)
+    # Original run: item_001 never resolves at all (both main and its own
+    # service-level recovery fail) -- ends up STILL_INVALID with a
+    # RecoveryFailure already recorded against it.
+    main = _llm_result([], item_provenance={})
+    recovery = _llm_result([], item_provenance={})
+    declutter = run_declutter(analysis, user_context=None, llm_classifier=FakeLLMClassifier([main, recovery]))
+    assert declutter.item_validity["item_001"] == ItemValidity.STILL_INVALID
+    assert any(f.item_id == "item_001" for f in declutter.recovery_failures)
+
+    # Now a label correction succeeds cleanly.
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.item_validity["item_001"] == ItemValidity.RAW_VALID
+    assert not any(f.item_id == "item_001" for f in result.declutter.recovery_failures)  # stale entry gone
+
+
+def test_reclassify_item_resolves_a_previously_unresolved_item():
+    items = [_item(1)]
+    analysis = _analysis(items)
+    main = _llm_result([], item_provenance={})
+    recovery = _llm_result([], item_provenance={})
+    declutter = run_declutter(analysis, user_context=None, llm_classifier=FakeLLMClassifier([main, recovery]))
+    assert declutter.is_complete is False
+    assert declutter.unresolved_item_ids == ["item_001"]
+
+    reclass_response = _llm_result([_ai_dict(1, "donate")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "storage box", user_context=None, llm_classifier=classifier
+    )
+
+    assert result.declutter.is_complete is True
+    assert result.declutter.unresolved_item_ids == []
+    assert result.declutter.ai_decisions[0].decision == Decision.DONATE
+
+
+def test_reclassify_item_output_satisfies_declutterresult_and_analysisresult_validators():
+    # Reaching these assertions at all is the proof — both are re-
+    # constructed via their normal (validating) constructors, not
+    # model_copy, inside reclassify_item().
+    analysis, declutter = _base_run(item_count=2, decisions=["keep", "donate"])
+    reclass_response = _llm_result([_ai_dict(1, "sell")], item_provenance={1: ItemValidity.RAW_VALID})
+    classifier = FakeLLMClassifier([reclass_response])
+
+    result = reclassify_item(
+        analysis, declutter, "item_001", "hoodie", user_context=None, llm_classifier=classifier
+    )
+
+    assert isinstance(result.analysis, AnalysisResult)
+    assert isinstance(result.declutter, DeclutterResult)
+    assert [ai.item_id for ai in result.declutter.ai_decisions] == ["item_001", "item_002"]
 
 
 # ---------------------------------------------------------------------------

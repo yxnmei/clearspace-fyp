@@ -277,13 +277,21 @@ class DeclutterResult(BaseModel):
 
 
 def _to_llm_item(item: DetectedItem) -> dict:
-    """clean_label/confidence/position_hint — the exact shape
+    """effective_label/confidence/position_hint — the exact shape
     classify_items()/build_classification_prompt() expect. position_hint
     reuses box_descriptors.describe_box()'s own "<relative_size>,
     <position>" joining convention, so a caller of classify_items()
-    directly (e.g. the eval scripts) and this path render identically."""
+    directly (e.g. the eval scripts) and this path render identically.
+
+    effective_label, not clean_label: for the overwhelming majority of
+    items (no user correction applied) these are identical, since
+    effective_label falls back to clean_label — this is a no-op change
+    for every existing caller/scenario. It only differs once
+    DetectedItem.corrected_label has been set (POST /override —
+    reclassify_item, below), which is exactly the case that must reach
+    the LLM instead of the detector's original (user-rejected) label."""
     return {
-        "label": item.clean_label,
+        "label": item.effective_label,
         "confidence": item.confidence,
         "position_hint": f"{item.relative_size}, {item.position}",
     }
@@ -491,12 +499,199 @@ def run_declutter(
     )
 
 
-def reclassify_item(run_id: str, item_id: str, new_label: str):
-    """Re-run LLM reasoning for a single item after user override (/override).
+class ReclassifyItemResult(BaseModel):
+    """The output of reclassify_item() — a full, freshly-validated
+    (analysis, declutter) pair with exactly one item corrected/
+    reclassified, everything else byte-identical to the inputs. Returned
+    as whole objects, not a patch/delta, so the caller (app/api/routes.py)
+    never has to hand-assemble a pydantic-validated nested object itself
+    — both AnalysisResult's and DeclutterResult's own model_validators
+    re-run on construction here, exactly as they would for any other
+    caller, so an assembly mistake in this function raises immediately
+    rather than silently producing an inconsistent object."""
 
-    Deliberately separate from run_declutter()'s targeted recovery: this
-    is a label CORRECTION ("this is a storage box, not a book"), a
-    different user action from a DecisionOverride, per
-    app/core/schemas.py's DecisionOverride docstring. Not implemented in
-    this pass — out of scope (route work is excluded from this task)."""
-    raise NotImplementedError
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+
+
+def reclassify_item(
+    analysis: AnalysisResult,
+    declutter: DeclutterResult,
+    item_id: str,
+    corrected_label: str,
+    user_context: str | None,
+    llm_classifier: LLMClassifier,
+    model_name: str | None = None,
+) -> ReclassifyItemResult:
+    """
+    Re-runs LLM reasoning for exactly one item after a user label
+    correction (POST /override — see DetectedItem.corrected_label).
+    Touches nothing else: no other item's decision changes, item_id/box/
+    every other DetectedItem field for the corrected item are copied
+    verbatim, Grounding DINO is never called.
+
+    Caller contract (enforced by app/api/routes.py's OverrideRequest, not
+    re-validated here): item_id names a real item in analysis.items that
+    is also in declutter.expected_item_ids (i.e. actionable — resolved OR
+    already-unresolved items are both valid targets, contextual items are
+    not); corrected_label is already a validated non-empty string.
+
+    Deliberately NOT built on top of _targeted_recovery() as-is: that
+    helper (used by run_declutter()'s own service-level recovery path)
+    is always followed by the caller hardcoding ItemValidity.
+    RECOVERY_USED on success — appropriate there ("the main bulk pass
+    already failed this item, a fallback rescued it"), but wrong here: a
+    fresh, standalone, user-requested reclassification must truthfully
+    report whatever classify_items() itself observed for this one call
+    (RAW_VALID / MECHANICALLY_REPAIRED / RECOVERY_USED / STILL_INVALID),
+    per this task's explicit requirement. The actual identity and content
+    validation — map_item_numbers(), convert_mapped_items_to_ai_decisions()
+    — IS reused directly, unchanged; only the validity-assignment step
+    differs from _targeted_recovery's.
+
+    Diagnostic honesty: this call always numbers its one item
+    item_number=1 locally (classify_items()'s own convention for a
+    single-item call), regardless of that item's original position in
+    the full-image run. That number is never appended to
+    declutter.mapping_warnings/semantic_errors — both are item_number-
+    keyed with no item_id field, so a bare "item_number: 1" entry there
+    would misleadingly resemble a warning about the run's actual first
+    item. Only the two structures that already carry item_id
+    (RecoveryFailure, ProvenanceWarning) record anything from this call,
+    and any pre-existing entry for this exact item_id — from the
+    original bulk run OR an earlier correction attempt — is removed
+    first, consistent with "correcting a label invalidates prior AI
+    reasoning for that item." mapping_warnings/semantic_errors are left
+    completely untouched (neither scrubbed nor appended to): they are a
+    historical audit trail of the original run, not authoritative state.
+    """
+    try:
+        item_index = next(i for i, it in enumerate(analysis.items) if it.item_id == item_id)
+    except StopIteration:
+        # Unreachable given OverrideRequest's own validation (item_id is
+        # derived from analysis.items in the first place) — an explicit,
+        # clearly-labelled internal-invariant failure if it ever isn't,
+        # rather than a bare, confusing StopIteration surfacing as a 500.
+        raise AssertionError(f"internal invariant violated: item_id {item_id!r} not found in analysis.items") from None
+
+    original_item = analysis.items[item_index]
+    corrected_item = DetectedItem(
+        item_id=original_item.item_id,
+        source_detection_index=original_item.source_detection_index,
+        raw_phrase=original_item.raw_phrase,
+        clean_label=original_item.clean_label,
+        box=original_item.box,
+        confidence=original_item.confidence,
+        position=original_item.position,
+        relative_size=original_item.relative_size,
+        item_role=original_item.item_role,
+        item_role_source=original_item.item_role_source,
+        corrected_label=corrected_label,
+    )
+
+    decision: AiDecision | None = None
+    validity = ItemValidity.STILL_INVALID
+    failure: RecoveryFailure | None = None
+    provenance_warning: ProvenanceWarning | None = None
+
+    try:
+        result = llm_classifier(
+            run_id=analysis.run_id,
+            detected_items=[_to_llm_item(corrected_item)],
+            scene_label=analysis.scene.label,
+            user_context=user_context,
+            model_name=model_name,
+        )
+    except Exception as exc:
+        detail = f"reclassification call raised {type(exc).__name__}: {exc}"[:500]
+        failure = RecoveryFailure(item_id=item_id, stage="call", exception_type=type(exc).__name__, detail=detail)
+    else:
+        mapping = map_item_numbers(
+            result.parsed_json if isinstance(result.parsed_json, list) else [], {1: item_id}
+        )
+        if not mapping.mapped:
+            detail = (
+                "; ".join(w.detail for w in mapping.warnings)
+                or "no usable item_number=1 entry in the reclassification response"
+            )
+            failure = RecoveryFailure(item_id=item_id, stage="mapping", detail=detail[:500])
+        else:
+            semantic = convert_mapped_items_to_ai_decisions(mapping.mapped)
+            if not semantic.ai_decisions:
+                detail = (
+                    "; ".join(e.detail for e in semantic.errors)
+                    or "reclassification response failed decision/reason validation"
+                )
+                failure = RecoveryFailure(item_id=item_id, stage="semantic", detail=detail[:500])
+            else:
+                candidate = semantic.ai_decisions[0]
+                hint = result.item_provenance.get(1)
+                trusted_hints = (ItemValidity.RAW_VALID, ItemValidity.MECHANICALLY_REPAIRED, ItemValidity.RECOVERY_USED)
+                if hint in trusted_hints:
+                    decision = candidate
+                    validity = hint
+                else:
+                    # Successful mapping + semantic validation is
+                    # necessary but NOT sufficient — same conservative
+                    # rule run_declutter()'s main pass applies (see this
+                    # module's docstring). Not trusted; decision/validity
+                    # stay at their STILL_INVALID defaults above.
+                    provenance_warning = ProvenanceWarning(
+                        item_id=item_id,
+                        item_number=1,
+                        detail=(
+                            "reclassification mapped and validated cleanly but carried no trustworthy "
+                            f"provenance from the LLM wrapper ({hint!r}); not trusted"
+                        ),
+                    )
+
+    new_items = list(analysis.items)
+    new_items[item_index] = corrected_item
+    new_analysis = AnalysisResult(
+        run_id=analysis.run_id,
+        scene=analysis.scene,
+        items=new_items,
+        warnings=analysis.warnings,
+        stage_timings=analysis.stage_timings,
+    )
+
+    ai_decisions_by_id = {ai.item_id: ai for ai in declutter.ai_decisions}
+    if decision is not None:
+        ai_decisions_by_id[item_id] = decision
+    else:
+        ai_decisions_by_id.pop(item_id, None)
+
+    new_item_validity = dict(declutter.item_validity)
+    new_item_validity[item_id] = validity
+
+    new_unresolved_item_ids = [
+        i for i in declutter.expected_item_ids if new_item_validity.get(i) == ItemValidity.STILL_INVALID
+    ]
+    new_ai_decisions = [
+        ai_decisions_by_id[i] for i in declutter.expected_item_ids if i in ai_decisions_by_id
+    ]
+
+    new_recovery_failures = [f for f in declutter.recovery_failures if f.item_id != item_id]
+    if failure is not None:
+        new_recovery_failures.append(failure)
+
+    new_provenance_warnings = [w for w in declutter.provenance_warnings if w.item_id != item_id]
+    if provenance_warning is not None:
+        new_provenance_warnings.append(provenance_warning)
+
+    new_declutter = DeclutterResult(
+        run_id=declutter.run_id,
+        expected_item_ids=declutter.expected_item_ids,
+        ai_decisions=new_ai_decisions,
+        unresolved_item_ids=new_unresolved_item_ids,
+        item_validity=new_item_validity,
+        mapping_warnings=declutter.mapping_warnings,
+        semantic_errors=declutter.semantic_errors,
+        recovery_failures=new_recovery_failures,
+        provenance_warnings=new_provenance_warnings,
+        model_name=declutter.model_name,
+        prompt_version=declutter.prompt_version,
+        stage_timings=declutter.stage_timings,
+    )
+
+    return ReclassifyItemResult(analysis=new_analysis, declutter=new_declutter)

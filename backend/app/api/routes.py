@@ -52,7 +52,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.confirmation import ConfirmationInputError
-from app.core.schemas import AnalysisResult, DecisionOverride, NonEmptyStr
+from app.core.schemas import AnalysisResult, DecisionOverride, ItemId, NonEmptyStr
 from app.logging_utils import new_run_id
 from app.services.analysis_service import (
     DetectionError,
@@ -71,6 +71,7 @@ from app.services.declutter_service import (
     DeclutterReasoningError,
     DeclutterResult,
     LLMClassifier,
+    reclassify_item,
     run_declutter,
 )
 
@@ -259,9 +260,109 @@ async def confirm(request: ConfirmationRequest) -> ConfirmationResult:
     # above).
 
 
-@router.post("/override")
-async def override(item_id: str = Form(...), new_label: str = Form(...), run_id: str = Form(...)):
-    raise NotImplementedError("Depends on declutter_service.reclassify_item")
+class OverrideRequest(BaseModel):
+    """Request body for POST /override — JSON, like /confirm, not
+    multipart (replaces this route's original multipart-form stub shape:
+    analysis/declutter are large nested objects, impractical as form
+    fields, and every other object-carrying endpoint here already uses
+    JSON). `analysis`/`declutter` are the frontend's round-tripped
+    objects from the run being corrected — pydantic reconstructs and
+    revalidates both here, same discipline as ConfirmationRequest.
+
+    The cross-object check below is what actually proves analysis and
+    declutter are a genuine matched pair from the same run (not just two
+    independently-valid objects that happen to share a run_id): it
+    requires declutter.expected_item_ids to equal, in order, the
+    actionable ids in analysis.items — exactly what run_declutter() (and
+    reclassify_item() below) already guarantee production-side, so a
+    real prior response always satisfies this; only a hand-crafted or
+    corrupted client payload could fail it, and it should.
+
+    corrected_label is a validated non-empty string (NonEmptyStr) before
+    this class's own validator even runs. item_id must be one of
+    declutter's actionable items — resolved or already-unresolved are
+    both valid; a contextual item_id (not in expected_item_ids at all)
+    is rejected here, not silently accepted and ignored."""
+
+    run_id: NonEmptyStr
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+    item_id: ItemId
+    corrected_label: NonEmptyStr
+    user_context: str | None = None
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> "OverrideRequest":
+        if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
+
+        # AnalysisResult's own model_validator already guarantees unique
+        # item_ids within analysis.items — not re-checked here.
+        actionable_ids = [item.item_id for item in self.analysis.items if item.item_role == "actionable"]
+        if self.declutter.expected_item_ids != actionable_ids:
+            raise ValueError(
+                "declutter.expected_item_ids must exactly equal the actionable analysis item_ids, in "
+                "order — analysis and declutter must be a matched pair from the same run"
+            )
+
+        if self.item_id not in actionable_ids:
+            raise ValueError(f"item_id {self.item_id!r} is not an expected (actionable) item")
+
+        return self
+
+
+class OverrideResponse(BaseModel):
+    """Mirrors DeclutterUploadResponse's shape (run_id/analysis/declutter)
+    deliberately, minus `path` — a client can reuse the exact same
+    analysis.items + declutter.ai_decisions/item_validity join logic it
+    already has for /upload, since both responses round-trip the whole,
+    freshly-validated pair rather than a delta/patch."""
+
+    run_id: NonEmptyStr
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+
+    @model_validator(mode="after")
+    def _check_run_id_consistency(self) -> "OverrideResponse":
+        if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
+        return self
+
+
+@router.post("/override", response_model=OverrideResponse)
+def override(
+    request: OverrideRequest,
+    llm_classifier_provider: LLMClassifierLoader = Depends(get_llm_classifier_provider),
+) -> OverrideResponse:
+    """
+    Synchronous handler, deliberately — same reasoning as /upload: a real
+    reclassification call blocks on Ollama, so a plain `def` keeps that
+    off the event loop via FastAPI's threadpool, no manual thread
+    management needed. Reuses /upload's existing lazy llm_classifier
+    dependency (no separate loader) — the real import happens only for a
+    genuine request, never merely by importing this module.
+
+    No custom exception-to-status-code mapping here, unlike /confirm:
+    reclassify_item() never raises for an ordinary "the LLM didn't
+    produce something usable" outcome — that is represented as a normal,
+    successful 200 response with the item left/marked STILL_INVALID (see
+    reclassify_item's own docstring). Request-shape violations (bad
+    item_id, run_id mismatch, empty corrected_label, mismatched analysis/
+    declutter) become automatic 422s via OverrideRequest's own
+    validation, before this body ever runs. Any other exception is
+    deliberately left uncaught — FastAPI's default 500, not a disguised
+    success, matching this codebase's existing convention.
+    """
+    llm_classifier = llm_classifier_provider()
+    result = reclassify_item(
+        analysis=request.analysis,
+        declutter=request.declutter,
+        item_id=request.item_id,
+        corrected_label=request.corrected_label,
+        user_context=request.user_context,
+        llm_classifier=llm_classifier,
+    )
+    return OverrideResponse(run_id=request.run_id, analysis=result.analysis, declutter=result.declutter)
 
 
 @router.post("/transcribe")

@@ -91,5 +91,20 @@ def confirmed_keep_ids(confirmed: list[ConfirmedDecision]) -> list[str]:
     """The item_ids Reorganise/Both should receive: confirmed Keep,
     excluding anything the user excluded during review — see
     PROJECT_SPEC.md's Both-workflow requirement that overrides
-    demonstrably change what reaches Reorganise."""
+    demonstrably change what reaches Reorganise.
+
+    Returns item_id strings ONLY — never a label, never a DetectedItem.
+    ConfirmedDecision (what this function reads) carries no label field
+    at all, by design (see core/schemas.py). A future Reorganise/Both
+    consumer that needs display text or anything else about a returned
+    Keep item must explicitly re-join these ids back to the LATEST
+    AnalysisResult.items by item_id (never assume any round-tripped
+    DeclutterResult/ConfirmationResult carries current label text) and
+    read DetectedItem.effective_label — never clean_label directly — so a
+    user's label correction (DetectedItem.corrected_label, applied via
+    app.services.declutter_service.reclassify_item) is honored rather
+    than silently dropped. This function does not perform that join
+    itself, and as of this docstring neither Reorganise nor Both exists
+    yet to need it — documented here so the requirement is visible before
+    that code is written, not discovered after."""
     return [c.item_id for c in confirmed if c.confirmed_decision == Decision.KEEP and not c.excluded]

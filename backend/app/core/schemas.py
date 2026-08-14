@@ -160,6 +160,26 @@ class DetectedItem(BaseModel):
     set it without a schema change, with its provenance always recorded
     rather than silently overwritten. Nothing is hidden from the user
     based on this field — it's advisory metadata, not a filter.
+
+    corrected_label / label_source / effective_label: a user's label
+    correction (POST /override — app.services.declutter_service.
+    reclassify_item), kept structurally impossible to contradict itself.
+    Only `corrected_label` is ever stored; `label_source` and
+    `effective_label` are computed, never caller-settable, so a caller
+    cannot construct a DetectedItem claiming label_source="user" with no
+    corrected_label, or effective_label disagreeing with corrected_label
+    — mirrors this schema's existing computed-field convention (e.g.
+    ConfirmedDecision.decision_changed). raw_phrase/clean_label are NEVER
+    overwritten by a correction — clean_label stays exactly what
+    label_cleanup produced from the detector's output, forever; the
+    correction lives only in corrected_label. Every caller that decides
+    what to actually show the user or send to the LLM (declutter_service.
+    _to_llm_item, the review UI) must read effective_label, never
+    clean_label directly, so a correction is never silently ignored.
+
+    Future Reorganise/Both consumers: confirmed_keep_ids() (core/
+    confirmation.py) returns item_id strings only, never labels — see
+    that function's own docstring for the required re-join.
     """
 
     item_id: ItemId
@@ -172,6 +192,17 @@ class DetectedItem(BaseModel):
     relative_size: NonEmptyStr
     item_role: Literal["actionable", "contextual"] = "actionable"
     item_role_source: Literal["default", "heuristic", "user"] = "default"
+    corrected_label: NonEmptyStr | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def label_source(self) -> Literal["detector", "user"]:
+        return "user" if self.corrected_label is not None else "detector"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_label(self) -> str:
+        return self.corrected_label if self.corrected_label is not None else self.clean_label
 
 
 def validate_unique_item_ids(items: list[DetectedItem]) -> None:

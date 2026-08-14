@@ -35,6 +35,7 @@ def _item(
     raw_phrase: str = "stuffed toy plushie",
     clean_label: str = "stuffed toy",
     index: int = 0,
+    corrected_label: str | None = None,
 ) -> DetectedItem:
     return DetectedItem(
         item_id=item_id,
@@ -45,6 +46,7 @@ def _item(
         confidence=0.8,
         position="upper-left",
         relative_size="small",
+        corrected_label=corrected_label,
     )
 
 
@@ -70,6 +72,54 @@ def test_raw_phrase_and_clean_label_remain_distinct():
     assert item.raw_phrase == "book notebook magazine document"
     assert item.clean_label == "book"
     assert item.raw_phrase != item.clean_label
+
+
+# --- corrected_label / label_source / effective_label ---
+
+
+def test_no_correction_defaults_to_detector_source_and_clean_label():
+    item = _item(clean_label="box")
+    assert item.corrected_label is None
+    assert item.label_source == "detector"
+    assert item.effective_label == "box"
+
+
+def test_correction_sets_user_source_and_effective_label_without_touching_clean_label():
+    item = _item(clean_label="box", corrected_label="hoodie")
+    assert item.clean_label == "box"  # never overwritten
+    assert item.corrected_label == "hoodie"
+    assert item.label_source == "user"
+    assert item.effective_label == "hoodie"
+
+
+def test_label_source_is_computed_not_caller_settable():
+    # label_source is a computed field — pydantic ignores/ constructor
+    # kwargs for computed fields, so passing one has no effect and
+    # cannot be used to claim label_source="user" without a
+    # corrected_label, or vice versa.
+    item = DetectedItem(
+        item_id="item_001",
+        source_detection_index=0,
+        raw_phrase="box",
+        clean_label="box",
+        box=_box(),
+        confidence=0.8,
+        position="upper-left",
+        relative_size="small",
+        label_source="user",  # ignored — not a real constructor field
+    )
+    assert item.label_source == "detector"  # derived from corrected_label being None, not the kwarg above
+
+
+def test_empty_corrected_label_is_rejected():
+    with pytest.raises(ValidationError):
+        _item(corrected_label="   ")
+
+
+def test_corrected_label_is_trimmed_like_every_other_nonemptystr_field():
+    item = _item(corrected_label="  hoodie  ")
+    assert item.corrected_label == "hoodie"
+    assert item.effective_label == "hoodie"
 
 
 # --- required spatial fields ---
