@@ -51,14 +51,38 @@ DINO/Ollama dependencies, no dependency overrides:
   decisions, 11 confirmed non-excluded Keep items). Full numbers in
   `DEVLOG.md` (local-only) under the same date; JSON responses were not
   committed anywhere, only this summary.
-  - **Precondition, not yet fixed:** the current configuration resolves
-    Grounding DINO's config/weight paths
+  - **Precondition at the time of this run, fixed 2026-08-14:** the
+    configuration then resolved Grounding DINO's config/weight paths
     (`grounding_dino_config_path`/`grounding_dino_weights_path` in
     `app/config.py`, both relative strings under `weights/`) relative to
-    the process working directory. Launching outside `backend/` causes
+    the process working directory. Launching outside `backend/` caused
     detection startup failure (a real `503` was hit and confirmed this
-    way before the run above succeeded). Run pytest, uvicorn, and any
-    manual script like this one from `backend/` until that's fixed.
+    way before the run above succeeded). `app/models/grounding_dino.py`
+    now resolves relative configured paths against `backend/` itself
+    (the module file's own location, via `_resolve_backend_path()`), not
+    `os.getcwd()` — see `tests/unit/test_grounding_dino.py`. Still
+    launch pytest/uvicorn from `backend/` as a general convention, but it
+    is no longer a hard requirement for Grounding DINO to resolve its
+    weights correctly.
+- **2026-08-14 manual run — real browser label-correction smoke test:**
+  `POST /upload` -> `POST /override` -> `POST /confirm`, driven through a
+  real Chrome browser (Playwright) against real `uvicorn` + `npm run dev`,
+  no dependency overrides, no fake model services. Image:
+  `backend/data/test_images/bedroom02.jpg`. `/upload` -> **200** (~131s,
+  28/28 items resolved). A correction on `item_002` (`jewelry` ->
+  `necklace`) via `/override` -> **200** (~8.3s) — only `phi4-mini` reran;
+  CLIP/Grounding DINO did not (confirmed via backend log call counts);
+  `item_id`/`box`/`raw_phrase`/`clean_label` byte-identical before/after,
+  only the label-correction fields changed, all other 27 items untouched.
+  `/confirm` -> **200** (~45ms), corrected label shown correctly in the
+  confirmation summary, `item_002` in `confirmed_keep_ids`. Source tree
+  stayed clean throughout. **Limitation:** the fresh post-correction AI
+  decision happened to also be Keep, matching the preserved human Keep
+  override, so this run alone doesn't distinguish which Keep value drove
+  the outcome — that specific case (override differs from a fresh AI
+  decision) is covered by automated fake-backed tests, not this real-model
+  run. Full numbers in `DEVLOG.md` (local-only) under the same date. One
+  real-model smoke test, not a full user study or acceptance test.
 
 **Colab image-generation tests** (`/generate`, the Reorganise path) have
 a **manual precondition that can never be automated the way
