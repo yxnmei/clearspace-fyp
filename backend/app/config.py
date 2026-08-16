@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     image_gen_health_timeout_s: float = 3.0
     image_gen_request_timeout_s: float = 180.0
     image_gen_denoise_strength: float = 0.35
+    # Provisional, standard baseline — NOT an evidence-backed optimum.
+    # R7's real Colab testing must verify or revise this once a real
+    # checkpoint/pipeline exists to test it against (see
+    # app/models/image_gen_client.py's module docstring).
+    image_gen_controlnet_conditioning_scale: float = 1.0
+    # Fixed default seed so a default/demo/evaluation generation is
+    # reproducible run to run — not a claim about output quality.
+    # Overridable per generate() call.
+    image_gen_seed: int = 42
 
     # --- logging ---
     log_dir: str = "logs"
