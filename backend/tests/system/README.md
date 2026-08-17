@@ -83,6 +83,28 @@ DINO/Ollama dependencies, no dependency overrides:
   decision) is covered by automated fake-backed tests, not this real-model
   run. Full numbers in `DEVLOG.md` (local-only) under the same date. One
   real-model smoke test, not a full user study or acceptance test.
+- **2026-08-17 manual run — real browser Direct Reorganise smoke test:**
+  `POST /upload` (`path=reorganise`) -> `POST /generate`, driven through a
+  real Chrome browser (Playwright) against real `uvicorn` + `npm run dev`,
+  no dependency overrides, no fake model services. Colab deliberately not
+  started, so this run also exercises the offline-fallback path. Image:
+  `backend/data/test_images/bedroom02.jpg`. `/upload` -> **200** (scene
+  `bedroom`, 0.9604 confidence, 28 detections, all actionable, duplicate
+  labels rendered as independent `item_id`-keyed rows). 27 of 28 items
+  selected; `/generate` -> **200** (~115s). **Both phi4-mini planning
+  attempts produced a case-insensitive duplicate `zone_name` and were
+  correctly rejected by R1's validator, falling through to
+  `provenance="deterministic_fallback"`** — real evidence the
+  two-attempt-then-fallback safety net works against a genuine LLM
+  failure mode, not just in tests. Resulting plan: exact accounting (27
+  planned == 27 selected). `image_status="unavailable"`,
+  `image_unavailable_reason="service_unreachable"` as expected with Colab
+  offline. UI (path selector, selection screen, result screen with
+  collapsed disclosures and honest unavailable-preview messaging)
+  confirmed via screenshots. Exactly 4 backend requests total (2x health,
+  1x upload, 1x generate); zero `/confirm`/`/override` calls. No
+  application defects found. Full numbers in `DEVLOG.md` (local-only)
+  under the same date.
 
 **Colab image-generation tests** (`/generate`, the Reorganise path) have
 a **manual precondition that can never be automated the way
