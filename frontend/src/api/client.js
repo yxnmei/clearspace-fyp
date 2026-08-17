@@ -2,6 +2,8 @@
 // calls scattered inline inside components or hooks. hooks/ import from
 // this file; they never call fetch directly.
 
+import { fileToBase64 } from "../utils/fileEncoding";
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 async function request(path, options = {}) {
@@ -78,10 +80,47 @@ export function transcribeAudio({ audioBlob }) {
   return request("/transcribe", { method: "POST", body: form });
 }
 
-export function generateReorganisation({ file, keptItemLabels, runId }) {
-  const form = new FormData();
-  form.append("image", file);
-  keptItemLabels.forEach((label) => form.append("kept_item_labels", label));
-  form.append("run_id", runId);
-  return request("/generate", { method: "POST", body: form });
+// POST /generate (Direct Reorganise, R4/R5) — JSON body, matching
+// app/api/routes.py's GenerateRequest exactly (extra="forbid" there — an
+// unrecognised field, including any tuning parameter, is a 422, never
+// silently ignored). `analysis` is the exact validated AnalysisResult
+// object POST /upload (path="reorganise") returned, round-tripped whole,
+// same discipline as confirmDecisions()/overrideItem() above.
+//
+// Deliberately NEVER sends denoise_strength/controlnet_conditioning_scale
+// /seed — R4 always uses the backend's configured defaults; these are
+// provisional generation-tuning values, not an ordinary user decision
+// (see app/services/reorganise_pipeline_service.py's own docstring).
+//
+// file.type is sent verbatim as image_media_type — validated here first
+// (PNG/JPEG only, matching the backend's supported set) so an
+// unsupported file type fails fast, client-side, with a clear message,
+// rather than as a generic sanitized 422 from the network.
+export async function generateReorganisation({
+  runId,
+  analysis,
+  selectedItemIds,
+  file,
+  inputImageSha256,
+  userContext = null,
+}) {
+  if (file.type !== "image/png" && file.type !== "image/jpeg") {
+    throw new Error(`generateReorganisation: file must be PNG or JPEG, got ${JSON.stringify(file.type)}`);
+  }
+
+  const image = await fileToBase64(file);
+
+  return request("/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      run_id: runId,
+      analysis,
+      selected_item_ids: selectedItemIds,
+      image,
+      image_media_type: file.type,
+      input_image_sha256: inputImageSha256,
+      user_context: userContext,
+    }),
+  });
 }

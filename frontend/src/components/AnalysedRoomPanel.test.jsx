@@ -151,4 +151,19 @@ describe("AnalysedRoomPanel", () => {
     render(<AnalysedRoomPanel {...baseProps({ items: [makeItem({ item_id: "item_001", clean_label: "lamp" })] })} />);
     expect(screen.getByRole("button", { name: /detection 1: lamp/i })).toBeInTheDocument();
   });
+
+  // getBoxClassName generalisation (R5) — Declutter never passes this
+  // prop (every test above renders without it and stays green
+  // unmodified), proving the default preserves the exact original
+  // Declutter coloring behaviour. This test proves a CALLER-supplied
+  // classifier is actually used when Direct Reorganise (or any future
+  // consumer) supplies one.
+  test("a caller-supplied getBoxClassName overrides the default Declutter coloring", () => {
+    const getBoxClassName = vi.fn(() => "custom-reorganise-box-class");
+    render(<AnalysedRoomPanel {...baseProps({ items: [makeItem({ item_id: "item_001" })], getBoxClassName })} />);
+
+    const box = screen.getByRole("button", { name: /detection 1/i });
+    expect(box).toHaveClass("custom-reorganise-box-class");
+    expect(getBoxClassName).toHaveBeenCalledWith(expect.objectContaining({ item_id: "item_001" }), false, false);
+  });
 });

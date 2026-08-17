@@ -14,7 +14,16 @@ import { decisionBorderColor, itemNumberLabel } from "../utils/format";
 // the corresponding list entry be focused/scrolled to, via onBoxClick;
 // DeclutterReview (the owner of activeItemId/showAllBoxes/the item ref
 // map) decides what that means.
-function boxClassName(item, isActive, isQuiet) {
+//
+// declutterBoxClassName is Declutter's own box-coloring rule (reads
+// is_unresolved/is_expected/ai_decision — fields only Declutter's
+// reviewItems carry) — kept as the DEFAULT for the optional
+// getBoxClassName prop below, so Declutter's existing usage (which never
+// passes that prop) renders byte-identically to before. Direct
+// Reorganise's item shape has none of those fields (only a boolean
+// "selected" concept), so it supplies its own classifier instead of
+// reusing this one — see ReorganiseItemSelector.
+function declutterBoxClassName(item, isActive, isQuiet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = item.is_unresolved
     ? "border-dashed border-red-500 bg-red-500/10"
@@ -27,7 +36,15 @@ function boxClassName(item, isActive, isQuiet) {
   return `${base} ${category} ${state}`;
 }
 
-export default function AnalysedRoomPanel({ imageUrl, items, activeItemId, onBoxClick, showAllBoxes, onToggleShowAllBoxes }) {
+export default function AnalysedRoomPanel({
+  imageUrl,
+  items,
+  activeItemId,
+  onBoxClick,
+  showAllBoxes,
+  onToggleShowAllBoxes,
+  getBoxClassName = declutterBoxClassName,
+}) {
   const visibleItems = showAllBoxes ? items : items.filter((item) => item.item_id === activeItemId);
 
   return (
@@ -58,7 +75,7 @@ export default function AnalysedRoomPanel({ imageUrl, items, activeItemId, onBox
                 onClick={() => onBoxClick(item.item_id)}
                 aria-label={`Detection ${itemNumberLabel(item.item_id)}: ${item.effective_label ?? item.clean_label}`}
                 aria-current={isActive ? "true" : undefined}
-                className={boxClassName(item, isActive, isQuiet)}
+                className={getBoxClassName(item, isActive, isQuiet)}
                 style={{
                   left: `${item.box.x1 * 100}%`,
                   top: `${item.box.y1 * 100}%`,
