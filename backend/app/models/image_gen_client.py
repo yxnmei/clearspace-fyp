@@ -51,6 +51,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, ValidationError, field_validator, model_validator
 
 from app.config import get_settings
+from app.core.image_validation import validate_image_bytes
 from app.core.schemas import NonEmptyStr
 
 # Transport contract version — code-level, deliberately NOT configurable
@@ -231,22 +232,15 @@ def _validate_run_id(run_id: Any) -> str:
 
 
 def _validate_image(image_bytes: Any, image_media_type: Any) -> None:
-    if not isinstance(image_bytes, bytes) or not image_bytes:
-        raise ValueError("image_bytes must be non-empty bytes")
-    if image_media_type not in _SUPPORTED_MEDIA_TYPES:
-        raise ValueError(
-            f"image_media_type must be one of {sorted(_SUPPORTED_MEDIA_TYPES)}: {image_media_type!r}"
-        )
-    try:
-        img = Image.open(io.BytesIO(image_bytes))
-        actual_format = img.format
-        img.verify()
-    except Exception as exc:
-        raise ValueError(f"image_bytes could not be decoded as a valid image: {type(exc).__name__}") from exc
-    if _SUPPORTED_MEDIA_TYPES[image_media_type] != actual_format:
-        raise ValueError(
-            f"image_media_type {image_media_type!r} does not match the actual image format {actual_format!r}"
-        )
+    """Delegates to app.core.image_validation.validate_image_bytes — the
+    same Pillow decode/verify/format-match logic R4's reorganise pipeline
+    uses on the resubmitted original image before planning (see that
+    module's own docstring for why it's shared rather than duplicated).
+    ImageValidationError is a ValueError subclass, so this function's own
+    documented contract ("raises ValueError") is unchanged; every caller
+    of generate() that already catches ValueError keeps working exactly
+    as before."""
+    validate_image_bytes(image_bytes, image_media_type)
 
 
 def _validate_prompt_field(value: Any, field_name: str) -> str:

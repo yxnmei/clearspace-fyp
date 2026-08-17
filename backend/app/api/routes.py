@@ -9,7 +9,7 @@ Endpoints mirror the v1 design (§3 step 6), kept because it worked:
   POST /confirm           -> deterministic user decision confirmation + confirmed Keep-item handoff
   POST /override     -> re-run LLM reasoning for one item after user edits its label
   POST /transcribe    -> Whisper transcript for user review before it affects context
-  POST /generate        -> zone plan + product recs + image-gen via Colab/ngrok
+  POST /generate        -> R2 zone plan + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
   GET  /image-gen/health -> §5: surfaced proactively in the UI, not just on failure
 
 /upload's declutter path is the first real vertical slice: it composes
@@ -18,6 +18,31 @@ and app.services.declutter_service.run_declutter() directly — no
 label-cleanup/prompt/mapping/semantic/recovery logic is reimplemented
 here, only HTTP parsing, dependency resolution, and error-type -> status-
 code translation.
+
+/upload's reorganise path (R4) composes the SAME analyse_image() — never
+a second implementation — but never calls run_declutter() or the LLM-
+classifier loader at all: Direct Reorganise skips Keep/Sell/Donate/
+Discard triage entirely, letting the user select items to preserve
+directly from the detection result. It additionally returns
+input_image_sha256 (sha256 of the exact uploaded bytes) so a later
+/generate request can be checked for correlation against the analysis it
+claims to belong to — see ReorganiseUploadResponse and
+app/services/reorganise_pipeline_service.py's own module docstring for
+what that hash mechanism does and does not prove.
+
+/generate (R4) is a thin route wrapper around
+app.services.reorganise_pipeline_service.run_reorganise_pipeline() — all
+selection/image/hash validation, R2 planning, and the single R3 image-
+generation call happen there, never reimplemented here. This route's own
+job is exactly three things: (1) parse/validate the JSON request shape,
+(2) resolve the two model-boundary dependencies (the reorganise LLM
+planner via a lazy two-level loader, the image generator via a
+lightweight one-level provider — see their own docstrings below for why
+they differ), (3) convert the pipeline's raw GenerationResult.image_bytes
+to base64 for the browser. Base64 conversion happens ONLY here — the
+service layer never imports base64 for this purpose and never touches
+fastapi at all, so it stays reachable from a future evaluation script
+exactly like every other services/ function (PROJECT_SPEC.md §4).
 
 /confirm vs /override — deliberately two different endpoints, not one:
 /confirm applies a user's Keep/Sell/Donate/Discard decision override (or
@@ -46,14 +71,21 @@ directly, so the override behaves identically to production.
 
 from __future__ import annotations
 
-from typing import Callable, Literal
+import base64
+import binascii
+import hashlib
+import math
+from typing import Callable, Literal, Protocol
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.confirmation import ConfirmationInputError
 from app.core.schemas import AnalysisResult, DecisionOverride, ItemId, NonEmptyStr
 from app.logging_utils import new_run_id
+from app.models.image_gen_client import IMAGE_GEN_API_VERSION, GenerationResult
+from app.models.image_gen_client import check_health as _image_gen_check_health
+from app.models.image_gen_client import generate as _image_gen_generate
 from app.services.analysis_service import (
     DetectionError,
     InvalidImageError,
@@ -74,6 +106,15 @@ from app.services.declutter_service import (
     reclassify_item,
     run_declutter,
 )
+from app.services.reorganise_pipeline_service import (
+    ImageGenerator,
+    ImageUnavailableReason,
+    ReorganisePipelineInputError,
+    ReorganisePipelineResult,
+    Sha256Hex,
+    run_reorganise_pipeline,
+)
+from app.services.reorganise_service import ReorganisePlanner, ReorganisePlanningResult
 
 router = APIRouter()
 
@@ -90,11 +131,11 @@ class DeclutterUploadResponse(BaseModel):
     itself; that join does not happen here.
 
     path is deliberately Literal["declutter"], not the broader
-    "declutter" | "reorganise" | "both" the request accepts — this is
-    the only value this endpoint can currently return a 200 for (the
-    other two are 501s, never a constructed response body), and typing
-    it narrowly means a caller can't accidentally construct one claiming
-    to represent a Reorganise/Both result that doesn't exist yet."""
+    "declutter" | "reorganise" | "both" the request accepts — typing it
+    narrowly means a caller can't accidentally construct one claiming to
+    represent a Reorganise/Both result. path="both" is still a 501 (R6,
+    not built yet); path="reorganise" returns a 200, but with the
+    differently-shaped ReorganiseUploadResponse below, never this class."""
 
     run_id: NonEmptyStr
     path: Literal["declutter"]
@@ -105,6 +146,32 @@ class DeclutterUploadResponse(BaseModel):
     def _check_run_id_consistency(self) -> "DeclutterUploadResponse":
         if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
             raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
+        return self
+
+
+class ReorganiseUploadResponse(BaseModel):
+    """The response contract for path="reorganise" (R4) — shared
+    analysis only, deliberately no `declutter` field at all: Direct
+    Reorganise never runs Keep/Sell/Donate/Discard triage. Mirrors
+    DeclutterUploadResponse's run_id-consistency discipline.
+
+    input_image_sha256 is computed server-side from the exact uploaded
+    bytes (see the upload() handler) — a later /generate request must
+    resubmit both this analysis and the same image, and is checked for
+    correlation against this hash by
+    app.services.reorganise_pipeline_service.run_reorganise_pipeline().
+    See that module's own docstring for the honest limits of what this
+    hash mechanism proves (correlation, not authentication)."""
+
+    run_id: NonEmptyStr
+    path: Literal["reorganise"]
+    analysis: AnalysisResult
+    input_image_sha256: Sha256Hex
+
+    @model_validator(mode="after")
+    def _check_run_id_consistency(self) -> "ReorganiseUploadResponse":
+        if self.run_id != self.analysis.run_id:
+            raise ValueError("run_id must match analysis.run_id")
         return self
 
 
@@ -154,7 +221,7 @@ def get_llm_classifier_provider() -> LLMClassifierLoader:
 # --- /upload -----------------------------------------------------------
 
 
-@router.post("/upload", response_model=DeclutterUploadResponse)
+@router.post("/upload", response_model=DeclutterUploadResponse | ReorganiseUploadResponse)
 def upload(
     image: UploadFile = File(...),
     path: Literal["declutter", "reorganise", "both"] = Form(...),
@@ -162,7 +229,7 @@ def upload(
     scene_classifier_provider: SceneClassifierLoader = Depends(get_scene_classifier_provider),
     detector_provider: DetectorLoader = Depends(get_detector_provider),
     llm_classifier_provider: LLMClassifierLoader = Depends(get_llm_classifier_provider),
-) -> DeclutterUploadResponse:
+) -> DeclutterUploadResponse | ReorganiseUploadResponse:
     """
     Synchronous handler, deliberately: FastAPI/Starlette runs a plain
     `def` path operation in its threadpool executor automatically, which
@@ -172,23 +239,26 @@ def upload(
     An unrecognized `path` value never reaches this body at all — the
     Literal[...] annotation above makes it a request-validation failure
     (automatic 422) before FastAPI calls this function.
+
+    path == "reorganise" (R4) shares analyse_image() with declutter —
+    same scene_classifier/detector loaders, same real service call — but
+    never resolves or calls the llm_classifier loader at all; Direct
+    Reorganise has no use for Declutter's Keep/Sell/Donate/Discard
+    reasoning. path == "both" remains a 501 (R6, not built yet).
     """
-    if path == "reorganise":
-        raise HTTPException(status_code=501, detail="the Reorganise path is not implemented yet")
     if path == "both":
         raise HTTPException(
             status_code=501, detail="the Both (confirmed-Keep handoff) path is not implemented yet"
         )
 
-    # path == "declutter" from here on — the only remaining possibility.
+    # path == "declutter" or "reorganise" from here on.
     image_bytes = image.file.read()
     run_id = new_run_id()
 
     # The real (possibly heavy) import happens here, only for a genuine
-    # declutter request — never for reorganise/both/invalid-path ones.
+    # declutter/reorganise request — never for both/invalid-path ones.
     scene_classifier = scene_classifier_provider()
     detector = detector_provider()
-    llm_classifier = llm_classifier_provider()
 
     try:
         analysis = analyse_image(image_bytes, run_id, scene_classifier, detector)
@@ -199,6 +269,16 @@ def upload(
     except DetectionError as exc:
         raise HTTPException(status_code=503, detail="object detection service unavailable") from exc
 
+    if path == "reorganise":
+        input_image_sha256 = hashlib.sha256(image_bytes).hexdigest()
+        return ReorganiseUploadResponse(
+            run_id=run_id, path="reorganise", analysis=analysis, input_image_sha256=input_image_sha256
+        )
+
+    # path == "declutter" from here on — the only remaining possibility.
+    # The real (possibly heavy) LLM-classifier import happens here, only
+    # for a genuine declutter request — never for a reorganise one.
+    llm_classifier = llm_classifier_provider()
     try:
         declutter = run_declutter(analysis, user_context=context, llm_classifier=llm_classifier)
     except DeclutterReasoningError as exc:
@@ -370,21 +450,308 @@ async def transcribe(audio: UploadFile = File(...)):
     raise NotImplementedError("Depends on app/models/whisper_stt.py")
 
 
-@router.post("/generate")
-async def generate(
-    image: UploadFile = File(...),
-    kept_item_labels: list[str] = Form(...),
-    run_id: str = Form(...),
-):
-    raise NotImplementedError("Depends on reorganise_service + app/models/image_gen_client.py")
+# --- /generate (R4) -------------------------------------------------------
+
+# Loader = a zero-arg callable that performs the real ollama import and
+# returns the concrete planner callable. Mirrors get_llm_classifier_provider
+# above exactly — the real import happens only inside generate_reorganisation's
+# body, never merely by importing this module or app.main.
+ReorganisePlannerLoader = Callable[[], ReorganisePlanner]
 
 
-@router.get("/image-gen/health")
-async def image_gen_health():
+def _load_reorganise_planner() -> ReorganisePlanner:
+    from app.models.reorganise_llm import generate_reorganise_plan_once
+
+    return generate_reorganise_plan_once
+
+
+def get_reorganise_planner_provider() -> ReorganisePlannerLoader:
+    """FastAPI dependency — see _load_reorganise_planner and the module
+    docstring's lazy-loading explanation for get_scene_classifier_provider
+    et al."""
+    return _load_reorganise_planner
+
+
+def get_image_generator_provider() -> ImageGenerator:
+    """FastAPI dependency resolving DIRECTLY to the real generate()
+    callable — a ONE-level provider, unlike get_reorganise_planner_provider
+    above. app.models.image_gen_client imports no heavy model library (no
+    torch/clip/ollama/groundingdino — see that module's own
+    test_module_does_not_import_model_libraries), so there is no
+    import-cost reason to defer it behind a loader. This seam exists
+    purely so tests can override it via app.dependency_overrides, exactly
+    like every other provider here — never by monkeypatching a directly-
+    imported module-level name."""
+    return _image_gen_generate
+
+
+class GenerateRequest(BaseModel):
+    """Request body for POST /generate (R4) — JSON, not multipart:
+    alongside the raw image this carries the large, already-validated
+    AnalysisResult round-tripped from /upload (path="reorganise"), the
+    same discipline OverrideRequest/ConfirmationRequest already
+    established above for large nested objects.
+
+    `image` is base64, no `data:` URL prefix — validated here for base64
+    SYNTAX only (decodable, non-empty). Genuine image-content validation
+    (real PNG/JPEG decode, format-matches-claim) and the
+    input_image_sha256 MATCH check both happen inside
+    run_reorganise_pipeline() itself, not here, since that also has to
+    work when the pipeline is called directly, outside FastAPI (see
+    app/services/reorganise_pipeline_service.py).
+
+    denoise_strength/controlnet_conditioning_scale/seed are deliberately
+    NOT fields here — R4 always uses R3's configured defaults; these are
+    provisional generation-tuning values, not an ordinary user decision.
+    R3's generate() already supports overriding them programmatically
+    (for R7/evaluation use) without a public request field.
+
+    extra="forbid": a client submitting denoise_strength/seed/any other
+    unrecognised field must get a loud 422, never a silent 200 that lets
+    them wrongly believe an unsupported field affected generation —
+    pydantic's default (extra="ignore") would otherwise accept and
+    silently drop it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: NonEmptyStr
+    analysis: AnalysisResult
+    selected_item_ids: list[ItemId]
+    image: NonEmptyStr
+    image_media_type: Literal["image/png", "image/jpeg"]
+    input_image_sha256: Sha256Hex
+    user_context: str | None = None
+
+    @field_validator("image")
+    @classmethod
+    def _check_base64_syntax(cls, v: str) -> str:
+        try:
+            decoded = base64.b64decode(v, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("image is not valid base64") from exc
+        if not decoded:
+            raise ValueError("image must decode to non-empty bytes")
+        return v
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> "GenerateRequest":
+        if self.run_id != self.analysis.run_id:
+            raise ValueError("run_id must match analysis.run_id")
+        if len(self.selected_item_ids) != len(set(self.selected_item_ids)):
+            raise ValueError("selected_item_ids contains duplicates")
+        if not self.selected_item_ids:
+            raise ValueError("selected_item_ids must be non-empty")
+        analysis_ids = {item.item_id for item in self.analysis.items}
+        unknown = [i for i in self.selected_item_ids if i not in analysis_ids]
+        if unknown:
+            raise ValueError(f"selected_item_ids not present in analysis.items: {unknown}")
+        return self
+
+
+class GeneratedImagePayload(BaseModel):
+    """API-facing, browser-consumable shape of a validated GenerationResult
+    (R3) — the ONLY place in this codebase that base64-encodes generated
+    image bytes for transport (see this module's own docstring). Preserves
+    every validated R3 metadata field so it stays visible/auditable —
+    provenance, model identifiers, both correlation hashes, and timing —
+    never just the image itself. Never exposes the ngrok URL, a raw
+    exception, or the raw remote response body — every field here is
+    read from the already-validated GenerationResult, never raw HTTP.
+
+    Field constraints deliberately MIRROR GenerationResult's own (R3) —
+    this API contract must never be able to directly represent a value
+    R3 itself would reject. api_version is pinned to the exact code-level
+    constant (not any non-empty string); both hashes reuse the shared
+    Sha256Hex format; denoise_strength/controlnet_conditioning_scale/
+    generation_ms are range- and finiteness-checked; seed is rejected if
+    it's a bool (checked mode="before", ahead of pydantic's own int
+    coercion — Python's bool is an int subclass, so this must run before
+    range validation to catch it at all) and range-checked otherwise;
+    image is checked as genuine, non-empty, strict base64."""
+
+    image: NonEmptyStr
+    image_media_type: Literal["image/png", "image/jpeg"]
+    api_version: Literal[IMAGE_GEN_API_VERSION]
+    depth_map_used: Literal[True]
+    denoise_strength: float = Field(ge=0.0, le=1.0)
+    controlnet_conditioning_scale: float = Field(gt=0.0, le=2.0)
+    seed: int = Field(ge=0, le=2**32 - 1)
+    base_model: NonEmptyStr
+    controlnet_model: NonEmptyStr
+    service_version: NonEmptyStr
+    generation_ms: float = Field(ge=0.0)
+    prompt_sha256: Sha256Hex
+    input_image_sha256: Sha256Hex
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _check_seed_not_bool(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("seed must not be a boolean")
+        return v
+
+    @field_validator("generation_ms")
+    @classmethod
+    def _check_generation_ms_finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("generation_ms must be finite")
+        return v
+
+    @field_validator("image")
+    @classmethod
+    def _check_valid_base64(cls, v: str) -> str:
+        try:
+            decoded = base64.b64decode(v, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("image is not valid base64") from exc
+        if not decoded:
+            raise ValueError("image must decode to non-empty bytes")
+        return v
+
+    @classmethod
+    def from_generation_result(cls, generation: GenerationResult) -> "GeneratedImagePayload":
+        return cls(
+            image=base64.b64encode(generation.image_bytes).decode("ascii"),
+            image_media_type=generation.image_media_type,
+            api_version=generation.api_version,
+            depth_map_used=generation.depth_map_used,
+            denoise_strength=generation.denoise_strength,
+            controlnet_conditioning_scale=generation.controlnet_conditioning_scale,
+            seed=generation.seed,
+            base_model=generation.base_model,
+            controlnet_model=generation.controlnet_model,
+            service_version=generation.service_version,
+            generation_ms=generation.generation_ms,
+            prompt_sha256=generation.prompt_sha256,
+            input_image_sha256=generation.input_image_sha256,
+        )
+
+
+class GenerateResponse(BaseModel):
+    """API-facing /generate response — mirrors the internal
+    ReorganisePipelineResult (app/services/reorganise_pipeline_service.py)
+    field-for-field except that `generation` (raw bytes) becomes `image`
+    (base64), the browser-consumable shape. `planning` is the COMPLETE,
+    unmodified ReorganisePlanningResult — attempts/provenance/issues/
+    model_name/prompt_version/stage_timings all remain visible, never
+    dropped to just the plan itself."""
+
+    run_id: NonEmptyStr
+    planning: ReorganisePlanningResult
+    image_status: Literal["generated", "unavailable"]
+    image: GeneratedImagePayload | None
+    image_unavailable_reason: ImageUnavailableReason | None
+
+    @model_validator(mode="after")
+    def _check_run_id_matches_planning(self) -> "GenerateResponse":
+        if self.run_id != self.planning.run_id:
+            raise ValueError("run_id must match planning.run_id")
+        return self
+
+    @model_validator(mode="after")
+    def _check_image_consistency(self) -> "GenerateResponse":
+        if self.image_status == "generated":
+            if self.image is None or self.image_unavailable_reason is not None:
+                raise ValueError("generated status requires image and no unavailable_reason")
+        else:
+            if self.image is not None or self.image_unavailable_reason is None:
+                raise ValueError("unavailable status requires no image and a reason")
+        return self
+
+    @classmethod
+    def from_pipeline_result(cls, result: ReorganisePipelineResult) -> "GenerateResponse":
+        return cls(
+            run_id=result.run_id,
+            planning=result.planning,
+            image_status=result.image_status,
+            image=GeneratedImagePayload.from_generation_result(result.generation)
+            if result.generation is not None
+            else None,
+            image_unavailable_reason=result.image_unavailable_reason,
+        )
+
+
+@router.post("/generate", response_model=GenerateResponse)
+def generate_reorganisation(
+    request: GenerateRequest,
+    reorganise_planner_provider: ReorganisePlannerLoader = Depends(get_reorganise_planner_provider),
+    image_generator: ImageGenerator = Depends(get_image_generator_provider),
+) -> GenerateResponse:
+    """
+    Synchronous handler, deliberately — same reasoning as /upload/
+    /override: plan_reorganisation() blocks on Ollama and image_generator
+    blocks on a real HTTP POST to Colab; FastAPI's threadpool keeps both
+    off the event loop with no manual thread management here.
+
+    All selection/image/hash validation, R2 planning, and the single R3
+    image-generation call happen inside run_reorganise_pipeline() (see
+    app/services/reorganise_pipeline_service.py) — this handler's only
+    job is request parsing, dependency resolution, base64<->bytes
+    conversion, and error-type -> status-code translation, matching this
+    module's existing thin-handler convention.
+    """
+    llm_planner = reorganise_planner_provider()
+    image_bytes = base64.b64decode(request.image)  # syntax already validated by GenerateRequest
+
+    try:
+        pipeline_result = run_reorganise_pipeline(
+            run_id=request.run_id,
+            analysis=request.analysis,
+            selected_item_ids=request.selected_item_ids,
+            image_bytes=image_bytes,
+            image_media_type=request.image_media_type,
+            expected_input_image_sha256=request.input_image_sha256,
+            user_context=request.user_context,
+            llm_planner=llm_planner,
+            image_generator=image_generator,
+        )
+    except ReorganisePipelineInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid reorganise generation request") from exc
+
+    # Any other exception (a genuine programming error, or an unexpected
+    # image-generation exception the pipeline deliberately does not
+    # catch — see that module's own docstring) is left uncaught here —
+    # FastAPI's default 500, not a disguised success.
+    return GenerateResponse.from_pipeline_result(pipeline_result)
+
+
+# --- /image-gen/health (R4) ------------------------------------------------
+
+
+class HealthChecker(Protocol):
+    def __call__(self) -> bool: ...
+
+
+def get_health_checker_provider() -> HealthChecker:
+    """A SEPARATE provider from get_image_generator_provider above — this
+    route must never share a callable with /generate's image_generator,
+    and /generate must never call this provider either. See
+    app/services/reorganise_pipeline_service.py's own docstring for why
+    the pipeline never performs its own health pre-check: R3's generate()
+    already does that internally."""
+    return _image_gen_check_health
+
+
+class ImageGenHealthResponse(BaseModel):
+    available: bool
+
+
+@router.get("/image-gen/health", response_model=ImageGenHealthResponse)
+def image_gen_health(
+    health_checker: HealthChecker = Depends(get_health_checker_provider),
+) -> ImageGenHealthResponse:
     """
     §5: a lightweight pre-flight check the frontend calls up front (before
     the user ever clicks Reorganise), not just something wrapped in a
-    try/except around the real generation call. Must fail fast — a dead
-    ngrok tunnel should not hang until a long request timeout.
+    try/except around the real generation call. Always 200 — a 503 here
+    would conflate "the ClearSpace backend itself is unhealthy" (what
+    GET /health in app/main.py represents) with "an external dependency
+    is unreachable/incompatible," a different failure domain. Never
+    surfaces the ngrok URL or a raw exception — check_health() itself
+    already never raises (see app/models/image_gen_client.py). Cannot
+    currently distinguish "offline" from "reachable but contract-
+    incompatible" — both collapse to `available: false`, a known,
+    documented limitation of R3's boolean-only health contract, not a
+    defect introduced here.
     """
-    raise NotImplementedError("Depends on app/models/image_gen_client.py:check_health")
+    return ImageGenHealthResponse(available=health_checker())

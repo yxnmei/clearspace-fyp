@@ -356,22 +356,10 @@ def test_declutter_reasoning_error_returns_503():
 # ---------------------------------------------------------------------------
 
 
-def test_reorganise_path_returns_501_and_never_touches_model_loaders():
-    scene_fn = CallRecorder(return_value=DEFAULT_SCENE)
-    detector_fn = CallRecorder(return_value=[])
-    llm_fn = CallRecorder(return_value=None)
-    app.dependency_overrides[get_scene_classifier_provider] = _provider_override(lambda: scene_fn)
-    app.dependency_overrides[get_detector_provider] = _provider_override(lambda: detector_fn)
-    app.dependency_overrides[get_llm_classifier_provider] = _provider_override(lambda: llm_fn)
-
-    response = client.post(
-        "/upload",
-        files={"image": ("test.png", b"irrelevant", "image/png")},
-        data={"path": "reorganise"},
-    )
-
-    assert response.status_code == 501
-    assert scene_fn.calls == [] and detector_fn.calls == [] and llm_fn.calls == []
+# NOTE: the "reorganise path returns 501" placeholder that used to live
+# here was removed once /upload's reorganise path was implemented (R4) —
+# see tests/system/test_upload_reorganise.py for the real, fake-backed
+# replacement (analysis-only, no LLM-classifier call, real 200 response).
 
 
 def test_both_path_returns_501_and_never_touches_model_loaders():
