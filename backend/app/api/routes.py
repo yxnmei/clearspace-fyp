@@ -10,6 +10,7 @@ Endpoints mirror the v1 design (§3 step 6), kept because it worked:
   POST /override     -> re-run LLM reasoning for one item after user edits its label
   POST /transcribe    -> Whisper transcript for user review before it affects context
   POST /generate        -> R2 zone plan + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
+  POST /generate/confirmed -> server-derived Keep-item selection + R2/R3 generation (Both, R6)
   GET  /image-gen/health -> §5: surfaced proactively in the UI, not just on failure
 
 /upload's declutter path is the first real vertical slice: it composes
@@ -30,6 +31,14 @@ claims to belong to — see ReorganiseUploadResponse and
 app/services/reorganise_pipeline_service.py's own module docstring for
 what that hash mechanism does and does not prove.
 
+/upload's both path (R6) runs the SAME two real pipeline stages as the
+other two paths, never reimplemented — declutter's own run_declutter()
+call (identical to path="declutter") PLUS reorganise's own
+input_image_sha256 computation (identical to path="reorganise") — since
+Both needs a completed Declutter triage pass to confirm against AND the
+hash a later /generate/confirmed request will be checked against. See
+BothUploadResponse.
+
 /generate (R4) is a thin route wrapper around
 app.services.reorganise_pipeline_service.run_reorganise_pipeline() — all
 selection/image/hash validation, R2 planning, and the single R3 image-
@@ -43,6 +52,18 @@ to base64 for the browser. Base64 conversion happens ONLY here — the
 service layer never imports base64 for this purpose and never touches
 fastapi at all, so it stays reachable from a future evaluation script
 exactly like every other services/ function (PROJECT_SPEC.md §4).
+
+/generate/confirmed (R6, Both) is the ONLY place selection for Both's
+generation step is derived: app/services/both_service.run_both_generation()
+composes confirm_declutter_result() (app/services/confirmation_service.py,
+unchanged, reused verbatim) and run_reorganise_pipeline()
+(app/services/reorganise_pipeline_service.py, unchanged, reused verbatim)
+so that declutter + overrides go in and confirmed_keep_ids come out,
+entirely server-side. ConfirmedGenerateRequest never has a
+selected_item_ids field at all — a client cannot supply a selection list
+even by accident; see both_service.py's own module docstring for the
+full declutter+overrides -> confirm_declutter_result() -> confirmed_keep_ids
+-> run_reorganise_pipeline() chain.
 
 /confirm vs /override — deliberately two different endpoints, not one:
 /confirm applies a user's Keep/Sell/Donate/Discard decision override (or
@@ -60,13 +81,15 @@ three are obtained through a two-level FastAPI dependency: Depends()
 resolves a cheap *loader* (a zero-arg closure that does the real import),
 never the resolved callable itself — a plain one-level Depends(loader)
 would still trigger the import for every request FastAPI resolves
-dependencies for, including reorganise/both/invalid-path ones, since
-FastAPI resolves every declared Depends() before the handler body runs
-regardless of what the handler does with it afterward. The handler below
-only calls the loader (triggering the real import) inside the
-`path == "declutter"` branch. Tests override the *provider* dependencies
-with the same two-level shape (a fake loader), never the model callables
-directly, so the override behaves identically to production.
+dependencies for, including a reorganise/invalid-path one, since FastAPI
+resolves every declared Depends() before the handler body runs regardless
+of what the handler does with it afterward. The handler below only calls
+the llm_classifier loader (triggering the real import) for `path ==
+"declutter"` or `path == "both"` — never for `path == "reorganise"`,
+which returns before that line. Tests override the *provider*
+dependencies with the same two-level shape (a fake loader), never the
+model callables directly, so the override behaves identically to
+production.
 """
 
 from __future__ import annotations
@@ -93,6 +116,12 @@ from app.services.analysis_service import (
     SceneClassificationError,
     SceneClassifier,
     analyse_image,
+)
+from app.services.both_service import (
+    BothGenerationResult,
+    BothPipelineInputError,
+    EmptyConfirmedKeepError,
+    run_both_generation,
 )
 from app.services.confirmation_service import (
     ConfirmationResult,
@@ -133,9 +162,10 @@ class DeclutterUploadResponse(BaseModel):
     path is deliberately Literal["declutter"], not the broader
     "declutter" | "reorganise" | "both" the request accepts — typing it
     narrowly means a caller can't accidentally construct one claiming to
-    represent a Reorganise/Both result. path="both" is still a 501 (R6,
-    not built yet); path="reorganise" returns a 200, but with the
-    differently-shaped ReorganiseUploadResponse below, never this class."""
+    represent a Reorganise/Both result. path="reorganise" returns a 200,
+    but with the differently-shaped ReorganiseUploadResponse below, never
+    this class; path="both" (R6) likewise returns a 200, with the
+    separate BothUploadResponse below, never this class."""
 
     run_id: NonEmptyStr
     path: Literal["declutter"]
@@ -172,6 +202,34 @@ class ReorganiseUploadResponse(BaseModel):
     def _check_run_id_consistency(self) -> "ReorganiseUploadResponse":
         if self.run_id != self.analysis.run_id:
             raise ValueError("run_id must match analysis.run_id")
+        return self
+
+
+class BothUploadResponse(BaseModel):
+    """The response contract for path="both" (R6) — declutter's full
+    Keep/Sell/Donate/Discard triage pipeline, reused verbatim from
+    path="declutter" (same run_declutter() call, same DeclutterResult
+    shape), PLUS input_image_sha256, reused verbatim from
+    path="reorganise" (same sha256-of-uploaded-bytes computation). A
+    later POST /generate/confirmed request resubmits both this
+    declutter result (plus any decision overrides) and the same image;
+    app.services.both_service.run_both_generation() checks the image
+    against this hash via the same correlation mechanism
+    ReorganiseUploadResponse/run_reorganise_pipeline() already use — see
+    that module's own docstring for the honest limits of what it proves.
+
+    Mirrors DeclutterUploadResponse's run_id-consistency discipline."""
+
+    run_id: NonEmptyStr
+    path: Literal["both"]
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+    input_image_sha256: Sha256Hex
+
+    @model_validator(mode="after")
+    def _check_run_id_consistency(self) -> "BothUploadResponse":
+        if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
         return self
 
 
@@ -221,7 +279,9 @@ def get_llm_classifier_provider() -> LLMClassifierLoader:
 # --- /upload -----------------------------------------------------------
 
 
-@router.post("/upload", response_model=DeclutterUploadResponse | ReorganiseUploadResponse)
+@router.post(
+    "/upload", response_model=DeclutterUploadResponse | ReorganiseUploadResponse | BothUploadResponse
+)
 def upload(
     image: UploadFile = File(...),
     path: Literal["declutter", "reorganise", "both"] = Form(...),
@@ -229,7 +289,7 @@ def upload(
     scene_classifier_provider: SceneClassifierLoader = Depends(get_scene_classifier_provider),
     detector_provider: DetectorLoader = Depends(get_detector_provider),
     llm_classifier_provider: LLMClassifierLoader = Depends(get_llm_classifier_provider),
-) -> DeclutterUploadResponse | ReorganiseUploadResponse:
+) -> DeclutterUploadResponse | ReorganiseUploadResponse | BothUploadResponse:
     """
     Synchronous handler, deliberately: FastAPI/Starlette runs a plain
     `def` path operation in its threadpool executor automatically, which
@@ -244,19 +304,19 @@ def upload(
     same scene_classifier/detector loaders, same real service call — but
     never resolves or calls the llm_classifier loader at all; Direct
     Reorganise has no use for Declutter's Keep/Sell/Donate/Discard
-    reasoning. path == "both" remains a 501 (R6, not built yet).
+    reasoning. path == "both" (R6) shares run_declutter() with declutter
+    (same llm_classifier loader, same real service call) AND computes
+    input_image_sha256 like reorganise does — see BothUploadResponse.
     """
-    if path == "both":
-        raise HTTPException(
-            status_code=501, detail="the Both (confirmed-Keep handoff) path is not implemented yet"
-        )
-
-    # path == "declutter" or "reorganise" from here on.
+    # path in {"declutter", "reorganise", "both"} from here on — every
+    # path shares this same analyse_image() composition, never a second
+    # implementation.
     image_bytes = image.file.read()
     run_id = new_run_id()
 
-    # The real (possibly heavy) import happens here, only for a genuine
-    # declutter/reorganise request — never for both/invalid-path ones.
+    # The real (possibly heavy) import happens here, for every genuine
+    # request regardless of path — never for an invalid-path one (which
+    # never reaches this body at all, per the docstring above).
     scene_classifier = scene_classifier_provider()
     detector = detector_provider()
 
@@ -275,15 +335,27 @@ def upload(
             run_id=run_id, path="reorganise", analysis=analysis, input_image_sha256=input_image_sha256
         )
 
-    # path == "declutter" from here on — the only remaining possibility.
-    # The real (possibly heavy) LLM-classifier import happens here, only
-    # for a genuine declutter request — never for a reorganise one.
+    # path == "declutter" or "both" from here on — both run the full
+    # declutter triage pipeline. The real (possibly heavy) LLM-classifier
+    # import happens here, only for these two paths — never for
+    # reorganise, which returns above before this line.
     llm_classifier = llm_classifier_provider()
     try:
         declutter = run_declutter(analysis, user_context=context, llm_classifier=llm_classifier)
     except DeclutterReasoningError as exc:
         raise HTTPException(status_code=503, detail="LLM reasoning service unavailable") from exc
 
+    if path == "both":
+        input_image_sha256 = hashlib.sha256(image_bytes).hexdigest()
+        return BothUploadResponse(
+            run_id=run_id,
+            path="both",
+            analysis=analysis,
+            declutter=declutter,
+            input_image_sha256=input_image_sha256,
+        )
+
+    # path == "declutter" from here on — the only remaining possibility.
     # Any other exception (a genuine programming error, not one of the
     # typed failure modes above) is deliberately left uncaught here —
     # it becomes FastAPI's default 500, not a disguised success.
@@ -713,6 +785,175 @@ def generate_reorganisation(
     # catch — see that module's own docstring) is left uncaught here —
     # FastAPI's default 500, not a disguised success.
     return GenerateResponse.from_pipeline_result(pipeline_result)
+
+
+# --- /generate/confirmed (R6, Both) -----------------------------------------
+
+
+class ConfirmedGenerateRequest(BaseModel):
+    """Request body for POST /generate/confirmed (Both, R6) — JSON, not
+    multipart. Carries the INPUTS to confirmation (declutter + overrides),
+    never confirmation's OUTPUT: this endpoint always re-derives
+    confirmed_keep_ids server-side via
+    app.services.both_service.run_both_generation() ->
+    confirm_declutter_result() -> confirmed_keep_ids() (module docstring
+    above has the full chain). A client cannot supply a selection list —
+    selected_item_ids is deliberately NOT a field here, and extra="forbid"
+    means sending one gets a loud 422, never a silently-ignored field —
+    same discipline as GenerateRequest's own tuning-field rejection.
+
+    Mirrors GenerateRequest's base64-syntax validation exactly (duplicated
+    per-class, matching this file's existing convention — see
+    GenerateRequest/GeneratedImagePayload's own independently-defined
+    base64 validators) and OverrideRequest's matched-analysis/declutter-
+    pair check exactly (duplicated per-class, same convention), plus
+    checking every overrides[].item_id is one of the actionable ids —
+    defense in depth: confirm_decisions()/ConfirmationInputError already
+    rejects an unknown override item_id server-side inside
+    run_both_generation(), this just fails faster, at the schema layer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: NonEmptyStr
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+    overrides: list[DecisionOverride] = Field(default_factory=list)
+    image: NonEmptyStr
+    image_media_type: Literal["image/png", "image/jpeg"]
+    input_image_sha256: Sha256Hex
+    user_context: str | None = None
+
+    @field_validator("image")
+    @classmethod
+    def _check_base64_syntax(cls, v: str) -> str:
+        try:
+            decoded = base64.b64decode(v, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("image is not valid base64") from exc
+        if not decoded:
+            raise ValueError("image must decode to non-empty bytes")
+        return v
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> "ConfirmedGenerateRequest":
+        if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
+
+        # AnalysisResult's own model_validator already guarantees unique
+        # item_ids within analysis.items — not re-checked here.
+        actionable_ids = [item.item_id for item in self.analysis.items if item.item_role == "actionable"]
+        if self.declutter.expected_item_ids != actionable_ids:
+            raise ValueError(
+                "declutter.expected_item_ids must exactly equal the actionable analysis item_ids, in "
+                "order — analysis and declutter must be a matched pair from the same run"
+            )
+
+        actionable_id_set = set(actionable_ids)
+        for i, override in enumerate(self.overrides):
+            if override.item_id not in actionable_id_set:
+                raise ValueError(
+                    f"overrides[{i}].item_id {override.item_id!r} is not an expected (actionable) item"
+                )
+
+        return self
+
+
+class ConfirmedGenerateResponse(GenerateResponse):
+    """POST /generate/confirmed's response — EXTENDS GenerateResponse
+    (Direct Reorganise's exact generation shape: run_id/planning/
+    image_status/image/image_unavailable_reason) rather than redefining
+    it: GenerateResponse's own `_check_run_id_matches_planning`/
+    `_check_image_consistency` model-validators are inherited unchanged,
+    not redefined here. Adds only the one new field — `confirmation`, the
+    server-derived, authoritative ConfirmationResult
+    run_both_generation() produced, so the frontend can show exactly what
+    was confirmed/kept without a second round trip — and its own
+    run_id cross-check."""
+
+    confirmation: ConfirmationResult
+
+    @model_validator(mode="after")
+    def _check_confirmation_run_id(self) -> "ConfirmedGenerateResponse":
+        if self.run_id != self.confirmation.run_id:
+            raise ValueError("run_id must match confirmation.run_id")
+        return self
+
+    @classmethod
+    def from_both_result(cls, result: BothGenerationResult) -> "ConfirmedGenerateResponse":
+        return cls(
+            run_id=result.run_id,
+            confirmation=result.confirmation,
+            planning=result.pipeline.planning,
+            image_status=result.pipeline.image_status,
+            image=GeneratedImagePayload.from_generation_result(result.pipeline.generation)
+            if result.pipeline.generation is not None
+            else None,
+            image_unavailable_reason=result.pipeline.image_unavailable_reason,
+        )
+
+
+@router.post("/generate/confirmed", response_model=ConfirmedGenerateResponse)
+def generate_confirmed_reorganisation(
+    request: ConfirmedGenerateRequest,
+    reorganise_planner_provider: ReorganisePlannerLoader = Depends(get_reorganise_planner_provider),
+    image_generator: ImageGenerator = Depends(get_image_generator_provider),
+) -> ConfirmedGenerateResponse:
+    """
+    Synchronous handler, deliberately — same reasoning as /generate.
+
+    reorganise_planner_provider is passed through to
+    run_both_generation() UNRESOLVED (the loader itself, never called
+    here) — see both_service.py's own docstring: it is invoked only after
+    confirmation succeeds and at least one Keep item exists, so an
+    empty-Keep request never triggers the ollama import. This is the one
+    difference from /generate's own handler, which resolves its loader
+    unconditionally (Direct Reorganise's selection is already known
+    before the route body runs at all, so there's no empty-selection
+    case to protect against here — GenerateRequest itself already
+    rejects an empty selected_item_ids at the schema layer).
+
+    All confirmation-derivation, selection/image/hash validation, R2
+    planning, and the single R3 image-generation call happen inside
+    run_both_generation() (see app/services/both_service.py) — this
+    handler's only job is request parsing, dependency resolution,
+    base64<->bytes conversion, and error-type -> status-code translation,
+    matching /generate's own thin-handler convention.
+    """
+    image_bytes = base64.b64decode(request.image)  # syntax already validated by ConfirmedGenerateRequest
+
+    try:
+        result = run_both_generation(
+            run_id=request.run_id,
+            analysis=request.analysis,
+            declutter=request.declutter,
+            overrides=request.overrides,
+            image_bytes=image_bytes,
+            image_media_type=request.image_media_type,
+            expected_input_image_sha256=request.input_image_sha256,
+            user_context=request.user_context,
+            llm_planner_provider=reorganise_planner_provider,
+            image_generator=image_generator,
+        )
+    except IncompleteDeclutterError as exc:
+        raise HTTPException(
+            status_code=409, detail="all Declutter items must be resolved before confirmation"
+        ) from exc
+    except EmptyConfirmedKeepError as exc:
+        raise HTTPException(
+            status_code=409, detail="no items were confirmed as Keep — nothing to reorganise"
+        ) from exc
+    except ConfirmationInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid decision overrides") from exc
+    except BothPipelineInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid Both generation request") from exc
+    except ReorganisePipelineInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid reorganise generation request") from exc
+
+    # Any other exception (a genuine programming error, or an unexpected
+    # image-generation exception the pipeline deliberately does not
+    # catch) is left uncaught here — FastAPI's default 500, not a
+    # disguised success, matching every other handler in this module.
+    return ConfirmedGenerateResponse.from_both_result(result)
 
 
 # --- /image-gen/health (R4) ------------------------------------------------

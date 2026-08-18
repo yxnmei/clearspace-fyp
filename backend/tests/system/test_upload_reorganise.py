@@ -246,12 +246,45 @@ def test_declutter_path_still_returns_declutter_shape():
     assert llm_fn.calls  # declutter DOES call the LLM classifier
 
 
-def test_both_path_still_returns_501():
-    scene_fn, detector_fn, llm_fn = _override_providers()
+# path="both" is implemented as of R6 — see tests/system/test_upload_both.py
+# for its full coverage (declutter-shaped response + input_image_sha256,
+# duplicate labels, error mapping). This file keeps only a minimal
+# regression check that "both" still shares analyse_image() AND
+# run_declutter() correctly, matching this file's own declutter-regression
+# test above.
+def test_both_path_returns_declutter_and_reorganise_shape():
+    from app.core.schemas import ItemValidity
+
+    detections = [FakeDetection(label="lamp", box_xyxy=(0.1, 0.1, 0.3, 0.3), confidence=0.9)]
+
+    @dataclass
+    class FakeLLMResult:
+        raw_text: str
+        parsed_json: object
+        is_valid_json: bool
+        model_name: str
+        prompt_version: str
+        item_provenance: dict
+
+    llm_fn = CallRecorder(
+        return_value=FakeLLMResult(
+            raw_text="fake",
+            parsed_json=[{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "still useful"}],
+            is_valid_json=True,
+            model_name="phi4-mini",
+            prompt_version="v2",
+            item_provenance={1: ItemValidity.RAW_VALID},
+        )
+    )
+    scene_fn, detector_fn, llm_fn = _override_providers(detector_fn=CallRecorder(return_value=detections), llm_fn=llm_fn)
+
     response = client.post(
         "/upload",
-        files={"image": ("test.png", b"irrelevant", "image/png")},
+        files={"image": ("test.png", _tiny_valid_png_bytes(), "image/png")},
         data={"path": "both"},
     )
-    assert response.status_code == 501
-    assert scene_fn.calls == [] and detector_fn.calls == [] and llm_fn.calls == []
+    assert response.status_code == 200
+    body = response.json()
+    assert body["path"] == "both"
+    assert set(body.keys()) == {"run_id", "path", "analysis", "declutter", "input_image_sha256"}
+    assert scene_fn.calls and detector_fn.calls and llm_fn.calls  # both real pipeline stages ran
