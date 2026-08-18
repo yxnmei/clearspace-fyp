@@ -105,6 +105,41 @@ DINO/Ollama dependencies, no dependency overrides:
   1x upload, 1x generate); zero `/confirm`/`/override` calls. No
   application defects found. Full numbers in `DEVLOG.md` (local-only)
   under the same date.
+- **2026-08-18 manual run — real browser Both-workflow smoke test:**
+  `POST /upload` (`path=both`) -> `POST /override` -> `POST /confirm` ->
+  `POST /generate/confirmed`, driven through a real Chrome browser
+  (Playwright) against real `uvicorn` + `npm run dev`, no dependency
+  overrides, no fake model services, Colab deliberately offline. Image:
+  `backend/data/test_images/bedroom02.jpg`. `/upload` -> **200** (~96.4s,
+  28/28 resolved). A correction on `item_002` (`jewelry` -> `necklace`,
+  re-verified visually beforehand) via `/override` -> **200** (~7.1s) —
+  the correction's label and fresh reasoning were still present in the
+  `/generate/confirmed` request body sent later, proving it propagated
+  rather than being lost. One live decision override (`item_020`, Keep
+  -> Sell) and one live exclusion (`item_025`, Keep, excluded), both
+  chosen from the real response. `/confirm` -> **200** (~55ms), server
+  re-derived exactly 21 confirmed Keep IDs, correctly omitting both
+  edited items. `/generate/confirmed` -> **200** (~71.2s) — the request
+  body contained exactly `{analysis, declutter, image, image_media_type,
+  input_image_sha256, overrides, run_id, user_context}`, **no
+  `selected_item_ids`/`confirmed_keep_ids`/confirmation result** anywhere
+  in what the client sent. Response `confirmation.confirmed_keep_ids`
+  matched the prior `/confirm` result exactly; **the plan contained
+  exactly those 21 IDs, zero missing/extra**. **Both real phi4-mini
+  planning attempts failed semantic validation** (a different concrete
+  failure than the 2026-08-17 run's) and were correctly rejected,
+  falling through to `provenance="deterministic_fallback"` — a second
+  real-model confirmation the two-attempt-then-fallback safety net
+  generalizes across distinct failure modes. With Colab offline, the
+  complete 21-item plan remained visible alongside an honest
+  unavailable-image state (zero `<img>` elements rendered). Start-over
+  reset cleanly. No application defects found. **Verifies orchestration
+  and failure handling — server-derived selection, request/response
+  contracts, and the validation-and-fallback safety net — not the
+  semantic validity of a successful (non-fallback) Phi-generated plan,
+  and not real image generation** (Colab has never been started in this
+  project's history). Full numbers in `DEVLOG.md` (local-only) under the
+  same date.
 
 **Colab image-generation tests** (`/generate`, the Reorganise path) have
 a **manual precondition that can never be automated the way
