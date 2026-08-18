@@ -21,19 +21,13 @@ describe("PathSelector", () => {
     expect(onChoose).toHaveBeenCalledWith("reorganise");
   });
 
-  test("Both is rendered as a genuinely disabled button, clearly labelled", () => {
-    render(<PathSelector onChoose={vi.fn()} />);
-    const bothButton = screen.getByRole("button", { name: /both/i });
-    expect(bothButton).toBeDisabled();
-    expect(screen.getByText(/coming later/i)).toBeInTheDocument();
-  });
-
-  test("Both cannot trigger onChoose even if clicked", async () => {
+  test("clicking Both calls onChoose with \"both\" (R6 — Both is a real, enabled path)", async () => {
     const onChoose = vi.fn();
     render(<PathSelector onChoose={onChoose} />);
-    const bothButton = screen.getByRole("button", { name: /both/i });
-    await userEvent.click(bothButton).catch(() => {}); // userEvent refuses to click a disabled button
-    expect(onChoose).not.toHaveBeenCalled();
+    const bothButton = screen.getByRole("button", { name: /^both/i });
+    expect(bothButton).toBeEnabled();
+    await userEvent.click(bothButton);
+    expect(onChoose).toHaveBeenCalledWith("both");
   });
 
   test("exactly three choices are rendered", () => {

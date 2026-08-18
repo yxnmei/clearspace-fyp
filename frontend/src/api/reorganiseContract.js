@@ -1,11 +1,13 @@
 // Pure functions only — unit-tested (§4), no React/DOM/fetch here. See
 // utils/format.js and api/declutterContract.js/confirmationContract.js
-// for the same convention. Small local validation helpers are duplicated
-// here rather than imported from those files, matching the existing
-// convention that each contract file owns its own copies rather than
-// sharing a helpers module.
+// for the same convention. Small LOCAL validation helpers (fail/
+// isPlainObject/requireArray/etc. below) are duplicated here rather than
+// imported from those files, matching the existing convention that each
+// contract file owns its own copies rather than sharing a helpers
+// module. normaliseConfirmationResponse (a higher-level normalizer, not
+// a small helper) is the one deliberate exception — see job 3 below.
 //
-// Two jobs live here:
+// Three jobs live here:
 //   1. normaliseReorganiseUploadResponse() — validates POST /upload's
 //      path="reorganise" response (see app/api/routes.py's
 //      ReorganiseUploadResponse). Deliberately NOT built on top of
@@ -19,6 +21,14 @@
 //      both passed in by the caller, exactly like
 //      normaliseConfirmationResponse() takes sourceDeclutter to
 //      cross-check against.
+//   3. normaliseConfirmedGenerateResponse() — validates POST
+//      /generate/confirmed's response (ConfirmedGenerateResponse, R6,
+//      Both). Reuses validatePlanning()/validateGeneratedImage() below
+//      VERBATIM (they're already standalone module-level functions, not
+//      inlined into normaliseGenerateResponse) and reuses
+//      confirmationContract.js's own normaliseConfirmationResponse()
+//      verbatim too — genuine reuse of existing normalizers, not a
+//      parallel reimplementation, per this module's own job.
 //
 // Never merges/joins by label text anywhere in this file — item_id is
 // the only identity. Duplicate labels are explicitly legal and remain
@@ -28,6 +38,8 @@
 // A plan-preserving image_status="unavailable" response is a SUCCESSFUL,
 // fully validated result here — never thrown as an error. Only a
 // genuinely malformed/contract-violating response throws.
+
+import { normaliseConfirmationResponse } from "./confirmationContract";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 // Structural base64 — not just "valid characters": a correct base64
@@ -350,6 +362,91 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 
   return {
     runId: responseRunId,
+    planning: response.planning,
+    imageStatus: response.image_status,
+    image: response.image,
+    imageUnavailableReason: response.image_unavailable_reason,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 3. normaliseConfirmedGenerateResponse
+// ---------------------------------------------------------------------------
+
+// POST /generate/confirmed's response (ConfirmedGenerateResponse, R6,
+// Both) — see app/api/routes.py: EXTENDS GenerateResponse's shape
+// (run_id/planning/image_status/image/image_unavailable_reason) with
+// `confirmation`, never reshaping it. This adapter mirrors that
+// composition: it validates the shared generation portion with the
+// SAME validatePlanning()/validateGeneratedImage() functions
+// normaliseGenerateResponse() above already uses (genuine reuse, not a
+// parallel copy), and validates `confirmation` with
+// confirmationContract.js's own normaliseConfirmationResponse()
+// (imported at the top of this file), never a reimplementation of that
+// logic either.
+//
+// `sourceDeclutter` is the exact DeclutterResult the /generate/confirmed
+// request was built from (i.e. useBothFlow's own declutter.declutter at
+// generate() time) — normaliseConfirmationResponse cross-checks the
+// returned confirmation against it exactly like /confirm's own response
+// already is elsewhere.
+//
+// `priorConfirmedKeepIds` is the confirmed_keep_ids the client's own
+// earlier POST /confirm call already returned for this same
+// sourceDeclutter+overrides pair. The server independently re-derives
+// confirmed_keep_ids from declutter+overrides (see both_service.py) —
+// never trusting anything the client sends — so this cross-check catches
+// any drift between the two confirm() calls (e.g. a race, or a bug that
+// let generate() fire against a stale confirmation) rather than silently
+// trusting the fresh server response at face value.
+export function normaliseConfirmedGenerateResponse(
+  response,
+  { runId, sourceDeclutter, priorConfirmedKeepIds, inputImageSha256 }
+) {
+  if (!isPlainObject(response)) fail("response must be an object");
+
+  const responseRunId = requireNonEmptyString(response.run_id, "run_id");
+  if (responseRunId !== runId) fail("response.run_id does not match the expected run_id");
+
+  if (!isPlainObject(response.confirmation)) fail("confirmation must be an object");
+  const confirmation = normaliseConfirmationResponse(response.confirmation, sourceDeclutter);
+  if (confirmation.runId !== runId) fail("confirmation.run_id does not match the expected run_id");
+
+  requireArray(priorConfirmedKeepIds, "priorConfirmedKeepIds");
+  const keepIdsMatchPrior =
+    confirmation.confirmedKeepIds.length === priorConfirmedKeepIds.length &&
+    confirmation.confirmedKeepIds.every((id, i) => id === priorConfirmedKeepIds[i]);
+  if (!keepIdsMatchPrior) {
+    fail(
+      "response confirmation.confirmed_keep_ids does not match the prior /confirm result, in order — " +
+        "the server-derived selection has drifted from what was confirmed"
+    );
+  }
+
+  // The plan must exactly partition the server-derived confirmed Keep
+  // set — never a client-supplied selection (there is none here at all;
+  // see generateConfirmedReorganisation in api/client.js).
+  validatePlanning(response.planning, runId, confirmation.confirmedKeepIds);
+
+  if (!VALID_IMAGE_STATUS.has(response.image_status)) {
+    fail(`image_status is not "generated" or "unavailable": ${JSON.stringify(response.image_status)}`);
+  }
+
+  if (response.image_status === "generated") {
+    if (response.image_unavailable_reason !== null) {
+      fail("image_unavailable_reason must be null when image_status is generated");
+    }
+    validateGeneratedImage(response.image, inputImageSha256);
+  } else {
+    if (response.image !== null) fail("image must be null when image_status is unavailable");
+    if (!VALID_UNAVAILABLE_REASONS.has(response.image_unavailable_reason)) {
+      fail(`image_unavailable_reason is not recognised: ${JSON.stringify(response.image_unavailable_reason)}`);
+    }
+  }
+
+  return {
+    runId: responseRunId,
+    confirmation,
     planning: response.planning,
     imageStatus: response.image_status,
     image: response.image,

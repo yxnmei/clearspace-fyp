@@ -125,4 +125,37 @@ describe("ConfirmationSummary", () => {
     render(<ConfirmationSummary confirmation={confirmation} reviewItems={[]} />);
     expect(screen.getByText(/no items were confirmed as keep/i)).toBeInTheDocument();
   });
+
+  test("without nextStepNote, the original default 'future Reorganise stage' wording is shown unchanged (R6)", () => {
+    const confirmation = {
+      runId: "run1",
+      confirmedDecisions: [makeConfirmedDecision()],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 0,
+      excludedCount: 0,
+      response: {},
+    };
+    render(<ConfirmationSummary confirmation={confirmation} reviewItems={[]} />);
+    expect(screen.getByText(/future reorganise stage/i)).toBeInTheDocument();
+  });
+
+  test("a configured nextStepNote replaces the default wording (R6, Both)", () => {
+    const confirmation = {
+      runId: "run1",
+      confirmedDecisions: [makeConfirmedDecision()],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 0,
+      excludedCount: 0,
+      response: {},
+    };
+    render(
+      <ConfirmationSummary
+        confirmation={confirmation}
+        reviewItems={[]}
+        nextStepNote="These confirmed Keep items will be sent to reorganisation next."
+      />
+    );
+    expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
+    expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+  });
 });

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { normaliseGenerateResponse, normaliseReorganiseUploadResponse } from "./reorganiseContract";
+import {
+  normaliseConfirmedGenerateResponse,
+  normaliseGenerateResponse,
+  normaliseReorganiseUploadResponse,
+} from "./reorganiseContract";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -627,5 +631,224 @@ describe("normaliseGenerateResponse — the single reorganise_plan stage timing"
   test("accepts exactly one well-formed reorganise_plan timing", () => {
     const ok = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [{ stage: "reorganise_plan", duration_ms: 12.3 }] }) });
     expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normaliseConfirmedGenerateResponse (R6, Both)
+// ---------------------------------------------------------------------------
+
+function makeAiDecision(overrides = {}) {
+  return { item_id: "item_001", decision: "keep", reason: "still useful", ...overrides };
+}
+
+function makeSourceDeclutter(overrides = {}) {
+  return {
+    run_id: "run1",
+    expected_item_ids: ["item_001", "item_002"],
+    ai_decisions: [
+      makeAiDecision({ item_id: "item_001", decision: "keep" }),
+      makeAiDecision({ item_id: "item_002", decision: "sell", reason: "not needed" }),
+    ],
+    unresolved_item_ids: [],
+    item_validity: { item_001: "raw_valid", item_002: "raw_valid" },
+    ...overrides,
+  };
+}
+
+function makeConfirmedDecision(overrides = {}) {
+  return {
+    item_id: "item_001",
+    ai_decision: "keep",
+    confirmed_decision: "keep",
+    ai_reason: "still useful",
+    user_reason: null,
+    excluded: false,
+    decision_changed: false,
+    ...overrides,
+  };
+}
+
+function makeConfirmationResponse(overrides = {}) {
+  return {
+    run_id: "run1",
+    confirmed_decisions: [
+      makeConfirmedDecision({ item_id: "item_001" }),
+      makeConfirmedDecision({
+        item_id: "item_002",
+        ai_decision: "sell",
+        confirmed_decision: "sell",
+        ai_reason: "not needed",
+      }),
+    ],
+    confirmed_keep_ids: ["item_001"], // only item_001 is Keep — item_002 is Sell
+    decision_changed_count: 0,
+    excluded_count: 0,
+    ...overrides,
+  };
+}
+
+// The plan reflects ONLY the server-derived confirmed Keep set
+// (["item_001"]), never the full expected_item_ids or any client-supplied
+// selection — there is no selection field in the /generate/confirmed
+// request at all (see api/client.js's generateConfirmedReorganisation).
+function makeConfirmedGenerateResponse(overrides = {}) {
+  return {
+    run_id: "run1",
+    confirmation: makeConfirmationResponse(),
+    planning: makePlanning({
+      plan: {
+        zones: [{ zone_name: "Keep in place", item_ids: ["item_001"], instruction: "keep as is" }],
+        image_prompt: "a tidy bedroom",
+        negative_prompt: null,
+      },
+    }),
+    image_status: "generated",
+    image: makeGeneratedImage(),
+    image_unavailable_reason: null,
+    ...overrides,
+  };
+}
+
+const CONFIRMED_OPTS = {
+  runId: "run1",
+  sourceDeclutter: makeSourceDeclutter(),
+  priorConfirmedKeepIds: ["item_001"],
+  inputImageSha256: HASH_B,
+};
+
+describe("normaliseConfirmedGenerateResponse", () => {
+  test("accepts a valid response and returns confirmation alongside the generation fields", () => {
+    const result = normaliseConfirmedGenerateResponse(makeConfirmedGenerateResponse(), CONFIRMED_OPTS);
+    expect(result.runId).toBe("run1");
+    expect(result.confirmation.confirmedKeepIds).toEqual(["item_001"]);
+    expect(result.imageStatus).toBe("generated");
+    expect(result.image).toBeTruthy();
+    expect(result.planning.plan.zones[0].item_ids).toEqual(["item_001"]);
+  });
+
+  test("rejects run_id mismatch", () => {
+    expect(() =>
+      normaliseConfirmedGenerateResponse(makeConfirmedGenerateResponse({ run_id: "other" }), CONFIRMED_OPTS)
+    ).toThrow(/run_id/);
+  });
+
+  test("rejects a confirmation whose run_id does not match", () => {
+    const bad = makeConfirmedGenerateResponse();
+    bad.confirmation.run_id = "other";
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/run_id/);
+  });
+
+  test("rejects a malformed confirmation object outright (reuses normaliseConfirmationResponse's own checks)", () => {
+    const bad = makeConfirmedGenerateResponse();
+    bad.confirmation.confirmed_decisions = [
+      makeConfirmedDecision({ item_id: "item_001" }),
+      makeConfirmedDecision({ item_id: "item_001" }), // duplicate — confirmationContract's own check
+    ];
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/duplicate/);
+  });
+
+  test("rejects when the server's confirmed_keep_ids drifts from the prior /confirm result", () => {
+    // The server now reports item_002 as Keep too — but the client's own
+    // earlier /confirm call only ever reported item_001. Otherwise fully
+    // internally consistent (satisfies normaliseConfirmationResponse's
+    // own checks), so this specifically exercises the drift check.
+    const bad = makeConfirmedGenerateResponse({
+      confirmation: makeConfirmationResponse({
+        confirmed_keep_ids: ["item_001", "item_002"],
+        confirmed_decisions: [
+          makeConfirmedDecision({ item_id: "item_001" }),
+          makeConfirmedDecision({
+            item_id: "item_002",
+            ai_decision: "sell",
+            confirmed_decision: "keep",
+            ai_reason: "not needed",
+            decision_changed: true,
+          }),
+        ],
+        decision_changed_count: 1,
+      }),
+    });
+    bad.planning.plan.zones[0].item_ids = ["item_001", "item_002"];
+    expect(() =>
+      normaliseConfirmedGenerateResponse(bad, { ...CONFIRMED_OPTS, priorConfirmedKeepIds: ["item_001"] })
+    ).toThrow(/confirmed_keep_ids/);
+  });
+
+  test("rejects a priorConfirmedKeepIds in a different order than the response, even with the same set", () => {
+    // The response's own confirmed_keep_ids is internally pinned to
+    // confirmed_decisions order (itself pinned to expected_item_ids
+    // order — see confirmationContract.js) — ["item_001", "item_002"] is
+    // the only internally-valid order for "both kept". A caller-supplied
+    // priorConfirmedKeepIds in a different order (however it got that
+    // way) must still be rejected — the cross-check is order-sensitive,
+    // not just set-equality.
+    const bothKeep = makeConfirmedGenerateResponse({
+      confirmation: makeConfirmationResponse({
+        confirmed_keep_ids: ["item_001", "item_002"],
+        confirmed_decisions: [
+          makeConfirmedDecision({ item_id: "item_001" }),
+          makeConfirmedDecision({
+            item_id: "item_002",
+            ai_decision: "sell",
+            confirmed_decision: "keep",
+            ai_reason: "not needed",
+            decision_changed: true,
+          }),
+        ],
+        decision_changed_count: 1,
+      }),
+    });
+    bothKeep.planning.plan.zones[0].item_ids = ["item_001", "item_002"];
+    expect(() =>
+      normaliseConfirmedGenerateResponse(bothKeep, { ...CONFIRMED_OPTS, priorConfirmedKeepIds: ["item_002", "item_001"] })
+    ).toThrow(/confirmed_keep_ids/);
+  });
+
+  test("rejects a plan that doesn't exactly match the server-derived confirmed Keep set", () => {
+    const bad = makeConfirmedGenerateResponse();
+    bad.planning.plan.zones[0].item_ids = ["item_001", "item_002"]; // item_002 was never confirmed Keep
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/unselected/);
+  });
+
+  test("rejects a plan that omits a confirmed Keep item", () => {
+    const bad = makeConfirmedGenerateResponse({
+      confirmation: makeConfirmationResponse({ confirmed_keep_ids: ["item_001"] }),
+    });
+    bad.planning.plan.zones[0].item_ids = []; // will fail on empty item_ids first — use a different zone instead
+    bad.planning.plan.zones = [{ zone_name: "Elsewhere", item_ids: ["item_002"], instruction: "n/a" }];
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/omits/);
+  });
+
+  test("a plan-preserving unavailable result is a successful, fully validated result", () => {
+    const response = makeConfirmedGenerateResponse({
+      image_status: "unavailable",
+      image: null,
+      image_unavailable_reason: "service_unreachable",
+    });
+    const result = normaliseConfirmedGenerateResponse(response, CONFIRMED_OPTS);
+    expect(result.imageStatus).toBe("unavailable");
+    expect(result.image).toBeNull();
+    expect(result.imageUnavailableReason).toBe("service_unreachable");
+    expect(result.confirmation.confirmedKeepIds).toEqual(["item_001"]); // confirmation still present
+  });
+
+  test("rejects image_status generated with a non-null image_unavailable_reason", () => {
+    const bad = makeConfirmedGenerateResponse({ image_unavailable_reason: "timeout" });
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/image_unavailable_reason/);
+  });
+
+  test("rejects an unrecognised image_status", () => {
+    const bad = makeConfirmedGenerateResponse({ image_status: "pending" });
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/image_status/);
+  });
+
+  test("validates the generated image the same way normaliseGenerateResponse does (reused, not reimplemented)", () => {
+    const bad = makeConfirmedGenerateResponse({ image: makeGeneratedImage({ image_media_type: "image/gif" }) });
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/image_media_type/);
+  });
+
+  test("rejects a non-object response", () => {
+    expect(() => normaliseConfirmedGenerateResponse(null, CONFIRMED_OPTS)).toThrow(/must be an object/);
   });
 });

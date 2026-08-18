@@ -11,13 +11,19 @@
 // warnings/timings/provenance/validity/completeness fields are never
 // stripped, only read from.
 //
-// Both responses share the exact same join/invariant logic —
-// _normaliseAnalysisDeclutterEnvelope, below — since /override's
-// response IS a full (analysis, declutter) pair, not a delta/patch (see
-// app/api/routes.py's OverrideResponse docstring): the only thing that
-// differs between the two public functions is /upload's additional
-// `path === "declutter"` requirement, which /override's response never
-// carries at all.
+// Three responses share the exact same join/invariant logic —
+// normaliseAnalysisDeclutterEnvelope, below — since /override's response
+// and /upload's path="both" response are both full (analysis, declutter)
+// pairs, not deltas/patches (see app/api/routes.py's OverrideResponse/
+// BothUploadResponse docstrings): the only thing that differs between the
+// three public functions is which `path` value (if any) is required —
+// see normaliseAnalysisDeclutterEnvelope's own `expectedPath` parameter.
+// normaliseBothUploadResponse additionally carries input_image_sha256
+// (R6) — reorganiseContract.js's own SHA256_HEX_RE pattern, duplicated
+// here rather than imported, matching that file's own stated convention
+// that each contract file owns its own small validation helpers.
+
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
 function fail(message) {
   throw new Error(`declutterContract: ${message}`);
@@ -43,6 +49,13 @@ function requireNoDuplicates(ids, name) {
     if (seen.has(id)) fail(`duplicate ${name}: ${JSON.stringify(id)}`);
     seen.add(id);
   }
+}
+
+function requireSha256Hex(value, name) {
+  if (typeof value !== "string" || !SHA256_HEX_RE.test(value)) {
+    fail(`${name} must be a 64-character lowercase hexadecimal string`);
+  }
+  return value;
 }
 
 function extractItemIds(entries, entryName) {
@@ -79,15 +92,16 @@ function requireLabelProvenanceConsistent(detection, name) {
   }
 }
 
-// Shared by normaliseDeclutterUploadResponse and normaliseOverrideResponse
-// — every invariant below applies identically to both, since /override's
-// response is a full (analysis, declutter) pair like /upload's, never a
-// delta. `requireDeclutterPath` is the one dimension that differs.
-function normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath }) {
+// Shared by normaliseDeclutterUploadResponse, normaliseOverrideResponse,
+// and normaliseBothUploadResponse — every invariant below applies
+// identically to all three. `expectedPath` is the one dimension that
+// differs: "declutter" | "both" requires an exact match, null (/override,
+// which never carries a `path` field at all) skips the check entirely.
+function normaliseAnalysisDeclutterEnvelope(response, { expectedPath }) {
   if (!isPlainObject(response)) fail("response must be an object");
 
-  if (requireDeclutterPath && response.path !== "declutter") {
-    fail(`expected path "declutter", got ${JSON.stringify(response.path)}`);
+  if (expectedPath !== null && response.path !== expectedPath) {
+    fail(`expected path ${JSON.stringify(expectedPath)}, got ${JSON.stringify(response.path)}`);
   }
 
   const runId = requireNonEmptyString(response.run_id, "run_id");
@@ -212,7 +226,7 @@ function normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath }) 
 }
 
 export function normaliseDeclutterUploadResponse(response) {
-  return normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath: true });
+  return normaliseAnalysisDeclutterEnvelope(response, { expectedPath: "declutter" });
 }
 
 // POST /override's response — see app/api/routes.py's OverrideResponse:
@@ -222,5 +236,22 @@ export function normaliseDeclutterUploadResponse(response) {
 // /upload's response otherwise, since it's a full (analysis, declutter)
 // pair, not a patch — reuses the identical join/validation logic above.
 export function normaliseOverrideResponse(response) {
-  return normaliseAnalysisDeclutterEnvelope(response, { requireDeclutterPath: false });
+  return normaliseAnalysisDeclutterEnvelope(response, { expectedPath: null });
+}
+
+// POST /upload's path="both" response (R6) — see app/api/routes.py's
+// BothUploadResponse: the exact same (analysis, declutter) envelope as
+// path="declutter" (full triage pipeline, reused verbatim server-side —
+// see that module's own docstring), PLUS input_image_sha256, reused
+// verbatim from path="reorganise"'s own hash mechanism. A later
+// generateConfirmedReorganisation() call resubmits both this declutter
+// result (plus any decision overrides) and the same image; the backend
+// checks the image against this hash the same way run_reorganise_pipeline()
+// already does for Direct Reorganise — see reorganiseContract.js's own
+// normaliseReorganiseUploadResponse for the identical hash-field
+// convention this mirrors.
+export function normaliseBothUploadResponse(response) {
+  const envelope = normaliseAnalysisDeclutterEnvelope(response, { expectedPath: "both" });
+  const inputImageSha256 = requireSha256Hex(response.input_image_sha256, "input_image_sha256");
+  return { ...envelope, inputImageSha256 };
 }

@@ -968,3 +968,134 @@ describe("useDeclutterFlow correctLabel", () => {
     });
   });
 });
+
+describe("useDeclutterFlow — configurable uploadPath/normaliseUploadResponse (R6)", () => {
+  test("default parameters reproduce existing Declutter behavior exactly — no arguments needed", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    const { result } = renderHook(() => useDeclutterFlow());
+
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    expect(client.uploadImage).toHaveBeenCalledWith(expect.objectContaining({ path: "declutter" }));
+    expect(result.current.status).toBe("ready");
+    expect(result.current.inputImageSha256).toBeNull(); // never set by normaliseDeclutterUploadResponse
+  });
+
+  test("a configured uploadPath is sent to uploadImage instead of the default", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    const { result } = renderHook(() => useDeclutterFlow({ uploadPath: "both" }));
+
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    expect(client.uploadImage).toHaveBeenCalledWith(expect.objectContaining({ path: "both" }));
+  });
+
+  test("a configured normaliseUploadResponse is used instead of the default, and its extra fields surface", async () => {
+    const rawResponse = makeUploadResponse();
+    client.uploadImage.mockResolvedValue(rawResponse);
+    const customNormaliser = vi.fn((response) => ({
+      runId: response.run_id,
+      analysis: response.analysis,
+      declutter: response.declutter,
+      items: [],
+      inputImageSha256: "b".repeat(64),
+    }));
+
+    const { result } = renderHook(() => useDeclutterFlow({ normaliseUploadResponse: customNormaliser }));
+
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    expect(customNormaliser).toHaveBeenCalledWith(rawResponse);
+    expect(result.current.inputImageSha256).toBe("b".repeat(64));
+  });
+});
+
+describe("useDeclutterFlow — reset() (R6)", () => {
+  test("reset() clears analysis, declutter, overrides, confirmation, and errors, returning to idle", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.confirmDecisions.mockResolvedValue(makeConfirmResponse());
+    const { result } = renderHook(() => useDeclutterFlow());
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+    act(() => {
+      result.current.setDecisionOverride("item_001", "donate");
+    });
+    await act(async () => {
+      await result.current.confirm();
+    });
+    expect(result.current.confirmation).not.toBeNull();
+
+    act(() => {
+      result.current.reset();
+    });
+
+    expect(result.current.status).toBe("idle");
+    expect(result.current.analysis).toBeNull();
+    expect(result.current.declutter).toBeNull();
+    expect(result.current.items).toEqual([]);
+    expect(result.current.overridesById).toEqual({});
+    expect(result.current.confirmation).toBeNull();
+    expect(result.current.confirmationStatus).toBe("idle");
+    expect(result.current.error).toBeNull();
+  });
+
+  test("reset() invalidates an in-flight upload — a stale response never resurrects state", async () => {
+    const { result } = renderHook(() => useDeclutterFlow());
+    const deferred = makeDeferred();
+    client.uploadImage.mockReturnValueOnce(deferred.promise);
+
+    let submitPromise;
+    act(() => {
+      submitPromise = result.current.submit({ file: makeFile(), context: null });
+    });
+    expect(result.current.status).toBe("uploading");
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.status).toBe("idle");
+
+    await act(async () => {
+      deferred.resolve(makeUploadResponse());
+      await submitPromise;
+    });
+
+    expect(result.current.status).toBe("idle"); // the stale success never applied
+    expect(result.current.analysis).toBeNull();
+  });
+
+  test("reset() invalidates an in-flight confirmation — a stale response never resurrects state", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    const { result } = renderHook(() => useDeclutterFlow());
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    const deferred = makeDeferred();
+    client.confirmDecisions.mockReturnValueOnce(deferred.promise);
+    let confirmPromise;
+    act(() => {
+      confirmPromise = result.current.confirm();
+    });
+    expect(result.current.confirmationStatus).toBe("confirming");
+
+    act(() => {
+      result.current.reset();
+    });
+
+    await act(async () => {
+      deferred.resolve(makeConfirmResponse());
+      await confirmPromise;
+    });
+
+    expect(result.current.confirmation).toBeNull();
+    expect(result.current.confirmationStatus).toBe("idle");
+  });
+});

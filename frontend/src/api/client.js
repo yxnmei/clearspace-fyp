@@ -124,3 +124,48 @@ export async function generateReorganisation({
     }),
   });
 }
+
+// POST /generate/confirmed (Both, R6) — matching app/api/routes.py's
+// ConfirmedGenerateRequest exactly (extra="forbid" there too). Carries
+// the INPUTS to confirmation (declutter + overrides), never confirmation
+// OUTPUT: selection is derived entirely server-side from
+// confirm_declutter_result() -> confirmed_keep_ids — this function
+// deliberately has NO selectedItemIds/confirmedKeepIds parameter at all,
+// so there is no way to accidentally send one. `declutter`/`overrides`
+// are the exact same objects useBothFlow's composed useDeclutterFlow
+// already holds — round-tripped whole, same discipline as every other
+// object-carrying request in this file.
+//
+// Deliberately NEVER sends selected_item_ids, confirmed_keep_ids, or any
+// generation-tuning field (denoise_strength/controlnet_conditioning_scale
+// /seed) — same reasoning as generateReorganisation() above.
+export async function generateConfirmedReorganisation({
+  runId,
+  analysis,
+  declutter,
+  overrides = [],
+  file,
+  inputImageSha256,
+  userContext = null,
+}) {
+  if (file.type !== "image/png" && file.type !== "image/jpeg") {
+    throw new Error(`generateConfirmedReorganisation: file must be PNG or JPEG, got ${JSON.stringify(file.type)}`);
+  }
+
+  const image = await fileToBase64(file);
+
+  return request("/generate/confirmed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      run_id: runId,
+      analysis,
+      declutter,
+      overrides,
+      image,
+      image_media_type: file.type,
+      input_image_sha256: inputImageSha256,
+      user_context: userContext,
+    }),
+  });
+}

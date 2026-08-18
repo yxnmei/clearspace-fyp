@@ -25,10 +25,24 @@ import {
 // concurrency guards below (flowGenerationRef/confirmationGenerationRef)
 // are exercised directly by rendered-hook tests
 // (useDeclutterFlow.test.jsx), not just reviewed by inspection.
+//
+// uploadPath/normaliseUploadResponse (R6, Both — required correction 5):
+// optional, default-compatible configuration so useBothFlow can COMPOSE
+// this hook (path="both" + normaliseBothUploadResponse) rather than
+// copying it — every existing call site (DeclutterPage) calls
+// useDeclutterFlow() with no arguments at all, so the defaults below
+// reproduce today's exact behavior byte-for-byte; nothing about
+// submit()/confirm()/correctLabel()/the two concurrency domains changes
+// for Declutter. inputImageSha256 is exposed on the returned object for
+// the same reason — normaliseBothUploadResponse's extra field flows
+// through `flow` and out of the hook untouched; normaliseDeclutterUploadResponse
+// never sets it, so it's simply null for ordinary Declutter use.
+const EMPTY_FLOW = { runId: null, analysis: null, declutter: null, items: [], context: null, inputImageSha256: null };
 
-const EMPTY_FLOW = { runId: null, analysis: null, declutter: null, items: [], context: null };
-
-export function useDeclutterFlow() {
+export function useDeclutterFlow({
+  uploadPath = "declutter",
+  normaliseUploadResponse = normaliseDeclutterUploadResponse,
+} = {}) {
   const [status, setStatus] = useState("idle"); // idle | uploading | ready | error
   const [flow, setFlow] = useState(EMPTY_FLOW);
   const [error, setError] = useState(null);
@@ -114,8 +128,8 @@ export function useDeclutterFlow() {
       setCorrectionError(null);
 
       try {
-        const response = await uploadImage({ file, path: "declutter", context });
-        const normalised = normaliseDeclutterUploadResponse(response);
+        const response = await uploadImage({ file, path: uploadPath, context });
+        const normalised = normaliseUploadResponse(response);
 
         if (flowGenerationRef.current !== generation) {
           return; // superseded by a newer submit()/correctLabel() — discard silently
@@ -130,7 +144,7 @@ export function useDeclutterFlow() {
         setStatus("error");
       }
     },
-    [invalidateConfirmation]
+    [invalidateConfirmation, uploadPath, normaliseUploadResponse]
   );
 
   // An item is reviewable (decision override eligible) only if it's a
@@ -350,14 +364,36 @@ export function useDeclutterFlow() {
     }
   }, [correctingItemId, flow.declutter, flow.runId, overridesById]);
 
+  // Deterministic full reset (R6 — required correction 5): invalidates
+  // BOTH concurrency domains (any in-flight upload/correction AND any
+  // in-flight/completed confirmation) via the exact same refs
+  // submit()/invalidateConfirmation() already use, then clears every
+  // piece of state back to its initial value — matching
+  // useReorganiseFlow's own reset() convention exactly. No existing
+  // caller invokes this today (DeclutterPage has no "start over"
+  // concept), so this is purely additive; useBothFlow (R6) is the first
+  // caller, composing this alongside its own generation-state reset.
+  const reset = useCallback(() => {
+    flowGenerationRef.current += 1; // invalidates any in-flight upload/correction write
+    invalidateConfirmation(); // separate ref — invalidates any in-flight/completed confirm()
+    setStatus("idle");
+    setError(null);
+    setFlow(EMPTY_FLOW);
+    setOverridesById({});
+    setCorrectingItemId(null);
+    setCorrectionError(null);
+  }, [invalidateConfirmation]);
+
   return {
     status,
     runId: flow.runId,
     analysis: flow.analysis,
     declutter: flow.declutter,
     items: flow.items,
+    inputImageSha256: flow.inputImageSha256 ?? null,
     error,
     submit,
+    reset,
     reviewItems,
     overridesById,
     confirmation,

@@ -2,22 +2,24 @@ import { useState } from "react";
 import PathSelector from "./components/PathSelector";
 import DeclutterPage from "./components/DeclutterPage";
 import ReorganisePage from "./components/ReorganisePage";
+import BothPage from "./components/BothPage";
 
 // Root shell — owns ONLY the top-level workflow choice ("choose" |
-// "declutter" | "reorganise"), nothing else. Both remains unimplemented
-// (R6) — PathSelector renders it as a genuinely disabled, non-functional
-// card, so `mode` can never become "both" here at all.
+// "declutter" | "reorganise" | "both"), nothing else. Both is real as of
+// R6 (BothPage) — PathSelector renders it as a genuine, enabled card,
+// exactly like Declutter/Reorganise.
 //
 // Switching workflows (or returning to path selection) fully UNMOUNTS
 // whichever page was showing, rather than hiding it — DeclutterPage's
-// useDeclutterFlow state and ReorganisePage's useReorganiseFlow/
+// useDeclutterFlow state, ReorganisePage's useReorganiseFlow/
+// useImageGenHealth/useObjectUrl state, and BothPage's useBothFlow/
 // useImageGenHealth/useObjectUrl state all live inside those component
 // subtrees, so unmounting them is what guarantees no stale state leaks
 // between workflows, with zero extra reset logic needed here. This is
 // also exactly why PathSelector is cards, not tabs — tabs imply
 // state-preserving switching, which is the wrong model for this app.
 export default function App() {
-  const [mode, setMode] = useState("choose"); // "choose" | "declutter" | "reorganise"
+  const [mode, setMode] = useState("choose"); // "choose" | "declutter" | "reorganise" | "both"
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -53,6 +55,8 @@ export default function App() {
         )}
 
         {mode === "reorganise" && <ReorganisePage onBackToPathSelection={() => setMode("choose")} />}
+
+        {mode === "both" && <BothPage onBackToPathSelection={() => setMode("choose")} />}
       </div>
     </div>
   );

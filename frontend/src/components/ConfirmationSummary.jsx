@@ -2,7 +2,20 @@
 // confirmation state. Confirmed Keep item_ids are matched back to
 // reviewItems strictly by item_id — never by label — so this component
 // can show a clean_label/position next to each confirmed Keep item.
-export default function ConfirmationSummary({ confirmation, reviewItems }) {
+//
+// nextStepNote (R6, Both — required correction 6/"configurable
+// confirmation handoff wording"): optional, defaults to the exact
+// original hardcoded string below — DeclutterReview's own existing call
+// site never passes it, so Declutter's rendered output is byte-for-byte
+// unchanged. useBothFlow's BothPage passes a Both-specific note instead,
+// since for Both, Reorganise isn't a hypothetical "future stage" (a
+// separate workflow the user might start later) — it's the very next
+// step of the SAME flow, one click away.
+export default function ConfirmationSummary({
+  confirmation,
+  reviewItems,
+  nextStepNote = "Only these confirmed Keep items will be available to the future Reorganise stage.",
+}) {
   const counts = { keep: 0, sell: 0, donate: 0, discard: 0 };
   for (const decision of confirmation.confirmedDecisions) {
     counts[decision.confirmed_decision] += 1;
@@ -52,9 +65,7 @@ export default function ConfirmationSummary({ confirmation, reviewItems }) {
       <h3 className="mb-1 text-sm font-medium text-green-900">
         Confirmed Keep items ({keepItems.length})
       </h3>
-      <p className="mb-2 text-sm text-green-800">
-        Only these confirmed Keep items will be available to the future Reorganise stage.
-      </p>
+      <p className="mb-2 text-sm text-green-800">{nextStepNote}</p>
       {keepItems.length === 0 ? (
         <p className="text-sm text-green-700">No items were confirmed as Keep.</p>
       ) : (

@@ -528,3 +528,42 @@ describe("DeclutterReview", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Label correction failed");
   });
 });
+
+describe("DeclutterReview — confirmationNextStepNote (R6)", () => {
+  function makeConfirmation() {
+    return {
+      runId: "run1",
+      confirmedDecisions: [
+        {
+          item_id: "item_001",
+          ai_decision: "keep",
+          confirmed_decision: "keep",
+          ai_reason: "still useful",
+          user_reason: null,
+          excluded: false,
+          decision_changed: false,
+        },
+      ],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 0,
+      excludedCount: 0,
+      response: {},
+    };
+  }
+
+  test("without the prop, ConfirmationSummary's own default wording is shown unchanged", () => {
+    const props = baseProps({ confirmation: makeConfirmation() });
+    render(<DeclutterReview {...props} />);
+    expect(screen.getByText(/future reorganise stage/i)).toBeInTheDocument();
+  });
+
+  test("a configured confirmationNextStepNote is forwarded to ConfirmationSummary", () => {
+    const props = baseProps({
+      confirmation: makeConfirmation(),
+      confirmationNextStepNote: "These confirmed Keep items will be sent to reorganisation next.",
+    });
+    render(<DeclutterReview {...props} />);
+    expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
+    expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+  });
+});

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { normaliseDeclutterUploadResponse, normaliseOverrideResponse } from "./declutterContract";
+import {
+  normaliseBothUploadResponse,
+  normaliseDeclutterUploadResponse,
+  normaliseOverrideResponse,
+} from "./declutterContract";
+
+const HASH = "a".repeat(64);
 
 function makeDetection(overrides = {}) {
   const cleanLabel = overrides.clean_label ?? "lamp";
@@ -681,5 +687,85 @@ describe("normaliseOverrideResponse", () => {
     const withPath = baseOverrideResponse();
     withPath.path = "declutter"; // a stray path field must not be required NOR cause rejection
     expect(() => normaliseOverrideResponse(withPath)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normaliseBothUploadResponse (R6)
+// ---------------------------------------------------------------------------
+
+describe("normaliseBothUploadResponse", () => {
+  function baseBothResponse({ runId = "run_abc", analysis = {}, declutter = {}, inputImageSha256 = HASH } = {}) {
+    return {
+      run_id: runId,
+      path: "both",
+      analysis: baseAnalysis({ run_id: runId, ...analysis }),
+      declutter: baseDeclutter({ run_id: runId, ...declutter }),
+      input_image_sha256: inputImageSha256,
+    };
+  }
+
+  test("full declutter triage plus the upload hash are both present", () => {
+    const response = baseBothResponse({
+      analysis: { items: [makeDetection({ item_id: "item_001" })] },
+      declutter: {
+        expected_item_ids: ["item_001"],
+        ai_decisions: [makeDecision({ item_id: "item_001", decision: "keep", reason: "still useful" })],
+        item_validity: { item_001: "raw_valid" },
+      },
+    });
+
+    const result = normaliseBothUploadResponse(response);
+
+    expect(result.runId).toBe("run_abc");
+    expect(result.inputImageSha256).toBe(HASH);
+    expect(result.items[0]).toMatchObject({ item_id: "item_001", ai_decision: "keep" });
+  });
+
+  test("two detections sharing a label get independent decisions, exactly like path=declutter", () => {
+    const response = baseBothResponse({
+      analysis: {
+        items: [
+          makeDetection({ item_id: "item_004", clean_label: "picture frame" }),
+          makeDetection({ item_id: "item_006", clean_label: "picture frame" }),
+        ],
+      },
+      declutter: {
+        expected_item_ids: ["item_004", "item_006"],
+        ai_decisions: [
+          makeDecision({ item_id: "item_004", decision: "keep" }),
+          makeDecision({ item_id: "item_006", decision: "sell" }),
+        ],
+        item_validity: { item_004: "raw_valid", item_006: "raw_valid" },
+      },
+    });
+
+    const result = normaliseBothUploadResponse(response);
+
+    expect(result.items.find((i) => i.item_id === "item_004").ai_decision).toBe("keep");
+    expect(result.items.find((i) => i.item_id === "item_006").ai_decision).toBe("sell");
+  });
+
+  test("rejects the wrong path", () => {
+    const response = baseBothResponse();
+    response.path = "declutter";
+    expect(() => normaliseBothUploadResponse(response)).toThrow(/path/);
+  });
+
+  test("rejects a missing input_image_sha256", () => {
+    const response = baseBothResponse();
+    delete response.input_image_sha256;
+    expect(() => normaliseBothUploadResponse(response)).toThrow(/input_image_sha256/);
+  });
+
+  test("rejects a malformed input_image_sha256", () => {
+    const response = baseBothResponse({ inputImageSha256: "not-a-real-hash" });
+    expect(() => normaliseBothUploadResponse(response)).toThrow(/input_image_sha256/);
+  });
+
+  test("still enforces every declutter/analysis invariant normaliseDeclutterUploadResponse does", () => {
+    const response = baseBothResponse();
+    response.analysis.run_id = "different_run";
+    expect(() => normaliseBothUploadResponse(response)).toThrow(/run_id/);
   });
 });

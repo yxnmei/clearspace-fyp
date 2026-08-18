@@ -31,6 +31,12 @@ export default function DeclutterReview({
   correctLabel = () => {},
   correctingItemId = null,
   correctionError = null,
+  // R6/Both — required correction 6: forwarded straight to
+  // ConfirmationSummary's own `nextStepNote` prop, undefined by default.
+  // DeclutterPage's existing call site never passes this, so its
+  // rendered output stays byte-for-byte unchanged; ConfirmationSummary's
+  // own default text applies exactly as before.
+  confirmationNextStepNote,
 }) {
   // Any correction in flight disables every item's correction control
   // (not just the one being corrected) — see useDeclutterFlow's
@@ -304,7 +310,9 @@ export default function DeclutterReview({
         )}
       </section>
 
-      {confirmation && <ConfirmationSummary confirmation={confirmation} reviewItems={reviewItems} />}
+      {confirmation && (
+        <ConfirmationSummary confirmation={confirmation} reviewItems={reviewItems} nextStepNote={confirmationNextStepNote} />
+      )}
     </div>
   );
 }

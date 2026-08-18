@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { confirmDecisions, generateReorganisation, overrideItem, uploadImage } from "./client";
+import {
+  confirmDecisions,
+  generateConfirmedReorganisation,
+  generateReorganisation,
+  overrideItem,
+  uploadImage,
+} from "./client";
 
 function mockFetchReject(error) {
   const fetchMock = vi.fn().mockRejectedValue(error);
@@ -379,5 +385,174 @@ describe("generateReorganisation", () => {
         inputImageSha256: "a".repeat(64),
       })
     ).rejects.toThrow(/422/);
+  });
+});
+
+describe("generateConfirmedReorganisation", () => {
+  test("sends a POST to /generate/confirmed with JSON Content-Type", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      declutter: { run_id: "run1" },
+      overrides: [],
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/generate\/confirmed$/);
+    expect(options.method).toBe("POST");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("sends the exact R6 JSON body shape — declutter+overrides, never a selection list", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+    const analysis = { run_id: "run1", items: [{ item_id: "item_001" }] };
+    const declutter = { run_id: "run1", expected_item_ids: ["item_001"] };
+    const overrides = [{ item_id: "item_001", decision: "keep" }];
+
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis,
+      declutter,
+      overrides,
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+      userContext: "downsizing",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "analysis",
+        "declutter",
+        "image",
+        "image_media_type",
+        "input_image_sha256",
+        "overrides",
+        "run_id",
+        "user_context",
+      ].sort()
+    );
+    expect(body.run_id).toBe("run1");
+    expect(body.analysis).toEqual(analysis);
+    expect(body.declutter).toEqual(declutter);
+    expect(body.overrides).toEqual(overrides);
+    expect(body.image_media_type).toBe("image/png");
+    expect(body.input_image_sha256).toBe("a".repeat(64));
+    expect(body.user_context).toBe("downsizing");
+  });
+
+  test("never sends selected_item_ids, confirmed_keep_ids, or any tuning field", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      declutter: { run_id: "run1" },
+      overrides: [],
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("selected_item_ids");
+    expect(body).not.toHaveProperty("confirmed_keep_ids");
+    expect(body).not.toHaveProperty("confirmation");
+    expect(body).not.toHaveProperty("denoise_strength");
+    expect(body).not.toHaveProperty("controlnet_conditioning_scale");
+    expect(body).not.toHaveProperty("seed");
+  });
+
+  test("defaults overrides to an empty array and user_context to null when omitted", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      declutter: { run_id: "run1" },
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.overrides).toEqual([]);
+    expect(body.user_context).toBeNull();
+  });
+
+  test("the image field is base64 with no data: URL prefix", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      declutter: { run_id: "run1" },
+      overrides: [],
+      file: makeFile("room.png", "image/png", [1, 2, 3, 4]),
+      inputImageSha256: "a".repeat(64),
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.image.startsWith("data:")).toBe(false);
+    const decoded = Uint8Array.from(atob(body.image), (c) => c.charCodeAt(0));
+    expect(Array.from(decoded)).toEqual([1, 2, 3, 4]);
+  });
+
+  test("rejects an unsupported file type before ever calling fetch", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await expect(
+      generateConfirmedReorganisation({
+        runId: "run1",
+        analysis: { run_id: "run1" },
+        declutter: { run_id: "run1" },
+        overrides: [],
+        file: makeFile("room.webp", "image/webp"),
+        inputImageSha256: "a".repeat(64),
+      })
+    ).rejects.toThrow(/PNG or JPEG/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a non-ok response propagates as a thrown Error", async () => {
+    mockFetchOnce({ detail: "no items were confirmed as Keep" }, { ok: false, status: 409 });
+
+    await expect(
+      generateConfirmedReorganisation({
+        runId: "run1",
+        analysis: { run_id: "run1" },
+        declutter: { run_id: "run1" },
+        overrides: [],
+        file: makeFile(),
+        inputImageSha256: "a".repeat(64),
+      })
+    ).rejects.toThrow(/409/);
+  });
+
+  test("generateReorganisation and generateConfirmedReorganisation hit distinct endpoints", async () => {
+    const directFetch = mockFetchOnce({ run_id: "run1" });
+    await generateReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      selectedItemIds: ["item_001"],
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+    expect(directFetch.mock.calls[0][0]).toMatch(/\/generate$/);
+    expect(directFetch.mock.calls[0][0]).not.toMatch(/\/generate\/confirmed$/);
+
+    const confirmedFetch = mockFetchOnce({ run_id: "run1" });
+    await generateConfirmedReorganisation({
+      runId: "run1",
+      analysis: { run_id: "run1" },
+      declutter: { run_id: "run1" },
+      overrides: [],
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+    expect(confirmedFetch.mock.calls[0][0]).toMatch(/\/generate\/confirmed$/);
   });
 });
