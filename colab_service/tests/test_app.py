@@ -539,13 +539,13 @@ def test_notebook_only_reads_secrets_never_hardcodes_them():
 
 def test_notebook_authenticates_clone_via_process_local_git_config_not_the_url():
     text = _notebook_rendered_text()
-    # The token must be passed via process-local git config scoped to the
-    # clone subprocess's own environment -- never embedded in the clone
-    # URL itself, never a global os.environ assignment, never a
+    # The credential must be passed via process-local git config scoped
+    # to the clone subprocess's own environment -- never embedded in the
+    # clone URL itself, never a global os.environ assignment, never a
     # persisted .git/config file.
     assert "GIT_CONFIG_COUNT" in text
     assert "GIT_CONFIG_KEY_0" in text and "http.extraHeader" in text
-    assert "GIT_CONFIG_VALUE_0" in text and "Authorization: Bearer" in text
+    assert "GIT_CONFIG_VALUE_0" in text and "Authorization: Basic" in text
     assert "env=clone_env" in text
     # The clone URL itself must be the clean, credential-free one -- the
     # token is never interpolated into it (an f-string like
@@ -564,6 +564,7 @@ def test_notebook_refuses_to_reuse_an_existing_checkout():
 def test_notebook_discards_the_clone_environment_and_token_afterward():
     text = _notebook_rendered_text()
     assert "del clone_env" in text
+    assert "del credential" in text
     assert "GITHUB_TOKEN = None" in text
 
 
@@ -660,3 +661,36 @@ def test_notebook_health_poll_never_stores_the_raw_response_in_last_state():
     text = _notebook_rendered_text()
     assert 'last_state = "incompatible health response"' in text
     assert "last_state = data" not in text
+
+
+# ---------------------------------------------------------------------------
+# Notebook — clone authentication: HTTP Basic, not Bearer
+# ---------------------------------------------------------------------------
+
+
+def test_notebook_constructs_http_basic_credential_from_username_and_token():
+    text = _notebook_rendered_text()
+    assert 'GITHUB_USERNAME = "yxnmei"' in text
+    assert "base64.b64encode" in text
+    assert 'f"{GITHUB_USERNAME}:{GITHUB_TOKEN}"' in text
+    assert '.decode("ascii")' in text
+    assert 'f"Authorization: Basic {credential}"' in text
+
+
+def test_notebook_never_sends_bearer_authorization_for_the_clone():
+    text = _notebook_rendered_text()
+    assert "Authorization: Bearer" not in text
+
+
+def test_notebook_never_places_credentials_in_the_git_command_argv():
+    text = _notebook_rendered_text()
+    assert '["git", "clone", REPO_URL, str(REPO_DIR)]' in text
+
+
+def test_notebook_clears_the_encoded_credential_on_every_clone_exit_path():
+    text = _notebook_rendered_text()
+    del_clone_env_idx = text.index("del clone_env")
+    del_credential_idx = text.index("del credential")
+    finally_idx = text.rindex("finally:", 0, min(del_clone_env_idx, del_credential_idx) + 1)
+    assert finally_idx < del_clone_env_idx
+    assert finally_idx < del_credential_idx

@@ -68,12 +68,14 @@ the notebook clones it. `ClearSpace_Image_Gen.ipynb`:
    just after an actual clone attempt.
 3. Otherwise clones the plain, credential-free URL
    `https://github.com/yxnmei/clearspace-fyp.git` directly — the token is
-   **never embedded in the URL at all**. Authentication happens instead
-   via process-local git configuration
-   (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0=http.extraHeader`/
-   `GIT_CONFIG_VALUE_0=Authorization: Bearer <token>`) passed only in the
-   environment of that one `subprocess.run(...)` call — a **filtered**
-   copy of `os.environ` that deliberately excludes `NGROK_AUTHTOKEN`/
+   **never embedded in the URL, and never passed as a git command
+   argument**. Authentication happens instead via process-local git
+   configuration (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0=http.extraHeader`/
+   `GIT_CONFIG_VALUE_0=Authorization: Basic base64(username:token)`)
+   passed only in the environment of that one `subprocess.run(...)`
+   call — GitHub HTTPS git uses the personal access token as the HTTP
+   Basic password. The environment is a **filtered** copy of
+   `os.environ` that deliberately excludes `NGROK_AUTHTOKEN`/
    `NGROK_DOMAIN` (already plain env vars by this point, with no reason
    to be visible to the git subprocess), never the notebook's own global
    `os.environ` unfiltered, never a `.git/config` file, never argv.
@@ -81,9 +83,10 @@ the notebook clones it. `ClearSpace_Image_Gen.ipynb`:
    `origin` remote is clean from the very first command — **no
    post-clone URL rewrite is needed or performed.** Subprocess output is
    captured, never printed raw; any failure becomes one fixed, sanitized
-   message. The temporary token-bearing environment dict and the
-   `GITHUB_TOKEN` variable itself are discarded immediately after the
-   clone attempt, success or failure.
+   message. The temporary token-bearing environment dict, the
+   base64-encoded credential, and the `GITHUB_TOKEN` variable itself are
+   all discarded immediately after the clone attempt, success or
+   failure.
 4. Adds the cloned repository root to `sys.path`, so `colab_service` and
    its siblings become importable exactly as they are in this repo —
    no separate packaging step.
