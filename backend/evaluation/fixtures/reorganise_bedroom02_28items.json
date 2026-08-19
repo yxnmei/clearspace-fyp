@@ -1,0 +1,532 @@
+{
+  "fixture_name": "reorganise_bedroom02_28items",
+  "scene_label": "bedroom",
+  "user_context": "i want a neat room",
+  "provenance": {
+    "source": "Transcribed from the captured real Direct Reorganise smoke-test planning prompt for bedroom02.jpg (28 selected actionable items).",
+    "captured_from_real_run": [
+      "item_id",
+      "source_detection_index",
+      "raw_phrase",
+      "clean_label",
+      "position",
+      "relative_size",
+      "item_role",
+      "scene_label",
+      "user_context"
+    ],
+    "reconstructed": [
+      "box",
+      "confidence"
+    ],
+    "reconstructed_rationale": "The captured prompt text carries labels, ids, sizes and positions but not box geometry or detector confidence. Both are required by app.core.schemas.DetectedItem, so fixed, valid, deterministic placeholder values are supplied. Neither field is read by app.models.reorganise_llm.build_reorganise_plan_prompt(), which uses only item_id, effective_label, relative_size and position \u2014 so the reconstructed values cannot change the prompt the models actually receive. Verified by tests/unit/test_compare_reorganise_planning.py.",
+    "duplicate_labels_preserved": "Six 'picture frame' items (item_004, item_006, item_007, item_008, item_009, item_012), two 'toy' (item_013, item_015) and two 'cup' (item_026, item_027) are kept as independent items with distinct item_ids, exactly as captured.",
+    "not_regenerated": "This fixture is authored once and frozen. The evaluation harness never calls /upload, CLIP or Grounding DINO to build or refresh it."
+  },
+  "items": [
+    {
+      "item_id": "item_001",
+      "source_detection_index": 0,
+      "raw_phrase": "painting",
+      "clean_label": "painting",
+      "box": {
+        "x1": 0.02,
+        "y1": 0.02,
+        "x2": 0.16,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "medium",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_002",
+      "source_detection_index": 1,
+      "raw_phrase": "jewelry",
+      "clean_label": "jewelry",
+      "box": {
+        "x1": 0.18,
+        "y1": 0.02,
+        "x2": 0.32,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_003",
+      "source_detection_index": 2,
+      "raw_phrase": "mirror",
+      "clean_label": "mirror",
+      "box": {
+        "x1": 0.34,
+        "y1": 0.02,
+        "x2": 0.48,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-right",
+      "relative_size": "medium",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_004",
+      "source_detection_index": 3,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.5,
+        "y1": 0.02,
+        "x2": 0.64,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_005",
+      "source_detection_index": 4,
+      "raw_phrase": "clock",
+      "clean_label": "clock",
+      "box": {
+        "x1": 0.66,
+        "y1": 0.02,
+        "x2": 0.8,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_006",
+      "source_detection_index": 5,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.82,
+        "y1": 0.02,
+        "x2": 0.96,
+        "y2": 0.19
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_007",
+      "source_detection_index": 6,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.02,
+        "y1": 0.21,
+        "x2": 0.16,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_008",
+      "source_detection_index": 7,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.18,
+        "y1": 0.21,
+        "x2": 0.32,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_009",
+      "source_detection_index": 8,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.34,
+        "y1": 0.21,
+        "x2": 0.48,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "upper-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_010",
+      "source_detection_index": 9,
+      "raw_phrase": "plant",
+      "clean_label": "plant",
+      "box": {
+        "x1": 0.5,
+        "y1": 0.21,
+        "x2": 0.64,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "right",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_011",
+      "source_detection_index": 10,
+      "raw_phrase": "shelf",
+      "clean_label": "shelf",
+      "box": {
+        "x1": 0.66,
+        "y1": 0.21,
+        "x2": 0.8,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "center",
+      "relative_size": "large",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_012",
+      "source_detection_index": 11,
+      "raw_phrase": "picture frame",
+      "clean_label": "picture frame",
+      "box": {
+        "x1": 0.82,
+        "y1": 0.21,
+        "x2": 0.96,
+        "y2": 0.38
+      },
+      "confidence": 0.5,
+      "position": "left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_013",
+      "source_detection_index": 12,
+      "raw_phrase": "toy",
+      "clean_label": "toy",
+      "box": {
+        "x1": 0.02,
+        "y1": 0.4,
+        "x2": 0.16,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "right",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_014",
+      "source_detection_index": 13,
+      "raw_phrase": "bottle",
+      "clean_label": "bottle",
+      "box": {
+        "x1": 0.18,
+        "y1": 0.4,
+        "x2": 0.32,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "center",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_015",
+      "source_detection_index": 14,
+      "raw_phrase": "toy",
+      "clean_label": "toy",
+      "box": {
+        "x1": 0.34,
+        "y1": 0.4,
+        "x2": 0.48,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "right",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_016",
+      "source_detection_index": 15,
+      "raw_phrase": "monitor",
+      "clean_label": "monitor",
+      "box": {
+        "x1": 0.5,
+        "y1": 0.4,
+        "x2": 0.64,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_017",
+      "source_detection_index": 16,
+      "raw_phrase": "chair",
+      "clean_label": "chair",
+      "box": {
+        "x1": 0.66,
+        "y1": 0.4,
+        "x2": 0.8,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "lower-center",
+      "relative_size": "medium",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_018",
+      "source_detection_index": 17,
+      "raw_phrase": "bowl",
+      "clean_label": "bowl",
+      "box": {
+        "x1": 0.82,
+        "y1": 0.4,
+        "x2": 0.96,
+        "y2": 0.57
+      },
+      "confidence": 0.5,
+      "position": "center",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_019",
+      "source_detection_index": 18,
+      "raw_phrase": "plate",
+      "clean_label": "plate",
+      "box": {
+        "x1": 0.02,
+        "y1": 0.59,
+        "x2": 0.16,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "center",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_020",
+      "source_detection_index": 19,
+      "raw_phrase": "speaker",
+      "clean_label": "speaker",
+      "box": {
+        "x1": 0.18,
+        "y1": 0.59,
+        "x2": 0.32,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_021",
+      "source_detection_index": 20,
+      "raw_phrase": "keyboard",
+      "clean_label": "keyboard",
+      "box": {
+        "x1": 0.34,
+        "y1": 0.59,
+        "x2": 0.48,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_022",
+      "source_detection_index": 21,
+      "raw_phrase": "desk",
+      "clean_label": "desk",
+      "box": {
+        "x1": 0.5,
+        "y1": 0.59,
+        "x2": 0.64,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "lower-left",
+      "relative_size": "medium",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_023",
+      "source_detection_index": 22,
+      "raw_phrase": "mouse",
+      "clean_label": "mouse",
+      "box": {
+        "x1": 0.66,
+        "y1": 0.59,
+        "x2": 0.8,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "lower-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_024",
+      "source_detection_index": 23,
+      "raw_phrase": "box",
+      "clean_label": "box",
+      "box": {
+        "x1": 0.82,
+        "y1": 0.59,
+        "x2": 0.96,
+        "y2": 0.76
+      },
+      "confidence": 0.5,
+      "position": "lower-right",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_025",
+      "source_detection_index": 24,
+      "raw_phrase": "pillow",
+      "clean_label": "pillow",
+      "box": {
+        "x1": 0.02,
+        "y1": 0.78,
+        "x2": 0.16,
+        "y2": 0.95
+      },
+      "confidence": 0.5,
+      "position": "lower-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_026",
+      "source_detection_index": 25,
+      "raw_phrase": "cup",
+      "clean_label": "cup",
+      "box": {
+        "x1": 0.18,
+        "y1": 0.78,
+        "x2": 0.32,
+        "y2": 0.95
+      },
+      "confidence": 0.5,
+      "position": "lower-center",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_027",
+      "source_detection_index": 26,
+      "raw_phrase": "cup",
+      "clean_label": "cup",
+      "box": {
+        "x1": 0.34,
+        "y1": 0.78,
+        "x2": 0.48,
+        "y2": 0.95
+      },
+      "confidence": 0.5,
+      "position": "lower-center",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    },
+    {
+      "item_id": "item_028",
+      "source_detection_index": 27,
+      "raw_phrase": "bin",
+      "clean_label": "bin",
+      "box": {
+        "x1": 0.5,
+        "y1": 0.78,
+        "x2": 0.64,
+        "y2": 0.95
+      },
+      "confidence": 0.5,
+      "position": "lower-left",
+      "relative_size": "small",
+      "item_role": "actionable",
+      "item_role_source": "default",
+      "corrected_label": null
+    }
+  ]
+}
