@@ -31,52 +31,99 @@ function baseProps(overrides = {}) {
   };
 }
 
-describe("ReorganiseItemSelector", () => {
-  test("shows the selected count", () => {
-    render(<ReorganiseItemSelector {...baseProps()} />);
-    expect(screen.getByText(/1 of 1/)).toBeInTheDocument();
-  });
+// The detection overlay/checkboxes now live inside a collapsed-by-default
+// <details> disclosure — any test that needs to interact with them opens
+// it first, exactly like a real user would.
+async function openReview() {
+  await userEvent.click(screen.getByText(/review detected items \(optional\)/i));
+}
 
-  test("clicking an item's checkbox calls onToggleItem with its item_id", async () => {
-    // Note: getByRole("checkbox") alone would be ambiguous —
-    // AnalysedRoomPanel also renders its own "Show all boxes" checkbox,
-    // so every query here targets the item checkbox by its accessible
-    // name (the label text) or its id.
-    const onToggleItem = vi.fn();
-    render(<ReorganiseItemSelector {...baseProps({ onToggleItem })} />);
-    await userEvent.click(document.getElementById("reorganise-item-item_001"));
-    expect(onToggleItem).toHaveBeenCalledWith("item_001");
-  });
-
-  test("duplicate-labelled items render as independent rows, identified by item_id", () => {
-    const items = [
-      makeItem({ item_id: "item_001", clean_label: "picture frame", effective_label: "picture frame" }),
-      makeItem({ item_id: "item_002", clean_label: "picture frame", effective_label: "picture frame" }),
-    ];
+describe("ReorganiseItemSelector — auto-inclusion, no mandatory selection step", () => {
+  test("states that all detected items are automatically included", () => {
+    const items = [makeItem({ item_id: "item_001" }), makeItem({ item_id: "item_002" })];
     render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001", "item_002"] })} />);
-    expect(screen.getAllByText("picture frame")).toHaveLength(2);
-    expect(document.getElementById("reorganise-item-item_001")).toBeInTheDocument();
-    expect(document.getElementById("reorganise-item-item_002")).toBeInTheDocument();
+    expect(screen.getByText(/all 2 detected items are automatically included in your plan/i)).toBeInTheDocument();
   });
 
-  test("an unselected item shows a Not included badge", () => {
-    render(<ReorganiseItemSelector {...baseProps({ selectedItemIds: [] })} />);
-    expect(screen.getByText(/not included/i)).toBeInTheDocument();
-    expect(document.getElementById("reorganise-item-item_001")).not.toBeChecked();
-  });
-
-  test("selection copy avoids overconfident \"will be preserved\" wording", () => {
+  test("never says \"Choose what to keep\" anywhere", () => {
     render(<ReorganiseItemSelector {...baseProps()} />);
-    expect(screen.queryByText(/will be preserved/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/will be included in the plan and requested in the visual preview/i)).toBeInTheDocument();
+    expect(screen.queryByText(/choose what to keep/i)).not.toBeInTheDocument();
   });
 
-  test("contextual items are shown but never rendered as selectable actionable rows", () => {
+  test("never describes contextual items as \"not kept\"", () => {
     const items = [
       makeItem({ item_id: "item_001", item_role: "actionable" }),
       makeItem({ item_id: "item_002", item_role: "contextual", clean_label: "wall", effective_label: "wall" }),
     ];
     render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001"] })} />);
+    expect(screen.queryByText(/not kept/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/never automatically kept/i)).not.toBeInTheDocument();
+  });
+
+  test("Generate is available and works without opening the optional review", async () => {
+    const onGenerate = vi.fn();
+    render(<ReorganiseItemSelector {...baseProps({ onGenerate })} />);
+    // No interaction with the disclosure at all.
+    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
+    expect(onGenerate).toHaveBeenCalled();
+  });
+});
+
+describe("ReorganiseItemSelector — the optional review disclosure", () => {
+  test("is collapsed by default", () => {
+    render(<ReorganiseItemSelector {...baseProps()} />);
+    const details = screen.getByText(/review detected items \(optional\)/i).closest("details");
+    expect(details).not.toHaveAttribute("open");
+  });
+
+  test("can be opened, revealing the checkbox list and detection overlay", async () => {
+    render(<ReorganiseItemSelector {...baseProps()} />);
+    await openReview();
+    const details = screen.getByText(/review detected items \(optional\)/i).closest("details");
+    expect(details).toHaveAttribute("open");
+    expect(document.getElementById("reorganise-item-item_001")).toBeInTheDocument();
+  });
+
+  test("each item shows Included in plan / Exclude from plan language", async () => {
+    const items = [
+      makeItem({ item_id: "item_001", item_role: "actionable" }),
+      makeItem({ item_id: "item_002", item_role: "actionable", clean_label: "chair", effective_label: "chair" }),
+    ];
+    render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001"] })} />);
+    await openReview();
+    expect(screen.getByText("Included in plan")).toBeInTheDocument();
+    expect(screen.getByText("Exclude from plan")).toBeInTheDocument();
+  });
+});
+
+describe("ReorganiseItemSelector — explicit exclusion", () => {
+  test("clicking an item's checkbox (inside the review) calls onToggleItem with its item_id", async () => {
+    const onToggleItem = vi.fn();
+    render(<ReorganiseItemSelector {...baseProps({ onToggleItem })} />);
+    await openReview();
+    await userEvent.click(document.getElementById("reorganise-item-item_001"));
+    expect(onToggleItem).toHaveBeenCalledWith("item_001");
+  });
+
+  test("duplicate-labelled items render as independent rows, identified by item_id", async () => {
+    const items = [
+      makeItem({ item_id: "item_001", clean_label: "picture frame", effective_label: "picture frame" }),
+      makeItem({ item_id: "item_002", clean_label: "picture frame", effective_label: "picture frame" }),
+    ];
+    render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001", "item_002"] })} />);
+    await openReview();
+    expect(screen.getAllByText("picture frame")).toHaveLength(2);
+    expect(document.getElementById("reorganise-item-item_001")).toBeInTheDocument();
+    expect(document.getElementById("reorganise-item-item_002")).toBeInTheDocument();
+  });
+
+  test("contextual items are shown but never rendered as selectable actionable rows", async () => {
+    const items = [
+      makeItem({ item_id: "item_001", item_role: "actionable" }),
+      makeItem({ item_id: "item_002", item_role: "contextual", clean_label: "wall", effective_label: "wall" }),
+    ];
+    render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001"] })} />);
+    await openReview();
     expect(document.getElementById("reorganise-item-item_001")).toBeInTheDocument();
     expect(document.getElementById("reorganise-item-item_002")).toBeNull(); // contextual item gets no checkbox at all
     expect(screen.getByText(/contextual items \(1\)/i)).toBeInTheDocument();
@@ -86,23 +133,35 @@ describe("ReorganiseItemSelector", () => {
   test("clicking a box in the room panel links back to the matching item (box->list linking preserved)", async () => {
     const items = [makeItem({ item_id: "item_007" })];
     render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_007"] })} />);
+    await openReview();
     await userEvent.click(screen.getByRole("button", { name: /detection 7/i }));
     // scrollIntoView isn't implemented in jsdom; the interaction not throwing,
     // plus the box existing with the right accessible name, is the proof here.
     expect(screen.getByRole("button", { name: /detection 7/i })).toBeInTheDocument();
   });
 
-  test("Generate is disabled when selection is empty", () => {
+  test("checkboxes are disabled while generating", async () => {
+    render(<ReorganiseItemSelector {...baseProps({ phase: "generating" })} />);
+    await openReview();
+    expect(document.getElementById("reorganise-item-item_001")).toBeDisabled();
+  });
+});
+
+describe("ReorganiseItemSelector — Generate button", () => {
+  test("is disabled when the selection is empty, with honest wording (not a generic 'select an item' prompt)", () => {
     render(<ReorganiseItemSelector {...baseProps({ selectedItemIds: [] })} />);
     expect(screen.getByRole("button", { name: /generate room plan/i })).toBeDisabled();
+    expect(
+      screen.getByText(/at least one detected item must be included to generate a plan/i)
+    ).toBeInTheDocument();
   });
 
-  test("Generate is disabled while generating", () => {
+  test("is disabled while generating", () => {
     render(<ReorganiseItemSelector {...baseProps({ phase: "generating" })} />);
     expect(screen.getByRole("button", { name: /generating/i })).toBeDisabled();
   });
 
-  test("Generate is enabled with a non-empty selection and not generating", () => {
+  test("is enabled with a non-empty selection and not generating", () => {
     render(<ReorganiseItemSelector {...baseProps()} />);
     expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
   });
@@ -111,13 +170,6 @@ describe("ReorganiseItemSelector", () => {
     render(<ReorganiseItemSelector {...baseProps({ healthStatus: "unavailable" })} />);
     expect(screen.getByText(/image service is offline/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
-  });
-
-  test("clicking Generate calls onGenerate", async () => {
-    const onGenerate = vi.fn();
-    render(<ReorganiseItemSelector {...baseProps({ onGenerate })} />);
-    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
-    expect(onGenerate).toHaveBeenCalled();
   });
 
   test("shows a truthful, non-percentage generating status message", () => {
@@ -132,10 +184,5 @@ describe("ReorganiseItemSelector", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/room-plan generation failed/i);
     expect(screen.getByRole("alert")).toHaveTextContent(/try again/i);
     expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
-  });
-
-  test("checkboxes are disabled while generating", () => {
-    render(<ReorganiseItemSelector {...baseProps({ phase: "generating" })} />);
-    expect(document.getElementById("reorganise-item-item_001")).toBeDisabled();
   });
 });
