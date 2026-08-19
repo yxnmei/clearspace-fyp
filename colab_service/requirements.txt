@@ -1,0 +1,33 @@
+# Dependencies for the Colab-hosted image-generation service ONLY —
+# entirely separate from backend/requirements.txt (a different runtime;
+# no reason for the two to share a pin set). Installed by
+# ClearSpace_Image_Gen.ipynb inside a real Colab GPU session.
+#
+# PROVISIONAL — see colab_service/README.md's "Provisional items
+# requiring Phase 2 verification". No version has been confirmed to
+# actually install cleanly, or to be compatible with Colab's
+# pre-installed CUDA/torch stack, on a real GPU runtime yet. Deliberately
+# left UNPINNED here rather than pinning numbers that have not been
+# verified — pinning a fabricated-looking version would be more
+# misleading than useful. Phase 2 must pin real, tested versions once a
+# real Colab session has installed and run these successfully.
+
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+pillow
+
+# --- the real generation stack (never imported by colab_service's own
+# GPU-free code paths at module-import time — see app.py/pipeline.py/
+# depth.py's own docstrings) ---
+torch
+diffusers
+transformers
+accelerate
+controlnet_aux
+safetensors
+
+# --- ngrok tunnel + notebook convenience (used by
+# ClearSpace_Image_Gen.ipynb, not by colab_service/app.py itself) ---
+pyngrok
