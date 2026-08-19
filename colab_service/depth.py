@@ -51,12 +51,23 @@ def extract_depth_map(image: Any, *, model_id: str) -> Any:
     PROVISIONAL, see module docstring).
 
     `image` must already be RGB and already resized to the target
-    generation resolution (resolution.compute_target_resolution()) — the
-    depth map must be pixel-aligned with what the SD pipeline itself
-    sees. Extracting depth on a differently-sized image and resizing the
-    depth map independently afterward risks misalignment/blur; this
-    function deliberately does no resizing of its own, so that ordering
-    is enforced by the caller (pipeline.run_generation()), not silently
-    fixed up here."""
+    generation resolution (resolution.compute_target_resolution()).
+    MidasDetector's own output resolution does not always match its
+    input resolution (confirmed on a real Colab GPU run — see
+    colab_service/README.md: a 584x440 input produced a 704x512 depth
+    map, which the ControlNet checkpoint then rejected as a
+    tensor-dimension mismatch) — so if depth_map.size differs from
+    image.size, this function resizes the depth map to image.size
+    (Image.Resampling.BILINEAR) exactly once before returning it,
+    keeping it pixel-aligned with what the SD pipeline itself sees.
+    Returns the detector's own output object unchanged, by identity,
+    when the sizes already match."""
     detector = load_depth_detector(model_id)
-    return detector(image)
+    depth_map = detector(image)
+
+    if depth_map.size != image.size:
+        from PIL import Image
+
+        depth_map = depth_map.resize(image.size, Image.Resampling.BILINEAR)
+
+    return depth_map

@@ -145,7 +145,8 @@ importable and testable on a plain machine with no Colab runtime at all
 
 ## Provisional items requiring Phase 2 verification
 
-Nothing below has been confirmed against a real Colab GPU runtime yet:
+Nothing below has been confirmed against a real Colab GPU runtime yet,
+except where a specific real-run finding is noted:
 
 - **Model identifiers** (`config.py`): `stable-diffusion-v1-5/stable-diffusion-v1-5`
   (base), `lllyasviel/sd-controlnet-depth` (ControlNet), `lllyasviel/Annotators`
@@ -159,7 +160,16 @@ Nothing below has been confirmed against a real Colab GPU runtime yet:
   what the `sd-controlnet-depth` checkpoint expects — the documented
   fallback if this proves wrong is `transformers.DPTForDepthEstimation`
   + `Intel/dpt-hybrid-midas` (more manual normalization work, not
-  implemented here).
+  implemented here). **Real Phase 2 finding, confirmed on a real Colab
+  GPU run (`bedroom02.jpg`, target generation resolution 584×440):
+  MidasDetector's own output was 704×512, not pixel-aligned with the
+  input — ControlNet rejected the mismatch as a tensor-dimension error
+  (width 73 vs 88). `extract_depth_map()` now resizes the depth map to
+  the image's own size (bilinear, exactly once, only when the sizes
+  differ) before returning it; this alignment allowed generation to
+  complete.** This fixes the compatibility/runtime failure only — it
+  does not establish that the resulting image quality is acceptable,
+  which remains unverified.
 - **Every dependency version** in `requirements.txt` — deliberately
   unpinned; Phase 2 must pin real, tested versions once something has
   actually installed and run successfully.
