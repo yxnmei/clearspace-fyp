@@ -718,6 +718,61 @@ def test_extract_message_content_accepts_the_valid_shape():
     assert harness.extract_message_content({"message": {"content": "hi"}}) == "hi"
 
 
+def test_extract_message_content_accepts_a_real_ollama_chatresponse():
+    """Regression test for a real harness defect.
+
+    ollama.Client.chat() returns a ChatResponse (pydantic
+    SubscriptableBaseModel), NOT a dict. The original isinstance(_, dict)
+    guard rejected every genuine response as `missing_message` — the
+    2026-08-19 partial screen recorded a real 17s phi4-mini response that
+    way. Every other test in this file feeds plain dicts through
+    FakeChat, so none of them could catch it; this one constructs the
+    actual library type on purpose.
+    """
+    from ollama._types import ChatResponse, Message
+
+    response = ChatResponse(model="phi4-mini", message=Message(role="assistant", content="hello"))
+    assert not isinstance(response, dict)  # the exact trap
+    assert harness.extract_message_content(response) == "hello"
+
+
+def test_real_ollama_chatresponse_with_null_content_is_still_rejected():
+    """The fix must not over-correct: a real ChatResponse carrying a null
+    content is still malformed, and must classify as content_not_string
+    rather than silently returning None."""
+    from ollama._types import ChatResponse, Message
+
+    response = ChatResponse(model="phi4-mini", message=Message(role="assistant", content=None))
+    with pytest.raises(harness.MalformedResponseError) as exc_info:
+        harness.extract_message_content(response)
+    assert exc_info.value.reason == "content_not_string"
+
+
+def test_planner_consumes_a_real_ollama_chatresponse_end_to_end(simple_fixture):
+    """The whole planner path, driven by the real response type rather
+    than a dict-shaped fake."""
+    from ollama._types import ChatResponse, Message
+
+    payload = _plan_text(simple_fixture.item_ids)
+    chat = FakeChat([ChatResponse(model="phi4-mini", message=Message(role="assistant", content=payload))])
+    planner = harness.EvalPlanner("phi4-mini", "plain", chat_fn=chat)
+    result = planner(
+        run_id="r",
+        selected_items=simple_fixture.items,
+        scene_label=simple_fixture.scene_label,
+        user_context=None,
+    )
+    assert result.is_valid_json is True
+    assert planner.invocations[0]["call_success"] is True
+
+
+@pytest.mark.parametrize("not_mapping", ["a string", b"bytes", [1, 2], (1, 2)])
+def test_is_mapping_like_excludes_sequences(not_mapping):
+    """str/list/tuple satisfy the __getitem__/__contains__ duck-type but
+    are not message-shaped — they must stay malformed."""
+    assert harness._is_mapping_like(not_mapping) is False
+
+
 def test_malformed_response_becomes_a_bounded_call_failed_invocation(simple_fixture):
     chat = FakeChat([{"message": {"content": 42}}])
     planner = harness.EvalPlanner("phi4-mini", "plain", chat_fn=chat)

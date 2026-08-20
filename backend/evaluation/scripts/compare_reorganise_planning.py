@@ -277,6 +277,30 @@ class MalformedResponseError(ValueError):
         self.reason: MalformedReason = reason
 
 
+def _is_mapping_like(obj: Any) -> bool:
+    """True for a plain dict AND for the objects the real Ollama client
+    actually returns.
+
+    `ollama.Client.chat()` hands back a `ChatResponse` (and its nested
+    `Message`), which are pydantic `SubscriptableBaseModel` instances:
+    they support `obj[key]` and `key in obj`, but they are NOT dict
+    subclasses. An `isinstance(obj, dict)` check therefore rejects every
+    genuine response as malformed — confirmed the hard way by the
+    2026-08-19 partial screen, where a real 17s phi4-mini response was
+    recorded as `missing_message`. Production's own
+    `response["message"]["content"]` never noticed because subscripting
+    works fine; only this harness's extra defensiveness was wrong.
+
+    str/bytes/list/tuple are excluded explicitly — they satisfy the
+    duck-type but are not message-shaped.
+    """
+    if isinstance(obj, dict):
+        return True
+    if isinstance(obj, (str, bytes, bytearray, list, tuple)):
+        return False
+    return hasattr(obj, "__getitem__") and hasattr(obj, "__contains__")
+
+
 def extract_message_content(response: Any) -> str:
     """Defensive accessor for response["message"]["content"].
 
@@ -286,10 +310,10 @@ def extract_message_content(response: Any) -> str:
     case that had not run yet, for a failure that is itself a finding
     worth recording.
     """
-    if not isinstance(response, dict) or "message" not in response:
+    if not _is_mapping_like(response) or "message" not in response:
         raise MalformedResponseError("missing_message")
     message = response["message"]
-    if not isinstance(message, dict):
+    if not _is_mapping_like(message):
         raise MalformedResponseError("message_not_object")
     if "content" not in message:
         raise MalformedResponseError("missing_content")
