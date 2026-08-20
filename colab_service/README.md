@@ -1,12 +1,22 @@
 # ClearSpace Colab image-generation service (R7)
 
-**Honest status, stated directly: no real image generation has ever
-succeeded against this code.** This is Phase 1 of R7 — a
-contract-compatible service written and verified locally, against fakes,
-with no GPU involved at all. It has never been run in Colab, never
-downloaded a model, and never produced a real image. See "Provisional
-items requiring Phase 2 verification" below for exactly what Phase 2
-must still confirm.
+**Honest status, stated directly — verified evidence only:** on a real
+Colab T4 GPU, models loaded and both local and public `/health` reported
+ready. The original `POST /generate` HTTP attempt returned a real
+**500** — MiDaS produced a 704×512 depth map for a 584×440 generation
+image, and ControlNet rejected the tensor-dimension mismatch. The
+permanent fix (`depth.py`, bilinear alignment) passed 205 local,
+model-free tests **and has since been verified end to end through the
+real frontend**: with that permanent function active (no temporary
+monkeypatch), local and public `/health` passed and the browser rendered
+a generated result. The runtime, the R3 HTTP contract, the orchestration
+and frontend delivery therefore all work.
+
+**What does not work is the output quality.** A bounded qualitative
+pilot found the underlying whole-image SD1.5 + depth-ControlNet
+architecture's results unacceptable — see "Real Phase 2 evidence" below.
+Treat this pipeline as runtime-proven, quality-rejected. See "Provisional
+items requiring Phase 2 verification" for what else remains unconfirmed.
 
 ## Architecture
 
@@ -161,15 +171,19 @@ except where a specific real-run finding is noted:
   fallback if this proves wrong is `transformers.DPTForDepthEstimation`
   + `Intel/dpt-hybrid-midas` (more manual normalization work, not
   implemented here). **Real Phase 2 finding, confirmed on a real Colab
-  GPU run (`bedroom02.jpg`, target generation resolution 584×440):
-  MidasDetector's own output was 704×512, not pixel-aligned with the
-  input — ControlNet rejected the mismatch as a tensor-dimension error
-  (width 73 vs 88). `extract_depth_map()` now resizes the depth map to
-  the image's own size (bilinear, exactly once, only when the sizes
-  differ) before returning it; this alignment allowed generation to
-  complete.** This fixes the compatibility/runtime failure only — it
-  does not establish that the resulting image quality is acceptable,
-  which remains unverified.
+  GPU run (`bedroom02.jpg`, target generation resolution 584×440):**
+  models loaded and health succeeded, but the original `POST /generate`
+  HTTP attempt returned a real **500** — MidasDetector's own output was
+  704×512, not pixel-aligned with the 584×440 input, and ControlNet
+  rejected the mismatch as a tensor-dimension error (width 73 vs 88). The
+  permanent fix — `extract_depth_map()` now resizes the depth map to the
+  image's own size (bilinear, exactly once, only when the sizes differ)
+  before returning it — passed 205 local, model-free tests **and was then
+  verified end to end through the real frontend with that permanent
+  function active (no monkeypatch): health passed and a generated result
+  rendered in the browser.** The compatibility failure is resolved.
+  Separately, the underlying architecture's output quality was assessed
+  and found unacceptable — see "Real Phase 2 evidence" below.
 - **Every dependency version** in `requirements.txt` — deliberately
   unpinned; Phase 2 must pin real, tested versions once something has
   actually installed and run successfully.
@@ -196,6 +210,115 @@ except where a specific real-run finding is noted:
   (`image_gen_request_timeout_s`) — expected to be comfortably
   sufficient based on typical SD1.5/T4 timings, but not yet measured for
   real.
+
+## Real Phase 2 evidence (2026-08-19) — evidence boundary, quality pilot, and next steps
+
+**Verified evidence only, stated precisely:**
+- Models loaded; both local and public `/health` reported ready.
+- The original `POST /generate` HTTP attempt returned a real 500 —
+  MiDaS produced 704×512 for a 584×440 generation image (see the
+  MidasDetector bullet above).
+- The permanent `depth.py` fix passed 205 local, model-free tests.
+- **The post-fix journey was then verified end to end through the real
+  frontend**, with the permanent `extract_depth_map()` active and no
+  temporary monkeypatch: local and public `/health` passed and the
+  browser rendered a generated result. The R3 HTTP contract, the
+  orchestration and frontend delivery are therefore confirmed working —
+  the compatibility failure is closed.
+
+**Separately: a bounded qualitative pilot**, `bedroom02.jpg` (one image,
+a handful of parameter points — not a benchmark, no quantitative metric
+computed, no experimental images committed), **found the underlying
+architecture's output quality unacceptable. That the pipeline now runs
+correctly end to end says nothing about whether what it produces is
+usable, and it is not:**
+- Baseline (`denoise_strength=0.35`, `controlnet_conditioning_scale=1.0`
+  — the current `.env` defaults): preserved the room but produced
+  negligible visible reorganisation.
+- `denoise_strength=0.70` (ControlNet scales `0.50`/`0.65`/`0.80`):
+  visibly more change, but hallucinated windows, furniture, lamps,
+  decorations/text, and distorted objects never present in the original
+  photo.
+- `denoise_strength=0.60`/`controlnet_conditioning_scale=0.80`: also
+  judged unacceptable.
+- Prompt length was ruled out as the *sole* explanation, not entirely:
+  compact prompts were verified at 67/77 (positive) and 43/77 (negative)
+  tokens against SD1.5's own CLIP tokenizer, and outputs were still
+  unacceptable at that prompt length — other, unexamined factors have
+  not been excluded.
+
+**Conclusion:** whole-image SD1.5 + depth ControlNet, as configured, is
+not adequate for "meaningfully rearrange objects while inventing
+nothing." Further prompt/parameter tuning on this same architecture is
+not justified by this evidence. Masked inpainting is under
+**consideration as an enabling component** for a future architecture —
+**not already selected as the replacement**: on its own it cannot
+relocate a retained object without target-position geometry, which does
+not exist anywhere in this project's planning output today. Reorganise's
+actual scope — "tidy/declutter in place" versus "physically move
+furniture" — is a real, undecided product question this finding raises,
+not one this document resolves.
+
+### Phase 3a — enabling feasibility experiment (not yet run)
+
+Before any contract change is designed, a small, bounded experiment must
+directly test, inside Colab, with manually reviewed fixture data:
+mask creation from existing Grounding DINO boxes; explicit compositing
+of generated content back onto the *original* image so the final output
+is **pixel-identical outside the finalized mask** (including any
+feathering/dilation boundary — that boundary is folded into the
+evaluation mask, not a free pass); exact preservation outside that
+finalized mask; plausible local removal/tidying *inside* a mask; real T4
+runtime under the existing 180s backend timeout.
+
+Explicit, distinct operations to test — **not a single "inpaint at
+strength 1.0 and call it preservation":**
+- **preserve** — pixels outside any mask, untouched by construction;
+- **remove** — declutter an item out of its own masked region;
+- **locally tidy** — regenerate content within an item's existing
+  footprint;
+- **move** — deliberately **deferred to Phase 3b**; requires target
+  geometry that does not exist yet.
+
+Two predetermined, different seeds only if repeat testing is judged
+necessary — repeating the same seed is not a robustness test.
+
+**Phase 3a pass criteria (all six, falsifiable):**
+1. Exact zero pixel difference outside the finalized composite mask.
+2. No new architectural openings or unrelated furniture anywhere in the
+   output.
+3. The intended local edit is visibly plausible and useful.
+4. Completion within 180 seconds on the tested Colab GPU.
+5. Any failure of preservation (#1) is immediately disqualifying,
+   regardless of #2/#3.
+6. At most one predefined retune permitted; no open-ended parameter
+   search.
+
+### Phase 3b — full Reorganise (only if Phase 3a passes)
+
+Investigate target-position planning and relocation/compositing.
+Requires both source AND target geometry — target geometry does not
+exist anywhere in this project's planning output (`ReorganisePlan`/
+`ReorganiseZone`) today, and remains unsolved; not answered here.
+
+### Fallback
+
+**InstructPix2Pix (or any similarly unmasked instruction-editing model)
+is explicitly not recommended as a production fallback** — it has no
+structural preservation guarantee, the same failure class already
+rejected above. The honest fallback that already exists and is already
+implemented is the completed text plan with `image_status="unavailable"`
+(visual preview unavailable) — a real, working, already-tested outcome,
+not a new build.
+
+### Future contract implications (not designed yet)
+
+A future v2 contract would likely require, **at minimum** (this list is
+not claimed sufficient on its own, and no schema is finalized here):
+`item_id`; effective label; normalized source box; an explicit operation
+(`preserve`/`remove`/`locally_tidy`/`move`); target geometry for `move`,
+once/if Phase 3b makes it available. No v2 schema is designed or
+implemented until Phase 3a's evidence justifies it.
 
 ## Resolution policy (Option A)
 
