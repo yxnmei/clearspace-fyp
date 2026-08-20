@@ -143,7 +143,7 @@ from app.services.reorganise_pipeline_service import (
     Sha256Hex,
     run_reorganise_pipeline,
 )
-from app.services.reorganise_service import ReorganisePlanner, ReorganisePlanningResult
+from app.services.reorganise_service import ReorganisePlanningResult
 
 router = APIRouter()
 
@@ -524,30 +524,21 @@ async def transcribe(audio: UploadFile = File(...)):
 
 # --- /generate (R4) -------------------------------------------------------
 
-# Loader = a zero-arg callable that performs the real ollama import and
-# returns the concrete planner callable. Mirrors get_llm_classifier_provider
-# above exactly — the real import happens only inside generate_reorganisation's
-# body, never merely by importing this module or app.main.
-ReorganisePlannerLoader = Callable[[], ReorganisePlanner]
-
-
-def _load_reorganise_planner() -> ReorganisePlanner:
-    from app.models.reorganise_llm import generate_reorganise_plan_once
-
-    return generate_reorganise_plan_once
-
-
-def get_reorganise_planner_provider() -> ReorganisePlannerLoader:
-    """FastAPI dependency — see _load_reorganise_planner and the module
-    docstring's lazy-loading explanation for get_scene_classifier_provider
-    et al."""
-    return _load_reorganise_planner
+# There is deliberately NO Reorganise planner dependency here. Both
+# generation routes pass llm_planner=None and get the deterministic plan
+# directly (provenance "deterministic_direct") — see
+# app/services/reorganise_service.py and backend/evaluation/README.md.
+# The former two-level lazy loader existed solely to defer the ollama
+# import for this path; with no planner call left to make, keeping it
+# would be dead route plumbing. The LLM planner itself is untouched and
+# still reachable for research by passing one to run_reorganise_pipeline().
 
 
 def get_image_generator_provider() -> ImageGenerator:
     """FastAPI dependency resolving DIRECTLY to the real generate()
-    callable — a ONE-level provider, unlike get_reorganise_planner_provider
-    above. app.models.image_gen_client imports no heavy model library (no
+    callable — a ONE-level provider, unlike get_llm_classifier_provider's
+    two-level loader. app.models.image_gen_client imports no heavy model
+    library (no
     torch/clip/ollama/groundingdino — see that module's own
     test_module_does_not_import_model_libraries), so there is no
     import-cost reason to defer it behind a loader. This seam exists
@@ -746,23 +737,22 @@ class GenerateResponse(BaseModel):
 @router.post("/generate", response_model=GenerateResponse)
 def generate_reorganisation(
     request: GenerateRequest,
-    reorganise_planner_provider: ReorganisePlannerLoader = Depends(get_reorganise_planner_provider),
     image_generator: ImageGenerator = Depends(get_image_generator_provider),
 ) -> GenerateResponse:
     """
-    Synchronous handler, deliberately — same reasoning as /upload/
-    /override: plan_reorganisation() blocks on Ollama and image_generator
-    blocks on a real HTTP POST to Colab; FastAPI's threadpool keeps both
-    off the event loop with no manual thread management here.
+    Synchronous handler, deliberately — image_generator blocks on a real
+    HTTP POST to Colab, and FastAPI's threadpool keeps that off the event
+    loop with no manual thread management here. Planning itself no longer
+    blocks on anything: llm_planner=None below means the deterministic
+    plan is built in-process, with no Ollama call.
 
-    All selection/image/hash validation, R2 planning, and the single R3
+    All selection/image/hash validation, planning, and the single R3
     image-generation call happen inside run_reorganise_pipeline() (see
     app/services/reorganise_pipeline_service.py) — this handler's only
     job is request parsing, dependency resolution, base64<->bytes
     conversion, and error-type -> status-code translation, matching this
     module's existing thin-handler convention.
     """
-    llm_planner = reorganise_planner_provider()
     image_bytes = base64.b64decode(request.image)  # syntax already validated by GenerateRequest
 
     try:
@@ -774,7 +764,7 @@ def generate_reorganisation(
             image_media_type=request.image_media_type,
             expected_input_image_sha256=request.input_image_sha256,
             user_context=request.user_context,
-            llm_planner=llm_planner,
+            llm_planner=None,  # explicit production choice — deterministic_direct, no Ollama call
             image_generator=image_generator,
         )
     except ReorganisePipelineInputError as exc:
@@ -895,24 +885,19 @@ class ConfirmedGenerateResponse(GenerateResponse):
 @router.post("/generate/confirmed", response_model=ConfirmedGenerateResponse)
 def generate_confirmed_reorganisation(
     request: ConfirmedGenerateRequest,
-    reorganise_planner_provider: ReorganisePlannerLoader = Depends(get_reorganise_planner_provider),
     image_generator: ImageGenerator = Depends(get_image_generator_provider),
 ) -> ConfirmedGenerateResponse:
     """
     Synchronous handler, deliberately — same reasoning as /generate.
 
-    reorganise_planner_provider is passed through to
-    run_both_generation() UNRESOLVED (the loader itself, never called
-    here) — see both_service.py's own docstring: it is invoked only after
-    confirmation succeeds and at least one Keep item exists, so an
-    empty-Keep request never triggers the ollama import. This is the one
-    difference from /generate's own handler, which resolves its loader
-    unconditionally (Direct Reorganise's selection is already known
-    before the route body runs at all, so there's no empty-selection
-    case to protect against here — GenerateRequest itself already
-    rejects an empty selected_item_ids at the schema layer).
+    No planner dependency: run_both_generation() passes llm_planner=None
+    into run_reorganise_pipeline(), so Both's planning is the
+    deterministic direct build with no Ollama call. The former
+    pass-the-unresolved-loader arrangement existed to keep an empty-Keep
+    request from triggering the ollama import; with no import left to
+    trigger, that protection is now structural rather than conditional.
 
-    All confirmation-derivation, selection/image/hash validation, R2
+    All confirmation-derivation, selection/image/hash validation,
     planning, and the single R3 image-generation call happen inside
     run_both_generation() (see app/services/both_service.py) — this
     handler's only job is request parsing, dependency resolution,
@@ -931,7 +916,6 @@ def generate_confirmed_reorganisation(
             image_media_type=request.image_media_type,
             expected_input_image_sha256=request.input_image_sha256,
             user_context=request.user_context,
-            llm_planner_provider=reorganise_planner_provider,
             image_generator=image_generator,
         )
     except IncompleteDeclutterError as exc:

@@ -11,7 +11,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +27,6 @@ from app.api.routes import (
     get_health_checker_provider,
     get_image_generator_provider,
     get_llm_classifier_provider,
-    get_reorganise_planner_provider,
     get_scene_classifier_provider,
 )
 from app.main import app
@@ -37,6 +39,8 @@ from app.models.image_gen_client import (
     ImageGenTimeoutError,
     ImageGenUnavailableError,
 )
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 client = TestClient(app)
 
@@ -127,18 +131,48 @@ def _valid_plan_json(item_ids: list[str]) -> dict:
     }
 
 
-class FakePlanner:
-    def __init__(self, result=None):
-        self.calls: list[dict] = []
-        self._result = result
+class PlanningSpy:
+    """Wraps the REAL production planning function
+    (plan_reorganisation_direct) and records each call, rather than
+    replacing it with a stub.
 
-    def __call__(self, run_id, selected_items, scene_label, user_context, validation_feedback=None, model_name=None):
+    Production no longer injects a planner at all — /generate passes
+    llm_planner=None — so there is no planner dependency left to override.
+    What these tests still need to assert is whether planning was reached
+    at all (every validation-rejection test asserts it was not), and that
+    is what `.calls` reports. Delegating to the real function means the
+    success path still exercises genuine deterministic planning, not a
+    fixture-shaped imitation of it."""
+
+    def __init__(self, real):
+        self._real = real
+        self.calls: list[dict] = []
+
+    def __call__(self, run_id, selected_items, scene_label, user_context):
         self.calls.append(
             dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
         )
-        if self._result is not None:
-            return self._result
-        return FakeLLMResult(_valid_plan_json([item.item_id for item in selected_items]))
+        return self._real(
+            run_id=run_id,
+            selected_items=selected_items,
+            scene_label=scene_label,
+            user_context=user_context,
+        )
+
+
+_planning_spy: PlanningSpy | None = None
+
+
+@pytest.fixture(autouse=True)
+def _spy_on_direct_planning(monkeypatch):
+    global _planning_spy
+    import app.services.reorganise_pipeline_service as pipeline_mod
+
+    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
+    _planning_spy = spy
+    yield
+    _planning_spy = None
 
 
 class FakeGenerator:
@@ -196,12 +230,13 @@ def _generation_result(run_id: str, image_bytes: bytes, prompt: str) -> Generati
     )
 
 
-def _override_generate_deps(planner=None, generator=None):
-    planner = planner or FakePlanner()
+def _override_generate_deps(generator=None):
+    """Returns (planning_spy, generator). There is no planner override —
+    /generate has no planner dependency any more; the spy observes the
+    real direct-planning call instead (see PlanningSpy)."""
     generator = generator or FakeGenerator()
-    app.dependency_overrides[get_reorganise_planner_provider] = _provider_override(lambda: planner)
     app.dependency_overrides[get_image_generator_provider] = lambda: generator
-    return planner, generator
+    return _planning_spy, generator
 
 
 def _generate_request_body(upload_body: dict, image_bytes: bytes, selected_item_ids=None, **overrides) -> dict:
@@ -240,12 +275,21 @@ def test_generate_success_returns_generated_image_and_full_planning():
     assert result["image"]["api_version"] == IMAGE_GEN_API_VERSION
     assert result["image"]["depth_map_used"] is True
 
-    # complete planning result preserved
-    assert result["planning"]["attempts"] == 1
-    assert result["planning"]["provenance"] == "raw_valid"
-    assert result["planning"]["model_name"] == "phi4-mini"
-    assert result["planning"]["prompt_version"] == "v1"
-    assert len(result["planning"]["stage_timings"]) == 1
+    # Complete planning result preserved — and truthful: production makes
+    # no LLM call, so zero attempts, no issues, and no model identity.
+    planning = result["planning"]
+    assert planning["provenance"] == "deterministic_direct"
+    assert planning["attempts"] == 0
+    assert planning["issues"] == []
+    assert planning["model_name"] is None
+    assert planning["prompt_version"] is None
+    assert len(planning["stage_timings"]) == 1
+    assert planning["stage_timings"][0]["stage"] == "reorganise_plan"
+
+    # Every selected item is planned for, exactly once.
+    planned = [i for zone in planning["plan"]["zones"] for i in zone["item_ids"]]
+    assert sorted(planned) == sorted(body["selected_item_ids"])
+    assert len(planned) == len(set(planned))
 
     assert len(generator.calls) == 1
     assert len(planner.calls) == 1
@@ -564,3 +608,90 @@ def test_generated_image_payload_rejects_empty_image():
 def test_generated_image_payload_rejects_malformed_base64_image():
     with pytest.raises(ValidationError):
         GeneratedImagePayload(**_valid_payload_kwargs(image="not-valid-base64!!!"))
+
+
+# ===================== zero-Ollama proof (production request path) =======
+
+
+def test_driving_generate_never_imports_ollama_or_the_reorganise_planner():
+    """The strongest available proof that production planning makes no
+    Ollama call: drive a real /generate request in a FRESH interpreter
+    and assert the ollama module and app.models.reorganise_llm are never
+    imported at all.
+
+    A subprocess, not an in-process sys.modules check: other tests in
+    this session import ollama for unrelated reasons (Declutter's own
+    wrapper, the evaluation harness), which would make an in-process
+    assertion meaningless.
+    """
+    code = r"""
+import base64, hashlib, io, sys
+from PIL import Image
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.api.routes import (
+    get_detector_provider, get_image_generator_provider,
+    get_llm_classifier_provider, get_scene_classifier_provider,
+)
+from app.models.image_gen_client import GenerationResult, IMAGE_GEN_API_VERSION
+
+buf = io.BytesIO(); Image.new("RGB", (10, 10), color=(0, 255, 0)).save(buf, format="PNG")
+png = buf.getvalue()
+
+class Rec:
+    def __init__(self, rv): self.rv = rv
+    def __call__(self, *a, **k): return self.rv
+
+class Det:
+    def __init__(self, label, box, confidence):
+        self.label, self.box_xyxy, self.confidence = label, box, confidence
+
+class FakeLLM:
+    raw_text = "fake"; is_valid_json = True
+    model_name = "phi4-mini"; prompt_version = "v2"
+    parsed_json = [{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}]
+    item_provenance = {}
+
+def provider(x):
+    return lambda: (lambda: x)
+
+app.dependency_overrides[get_scene_classifier_provider] = provider(
+    Rec({"label": "bedroom", "confidence": 0.9, "all_scores": {"bedroom": 0.9}}))
+app.dependency_overrides[get_detector_provider] = provider(
+    Rec([Det("lamp", (0.1, 0.1, 0.3, 0.3), 0.9)]))
+app.dependency_overrides[get_llm_classifier_provider] = provider(Rec(FakeLLM()))
+
+client = TestClient(app)
+up = client.post("/upload", files={"image": ("t.png", png, "image/png")}, data={"path": "reorganise"})
+assert up.status_code == 200, up.text
+body = up.json()
+
+def gen(run_id, image_bytes, image_media_type, prompt, negative_prompt=None,
+        denoise_strength=None, controlnet_conditioning_scale=None, seed=None):
+    return GenerationResult(
+        run_id=run_id, image_bytes=image_bytes, image_media_type="image/png",
+        depth_map_used=True, denoise_strength=0.35, controlnet_conditioning_scale=1.0,
+        seed=42, base_model="b", controlnet_model="c", service_version="v",
+        api_version=IMAGE_GEN_API_VERSION,
+        prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+        input_image_sha256=hashlib.sha256(image_bytes).hexdigest(), generation_ms=1.0)
+
+app.dependency_overrides[get_image_generator_provider] = lambda: gen
+
+res = client.post("/generate", json={
+    "run_id": body["run_id"], "analysis": body["analysis"],
+    "selected_item_ids": [i["item_id"] for i in body["analysis"]["items"]],
+    "image": base64.b64encode(png).decode("ascii"), "image_media_type": "image/png",
+    "input_image_sha256": body["input_image_sha256"], "user_context": None})
+assert res.status_code == 200, res.text
+assert res.json()["planning"]["provenance"] == "deterministic_direct"
+assert res.json()["planning"]["attempts"] == 0
+
+leaked = {"ollama", "app.models.reorganise_llm"} & set(sys.modules)
+assert not leaked, sorted(leaked)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(_BACKEND_DIR)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

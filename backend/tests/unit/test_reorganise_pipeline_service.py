@@ -15,6 +15,7 @@ import io
 import pytest
 from PIL import Image
 
+from app.core.reorganise_schemas import PlanProvenance
 from app.core.schemas import AnalysisResult, BoundingBox, DetectedItem, SceneClassification
 from app.models.image_gen_client import (
     IMAGE_GEN_API_VERSION,
@@ -509,3 +510,184 @@ def test_service_level_validation_works_independently_of_fastapi():
         run_reorganise_pipeline(**_base_kwargs(selected_item_ids=["item_001", "item_001"]))
     with pytest.raises(ReorganisePipelineInputError):
         run_reorganise_pipeline(**_base_kwargs(selected_item_ids=["item_999"]))
+
+
+# ============================ production path: llm_planner=None ==========
+#
+# What BOTH production routes now pass. The LLM branch above stays fully
+# tested because run_reorganise_pipeline still accepts a planner — the
+# research path was not deleted, only taken off the request path.
+
+
+def test_direct_path_produces_deterministic_direct_provenance():
+    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
+
+    planning = result.planning
+    assert planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
+    assert planning.attempts == 0
+    assert planning.issues == []
+    assert planning.model_name is None
+    assert planning.prompt_version is None
+
+
+def test_direct_path_never_touches_a_planner():
+    """A planner passed here would be a contract violation, so the proof
+    is structural: pass a recording planner via the LLM path, then the
+    direct path, and confirm only the former ever ran."""
+    planner = FakePlanner()
+    run_reorganise_pipeline(**_base_kwargs(llm_planner=planner))
+    assert len(planner.calls) == 1
+
+    run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
+    assert len(planner.calls) == 1  # unchanged — the direct path called nothing
+
+
+def test_direct_path_covers_every_selected_item_exactly_once():
+    # A many-item room. Capped at 19 because this file's shared
+    # _detected_item helper derives box.x2 as 0.05*index + 0.04, which
+    # exceeds the normalized [0,1] bound past index 19 — a limit of that
+    # helper, not of the planning path.
+    item_ids = [f"item_{n:03d}" for n in range(1, 20)]
+    analysis = _analysis_result("run1", item_ids)
+    result = run_reorganise_pipeline(
+        **_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids), llm_planner=None)
+    )
+
+    planned = [i for zone in result.planning.plan.zones for i in zone.item_ids]
+    assert sorted(planned) == sorted(item_ids)
+    assert len(planned) == len(set(planned))  # no duplicates
+    assert not set(item_ids) - set(planned)  # nothing missing
+
+
+def test_direct_path_reports_one_real_stage_timing():
+    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
+
+    assert len(result.planning.stage_timings) == 1
+    timing = result.planning.stage_timings[0]
+    assert timing.stage == "reorganise_plan"
+    assert timing.duration_ms >= 0.0
+
+
+def test_direct_path_still_generates_an_image():
+    generator = FakeGenerator()
+    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None, image_generator=generator))
+
+    assert result.image_status == "generated"
+    assert len(generator.calls) == 1
+
+
+def test_direct_path_preserves_scene_and_user_context_in_the_prompt():
+    analysis = _analysis_result("run1", ["item_001", "item_002"])
+    result = run_reorganise_pipeline(
+        **_base_kwargs(analysis=analysis, llm_planner=None, user_context="i want a neat room")
+    )
+
+    prompt = result.planning.plan.image_prompt
+    assert analysis.scene.label in prompt
+    assert "i want a neat room" in prompt
+
+
+def test_llm_planner_argument_is_required_with_no_default():
+    """No default, deliberately: a default of None would let a new caller
+    silently opt out of the LLM without noticing, and a default planner
+    would silently reintroduce the Ollama dependency this policy removed."""
+    signature = inspect.signature(run_reorganise_pipeline)
+    assert signature.parameters["llm_planner"].default is inspect.Parameter.empty
+
+
+def _grid_item(item_id: str, index: int, label: str = "lamp") -> DetectedItem:
+    """A DetectedItem with a locally-computed, always-valid normalized box.
+
+    Deliberately separate from this file's shared _detected_item helper,
+    whose box math (0.05*index + 0.04) exceeds the [0,1] bound past index
+    19. Laying boxes out on a 6-wide grid keeps 28 items valid without
+    changing a helper other tests depend on.
+    """
+    row, col = divmod(index, 6)
+    x1 = round(0.02 + col * 0.16, 4)
+    y1 = round(0.02 + row * 0.19, 4)
+    return DetectedItem(
+        item_id=item_id,
+        source_detection_index=index,
+        raw_phrase=label,
+        clean_label=label,
+        box=BoundingBox(x1=x1, y1=y1, x2=round(x1 + 0.14, 4), y2=round(y1 + 0.17, 4)),
+        confidence=0.5,
+        position="upper-left",
+        relative_size="small",
+    )
+
+
+def test_direct_path_handles_a_real_28_item_room_exactly_once_each():
+    """The crowded case that motivated the whole policy change: 28 real
+    DetectedItems, including duplicate labels, planned in one shot.
+
+    Built locally rather than read from
+    evaluation/fixtures/reorganise_bedroom02_28items.json on purpose —
+    that fixture exists to drive the LLM evaluation harness, and using it
+    here would make the production path's correctness appear to depend on
+    an evaluation artefact. This test owns its own data.
+    """
+    # duplicate labels included — item_id is the only identity that counts
+    labels = (
+        ["painting", "jewelry", "mirror"]
+        + ["picture frame"] * 6
+        + ["plant", "shelf", "toy", "bottle", "toy", "monitor", "chair", "bowl", "plate"]
+        + ["speaker", "keyboard", "desk", "mouse", "box", "pillow", "cup", "cup", "bin"]
+    )
+    assert len(labels) == 27
+    labels.append("rug")
+    item_ids = [f"item_{n:03d}" for n in range(1, 29)]
+    items = [_grid_item(item_id, i, labels[i]) for i, item_id in enumerate(item_ids)]
+    assert len(items) == 28
+
+    analysis = AnalysisResult(
+        run_id="run1",
+        scene=SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9}),
+        items=items,
+        warnings=[],
+        stage_timings=[],
+    )
+
+    result = run_reorganise_pipeline(
+        **_base_kwargs(
+            analysis=analysis,
+            selected_item_ids=list(item_ids),
+            llm_planner=None,
+            user_context="i want a neat room",
+        )
+    )
+
+    planning = result.planning
+    assert planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
+    assert planning.attempts == 0
+    assert planning.issues == []
+    assert planning.model_name is None and planning.prompt_version is None
+
+    planned = [i for zone in planning.plan.zones for i in zone.item_ids]
+    assert len(planned) == 28
+    assert sorted(planned) == sorted(item_ids)          # exact coverage
+    assert len(planned) == len(set(planned))            # no duplicates
+    assert set(item_ids) - set(planned) == set()        # nothing missing
+    assert set(planned) - set(item_ids) == set()        # nothing invented
+
+    # duplicate labels stayed independent — all six frames are present
+    assert sum(1 for item in items if item.effective_label == "picture frame") == 6
+
+
+def test_direct_path_28_items_is_not_read_from_the_evaluation_fixture():
+    """Guards the boundary the test above documents: the production path's
+    own test data must not be sourced from evaluation/fixtures/.
+
+    Checks for file-reading CALLS rather than for the words "fixture" or
+    "json" — the test above discusses both in its docstring, so a
+    substring search would match its own prose instead of its code."""
+    import ast
+
+    tree = ast.parse(inspect.getsource(test_direct_path_handles_a_real_28_item_room_exactly_once_each))
+    called = {
+        node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+    assert not called & {"open", "read_text", "read_bytes", "load", "loads", "load_fixture"}

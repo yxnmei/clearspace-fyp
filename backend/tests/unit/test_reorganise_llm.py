@@ -49,11 +49,23 @@ def _fake_ollama(content: str):
     calls: list[dict] = []
 
     class FakeClient:
-        def __init__(self, host=None):
+        # `timeout` is recorded, not ignored — the retained research path
+        # must construct its client with an explicit request timeout
+        # (the real ollama client defaults to None, i.e. unbounded).
+        def __init__(self, host=None, timeout=None):
             self.host = host
+            self.timeout = timeout
 
         def chat(self, model, messages, options):
-            calls.append({"model": model, "messages": messages, "options": options, "host": self.host})
+            calls.append(
+                {
+                    "model": model,
+                    "messages": messages,
+                    "options": options,
+                    "host": self.host,
+                    "timeout": self.timeout,
+                }
+            )
             return {"message": {"content": content}}
 
     return SimpleNamespace(Client=FakeClient), calls
@@ -249,6 +261,39 @@ def test_default_configured_model_used(monkeypatch):
 
     assert calls[0]["model"] == get_settings().llm_model_name
     assert result.model_name == get_settings().llm_model_name
+
+
+def test_client_is_constructed_with_an_explicit_request_timeout(monkeypatch):
+    """The installed ollama client's own default is None — no request
+    timeout at all — which is how a real planning stage reached 1440.81s
+    across two unbounded attempts. This path must always bound itself."""
+    fake_module, calls = _fake_ollama(VALID_PLAN_JSON)
+    monkeypatch.setattr(reorganise_llm, "ollama", fake_module)
+
+    generate_reorganise_plan_once(
+        run_id="r1", selected_items=[_item()], scene_label="bedroom", user_context=None
+    )
+
+    timeout = calls[0]["timeout"]
+    assert timeout == get_settings().reorganise_llm_timeout_s
+    assert timeout is not None and timeout > 0
+
+
+def test_num_predict_bound_is_forwarded_in_options(monkeypatch):
+    """Without an output bound the model may generate until the context
+    window is exhausted, yielding a truncated, unparseable plan after a
+    very long wait."""
+    fake_module, calls = _fake_ollama(VALID_PLAN_JSON)
+    monkeypatch.setattr(reorganise_llm, "ollama", fake_module)
+
+    generate_reorganise_plan_once(
+        run_id="r1", selected_items=[_item()], scene_label="bedroom", user_context=None
+    )
+
+    options = calls[0]["options"]
+    assert options["num_predict"] == get_settings().reorganise_llm_num_predict
+    # temperature is unchanged — the bounds are additive, not a rewrite
+    assert options["temperature"] == get_settings().llm_temperature
 
 
 def test_explicit_model_override_used(monkeypatch):

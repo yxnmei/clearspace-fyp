@@ -17,6 +17,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.core.confirmation import ConfirmationInputError
+from app.core.reorganise_schemas import PlanProvenance
 from app.core.schemas import (
     AiDecision,
     AnalysisResult,
@@ -140,36 +141,44 @@ class FakeLLMResult:
         self.prompt_version = prompt_version
 
 
-class FakePlanner:
-    """Matches app.services.reorganise_service.ReorganisePlanner's
-    Protocol shape exactly. Records every call for assertion."""
+class PlanningSpy:
+    """Wraps the REAL plan_reorganisation_direct and records each call.
 
-    def __init__(self, result=None):
+    Replaces the former FakePlanner/LoaderRecorder pair: Both no longer
+    accepts or resolves a planner — run_both_generation() passes
+    llm_planner=None — so there is no loader to record. `.calls` still
+    answers what these tests ask: was planning reached at all, and with
+    which server-derived selection."""
+
+    def __init__(self, real):
+        self._real = real
         self.calls: list[dict] = []
-        self._result = result
 
-    def __call__(self, run_id, selected_items, scene_label, user_context, validation_feedback=None, model_name=None):
+    def __call__(self, run_id, selected_items, scene_label, user_context):
         self.calls.append(
             dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
         )
-        if self._result is not None:
-            return self._result
-        return FakeLLMResult(_valid_plan_json([item.item_id for item in selected_items]))
+        return self._real(
+            run_id=run_id,
+            selected_items=selected_items,
+            scene_label=scene_label,
+            user_context=user_context,
+        )
 
 
-class LoaderRecorder:
-    """A zero-arg loader thunk — matches both_service's
-    ReorganisePlannerLoader shape exactly (Callable[[], ReorganisePlanner]).
-    Records every call so tests can assert whether/when the real ollama
-    import would have happened."""
+_planning_spy: PlanningSpy | None = None
 
-    def __init__(self, planner: FakePlanner | None = None):
-        self.calls = 0
-        self._planner = planner or FakePlanner()
 
-    def __call__(self) -> FakePlanner:
-        self.calls += 1
-        return self._planner
+@pytest.fixture(autouse=True)
+def _spy_on_direct_planning(monkeypatch):
+    global _planning_spy
+    import app.services.reorganise_pipeline_service as pipeline_mod
+
+    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
+    _planning_spy = spy
+    yield
+    _planning_spy = None
 
 
 class FakeGenerator:
@@ -228,7 +237,6 @@ def _run(
     image_media_type="image/png",
     expected_input_image_sha256=None,
     user_context=None,
-    llm_planner_provider=None,
     image_generator=None,
 ):
     if analysis is None:
@@ -237,8 +245,6 @@ def _run(
         declutter = _complete_declutter([("item_001", "keep")], run_id=run_id)
     if expected_input_image_sha256 is None:
         expected_input_image_sha256 = _sha256(image_bytes)
-    if llm_planner_provider is None:
-        llm_planner_provider = LoaderRecorder()
     if image_generator is None:
         image_generator = FakeGenerator()
 
@@ -251,7 +257,6 @@ def _run(
         image_media_type=image_media_type,
         expected_input_image_sha256=expected_input_image_sha256,
         user_context=user_context,
-        llm_planner_provider=llm_planner_provider,
         image_generator=image_generator,
     )
 
@@ -264,18 +269,23 @@ def _run(
 def test_success_derives_selection_from_confirmed_keep_ids_only():
     analysis = _analysis_result("run1", ["item_001", "item_002", "item_003"])
     declutter = _complete_declutter([("item_001", "keep"), ("item_002", "donate"), ("item_003", "keep")])
-    loader = LoaderRecorder()
+    loader = _planning_spy
     generator = FakeGenerator()
 
-    result = _run(analysis=analysis, declutter=declutter, llm_planner_provider=loader, image_generator=generator)
+    result = _run(analysis=analysis, declutter=declutter, image_generator=generator)
 
     assert isinstance(result, BothGenerationResult)
     assert result.confirmation.confirmed_keep_ids == ["item_001", "item_003"]
-    # the planner only ever saw the confirmed Keep items, never item_002
-    planner = loader._planner
-    assert [item.item_id for item in planner.calls[0]["selected_items"]] == ["item_001", "item_003"]
+    # planning only ever saw the confirmed Keep items, never item_002
+    assert [item.item_id for item in loader.calls[0]["selected_items"]] == ["item_001", "item_003"]
     assert result.pipeline.image_status == "generated"
-    assert loader.calls == 1
+    # truthful provenance: Both makes no LLM call at all
+    assert result.pipeline.planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
+    assert result.pipeline.planning.attempts == 0
+    assert result.pipeline.planning.issues == []
+    assert result.pipeline.planning.model_name is None
+    assert result.pipeline.planning.prompt_version is None
+    assert len(loader.calls) == 1
     assert len(generator.calls) == 1
 
 
@@ -283,24 +293,24 @@ def test_overrides_change_the_derived_keep_set_reaching_the_pipeline():
     analysis = _analysis_result("run1", ["item_001", "item_002"])
     declutter = _complete_declutter([("item_001", "discard"), ("item_002", "keep")])
     overrides = [DecisionOverride(item_id="item_001", decision=Decision.KEEP)]
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
-    result = _run(analysis=analysis, declutter=declutter, overrides=overrides, llm_planner_provider=loader)
+    result = _run(analysis=analysis, declutter=declutter, overrides=overrides)
 
     assert result.confirmation.confirmed_keep_ids == ["item_001", "item_002"]
-    assert [item.item_id for item in loader._planner.calls[0]["selected_items"]] == ["item_001", "item_002"]
+    assert [item.item_id for item in loader.calls[0]["selected_items"]] == ["item_001", "item_002"]
 
 
 def test_exclusion_override_removes_item_from_pipeline_selection():
     analysis = _analysis_result("run1", ["item_001", "item_002"])
     declutter = _complete_declutter([("item_001", "keep"), ("item_002", "keep")])
     overrides = [DecisionOverride(item_id="item_002", excluded=True)]
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
-    result = _run(analysis=analysis, declutter=declutter, overrides=overrides, llm_planner_provider=loader)
+    result = _run(analysis=analysis, declutter=declutter, overrides=overrides)
 
     assert result.confirmation.confirmed_keep_ids == ["item_001"]
-    assert [item.item_id for item in loader._planner.calls[0]["selected_items"]] == ["item_001"]
+    assert [item.item_id for item in loader.calls[0]["selected_items"]] == ["item_001"]
 
 
 def test_run_id_consistency_across_confirmation_and_pipeline():
@@ -323,26 +333,26 @@ def test_empty_confirmed_keep_raises_typed_error():
 
 def test_empty_confirmed_keep_never_calls_planner_loader_or_generator():
     declutter = _complete_declutter([("item_001", "discard")])
-    loader = LoaderRecorder()
+    loader = _planning_spy
     generator = FakeGenerator()
 
     with pytest.raises(EmptyConfirmedKeepError):
-        _run(declutter=declutter, llm_planner_provider=loader, image_generator=generator)
+        _run(declutter=declutter, image_generator=generator)
 
-    assert loader.calls == 0  # the real ollama import never happens
-    assert loader._planner.calls == []
+    assert loader.calls == []  # planning is never reached
+    assert loader.calls == []
     assert generator.calls == []
 
 
 def test_all_keep_but_all_excluded_is_also_empty_keep():
     declutter = _complete_declutter([("item_001", "keep")])
     overrides = [DecisionOverride(item_id="item_001", excluded=True)]
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
     with pytest.raises(EmptyConfirmedKeepError):
-        _run(declutter=declutter, overrides=overrides, llm_planner_provider=loader)
+        _run(declutter=declutter, overrides=overrides)
 
-    assert loader.calls == 0
+    assert loader.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -352,30 +362,29 @@ def test_all_keep_but_all_excluded_is_also_empty_keep():
 
 def test_incomplete_declutter_propagates_and_blocks_downstream_calls():
     declutter = _incomplete_declutter()
-    loader = LoaderRecorder()
+    loader = _planning_spy
     generator = FakeGenerator()
 
     with pytest.raises(IncompleteDeclutterError):
         _run(
             analysis=_analysis_result("run1", ["item_001"]),
             declutter=declutter,
-            llm_planner_provider=loader,
             image_generator=generator,
         )
 
-    assert loader.calls == 0
+    assert loader.calls == []
     assert generator.calls == []
 
 
 def test_malformed_overrides_propagate_confirmation_input_error():
     declutter = _complete_declutter([("item_001", "keep")])
     overrides = [DecisionOverride(item_id="item_999", decision=Decision.DISCARD)]
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
     with pytest.raises(ConfirmationInputError):
-        _run(declutter=declutter, overrides=overrides, llm_planner_provider=loader)
+        _run(declutter=declutter, overrides=overrides)
 
-    assert loader.calls == 0
+    assert loader.calls == []
 
 
 def test_duplicate_overrides_propagate_confirmation_input_error():
@@ -396,12 +405,12 @@ def test_duplicate_overrides_propagate_confirmation_input_error():
 def test_run_id_mismatch_with_analysis_raises_pipeline_input_error():
     analysis = _analysis_result("run-a", ["item_001"])
     declutter = _complete_declutter([("item_001", "keep")], run_id="run-a")
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
     with pytest.raises(BothPipelineInputError):
-        _run(run_id="run-b", analysis=analysis, declutter=declutter, llm_planner_provider=loader)
+        _run(run_id="run-b", analysis=analysis, declutter=declutter)
 
-    assert loader.calls == 0
+    assert loader.calls == []
 
 
 def test_run_id_mismatch_with_declutter_raises_pipeline_input_error():
@@ -417,12 +426,12 @@ def test_mismatched_expected_ids_raises_pipeline_input_error():
     # not a genuine matched pair from the same run.
     analysis = _analysis_result("run1", ["item_001", "item_002"])
     declutter = _complete_declutter([("item_001", "keep")], run_id="run1")
-    loader = LoaderRecorder()
+    loader = _planning_spy
 
     with pytest.raises(BothPipelineInputError):
-        _run(analysis=analysis, declutter=declutter, llm_planner_provider=loader)
+        _run(analysis=analysis, declutter=declutter)
 
-    assert loader.calls == 0
+    assert loader.calls == []
 
 
 def test_mismatched_expected_ids_wrong_order_raises_pipeline_input_error():

@@ -66,7 +66,12 @@ from app.models.image_gen_client import (
     ImageGenTimeoutError,
     ImageGenUnavailableError,
 )
-from app.services.reorganise_service import ReorganisePlanner, ReorganisePlanningResult, plan_reorganisation
+from app.services.reorganise_service import (
+    ReorganisePlanner,
+    ReorganisePlanningResult,
+    plan_reorganisation,
+    plan_reorganisation_direct,
+)
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -250,13 +255,31 @@ def run_reorganise_pipeline(
     image_media_type: str,
     expected_input_image_sha256: str,
     user_context: str | None,
-    llm_planner: ReorganisePlanner,
+    llm_planner: ReorganisePlanner | None,
     image_generator: ImageGenerator,
 ) -> ReorganisePipelineResult:
     """
+    `llm_planner` is REQUIRED and has no default — every caller must say
+    which planning path it wants, in writing:
+
+      None      -> plan_reorganisation_direct(): the deterministic plan is
+                   built immediately, no planner is called, no ollama
+                   import happens, provenance is DETERMINISTIC_DIRECT.
+                   This is what BOTH production routes pass.
+      a planner -> plan_reorganisation(): the retained LLM state machine
+                   (initial attempt, one bounded recovery, deterministic
+                   fallback). Used by unit tests and by
+                   evaluation/scripts/compare_reorganise_planning.py.
+
+    No default is given deliberately. A default of None would let a new
+    caller silently opt out of the LLM without noticing; a default
+    planner would silently reintroduce the Ollama dependency this policy
+    removed. Making it explicit means the choice is always visible at the
+    call site.
+
     Order of operations — every caller-input check below happens BEFORE
-    plan_reorganisation() is ever called, so a malformed request never
-    costs a Phi-4-mini call:
+    any planning is attempted, so a malformed request never costs a
+    planning call:
 
       1. run_id validated, and checked against analysis.run_id.
       2. selected_item_ids validated (non-empty, unique, all present in
@@ -268,9 +291,11 @@ def run_reorganise_pipeline(
       4. expected_input_image_sha256 format-checked, then compared
          against the ACTUAL recomputed hash of image_bytes.
 
-    Only once all four pass does plan_reorganisation() run (R2, unchanged
-    — at most two Ollama calls internally, always returns a real,
-    trusted plan). image_generator is then called EXACTLY ONCE — never a
+    Only once all four pass does planning run — either the direct
+    deterministic build (llm_planner=None; zero Ollama calls) or the
+    retained LLM state machine (a planner was supplied; at most two
+    Ollama calls internally). Both always return a real, trusted plan.
+    image_generator is then called EXACTLY ONCE — never a
     second time, and this function never calls a separate health-check
     callable at all (see module docstring). A typed ImageGenError
     subclass from that one call is caught and mapped to
@@ -293,13 +318,24 @@ def run_reorganise_pipeline(
     _check_image(image_bytes, image_media_type)
     _check_image_hash(image_bytes, expected_input_image_sha256)
 
-    planning = plan_reorganisation(
-        run_id=run_id,
-        selected_items=selected_items,
-        scene_label=analysis.scene.label,
-        user_context=user_context,
-        llm_planner=llm_planner,
-    )
+    if llm_planner is None:
+        # Production path — see this function's own docstring. No planner
+        # is touched, so app.models.reorganise_llm (and therefore ollama)
+        # is never imported by this request.
+        planning = plan_reorganisation_direct(
+            run_id=run_id,
+            selected_items=selected_items,
+            scene_label=analysis.scene.label,
+            user_context=user_context,
+        )
+    else:
+        planning = plan_reorganisation(
+            run_id=run_id,
+            selected_items=selected_items,
+            scene_label=analysis.scene.label,
+            user_context=user_context,
+            llm_planner=llm_planner,
+        )
 
     try:
         generation = image_generator(

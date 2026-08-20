@@ -50,6 +50,16 @@ class PlanProvenance(str, Enum):
     MECHANICALLY_REPAIRED = "mechanically_repaired"
     RECOVERY_USED = "recovery_used"
     DETERMINISTIC_FALLBACK = "deterministic_fallback"
+    # No LLM call was made AT ALL — the deterministic plan was built
+    # directly, by policy, not after a model failed. Distinct from
+    # DETERMINISTIC_FALLBACK on purpose: that value means "two planner
+    # attempts were made and both were rejected", which would be a lie
+    # here. The 2026-08-20 planner screen found no model able to produce
+    # a semantically valid 28-item plan, so production stopped paying for
+    # two doomed attempts; see backend/evaluation/README.md. The LLM
+    # path itself is retained and still reachable for research (pass a
+    # planner to run_reorganise_pipeline).
+    DETERMINISTIC_DIRECT = "deterministic_direct"
 
 
 class ReorganiseZone(BaseModel):

@@ -10,14 +10,27 @@ contradicting the corrected item_id-only architecture. Removed here,
 confirmed via `rg -n "run_reorganise|score_generation_fidelity"` to have
 had zero callers anywhere in the repository before deletion.
 
-Exact orchestration policy: one initial Phi-4-mini planning attempt; if
-it doesn't produce a trusted plan (call failure, invalid JSON, or a
-semantically invalid plan per app.core.reorganise_semantic_conversion.
-parse_and_validate_plan), exactly one targeted recovery attempt with
-bounded feedback about what was wrong; if recovery also fails, a
-deterministic fallback (app.core.reorganise_semantic_conversion.
-build_deterministic_fallback_plan) — never a third planner call. See
-plan_reorganisation()'s own docstring for the full state machine.
+TWO entry points, and PRODUCTION USES THE FIRST:
+
+  plan_reorganisation_direct() — the production path. Builds the
+  deterministic plan immediately, calls no planner, imports no ollama,
+  and reports provenance DETERMINISTIC_DIRECT with zero attempts.
+
+  plan_reorganisation() — the LLM state machine, RETAINED FOR RESEARCH
+  and reachable only by passing a planner explicitly. One initial
+  planning attempt; if it doesn't produce a trusted plan (call failure,
+  invalid JSON, or a semantically invalid plan per
+  app.core.reorganise_semantic_conversion.parse_and_validate_plan),
+  exactly one targeted recovery attempt with bounded feedback; if that
+  also fails, the deterministic fallback — never a third planner call.
+  See its own docstring for the full state machine.
+
+Why production stopped calling an LLM here: the 2026-08-20 bounded
+planner screen (backend/evaluation/README.md) found no candidate model
+able to produce a semantically valid plan for a crowded 28-item room, so
+the two attempts before the fallback bought latency and nothing else.
+Nothing about the LLM path is deleted — it stays exercised by unit tests
+and by evaluation/scripts/compare_reorganise_planning.py.
 
 Dependency injection, not a direct import of app.models.reorganise_llm:
 llm_planner is typed as a Protocol (ReorganisePlanner, below), matching
@@ -170,13 +183,19 @@ class ReorganisePlanningResult(BaseModel):
         may be None only when BOTH issues are `call_failed` (neither call
         ever returned a wrapper result to source metadata from);
         otherwise both fields must be present.
+      - DETERMINISTIC_DIRECT: ZERO attempts, ZERO issues, and metadata
+        BOTH None. No planner was called, so there is no attempt to
+        count, no failure to report, and no model/prompt identity to
+        name — asserting any of those would be fabricating evidence of
+        an LLM call that never happened.
     """
 
     run_id: NonEmptyStr
     plan: ReorganisePlan
     provenance: PlanProvenance
     issues: list[PlanningIssue]
-    attempts: int = Field(ge=1, le=2)
+    # ge=0, not ge=1: DETERMINISTIC_DIRECT genuinely makes zero attempts.
+    attempts: int = Field(ge=0, le=2)
     model_name: NonEmptyStr | None
     prompt_version: NonEmptyStr | None
     stage_timings: list[StageTiming]
@@ -193,6 +212,21 @@ class ReorganisePlanningResult(BaseModel):
 
         initial_issues = [i for i in self.issues if i.attempt == "initial"]
         recovery_issues = [i for i in self.issues if i.attempt == "recovery"]
+
+        if self.provenance == PlanProvenance.DETERMINISTIC_DIRECT:
+            # Checked FIRST and returned early: no planner ran, so every
+            # LLM-shaped field must be empty. Anything else here would be
+            # a fabricated record of a call that never happened.
+            if self.attempts != 0:
+                raise ValueError("DETERMINISTIC_DIRECT requires zero attempts")
+            if self.issues:
+                raise ValueError("DETERMINISTIC_DIRECT must have zero issues — no attempt was made to fail")
+            if not metadata_both_none:
+                raise ValueError(
+                    "DETERMINISTIC_DIRECT requires model_name and prompt_version to both be None — "
+                    "no model was called"
+                )
+            return self
 
         if self.provenance in (PlanProvenance.RAW_VALID, PlanProvenance.MECHANICALLY_REPAIRED):
             if self.attempts != 1:
@@ -267,6 +301,56 @@ def _build_validation_feedback(issue: PlanningIssue) -> list[str]:
     if issue.kind == "invalid_json":
         return ["The previous response was not a syntactically valid JSON object matching the required shape."]
     return [_bounded(err.detail) for err in issue.conversion_errors]  # semantic_invalid
+
+
+def plan_reorganisation_direct(
+    run_id: str,
+    selected_items: list[DetectedItem],
+    scene_label: str,
+    user_context: str | None,
+) -> ReorganisePlanningResult:
+    """
+    The PRODUCTION planning path: build the deterministic plan directly,
+    with no planner argument, no Ollama call, and no ollama import.
+
+    Why this exists rather than calling plan_reorganisation() and letting
+    it fall back: the fallback path reports provenance
+    DETERMINISTIC_FALLBACK, attempts=2 and two `issues` describing two
+    planner attempts that failed. Reaching the same plan without ever
+    calling a planner and then reporting that would be fabricating
+    evidence. This function reports DETERMINISTIC_DIRECT / attempts=0 /
+    no issues / no model metadata instead — the truthful record of what
+    actually happened.
+
+    The policy behind it: the 2026-08-20 bounded planner screen found no
+    candidate model able to produce a semantically valid plan for the
+    crowded 28-item fixture (see backend/evaluation/README.md), so
+    spending two planner calls before falling back bought nothing but
+    latency. plan_reorganisation() below is retained unchanged and stays
+    reachable for research by passing a planner explicitly.
+
+    Same caller-input validation as plan_reorganisation(), deliberately
+    duplicated rather than skipped — this is a public entry point, and a
+    malformed selection must fail the same way on both paths.
+    """
+    run_id = _validate_run_id(run_id)
+    _validate_planning_inputs(selected_items, scene_label, user_context)
+
+    t0 = time.perf_counter()
+    plan = build_deterministic_fallback_plan(selected_items, scene_label, user_context)
+
+    return ReorganisePlanningResult(
+        run_id=run_id,
+        plan=plan,
+        provenance=PlanProvenance.DETERMINISTIC_DIRECT,
+        issues=[],
+        attempts=0,
+        model_name=None,
+        prompt_version=None,
+        # Genuinely measured, not a fabricated zero — this path is fast,
+        # but the timing reported is the real elapsed build time.
+        stage_timings=[StageTiming(stage="reorganise_plan", duration_ms=(time.perf_counter() - t0) * 1000)],
+    )
 
 
 def plan_reorganisation(

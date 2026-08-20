@@ -192,3 +192,57 @@ describe("ReorganiseResult — start over", () => {
     expect(onStartOver).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// deterministic_direct — what the user actually sees in production
+//
+// Production calls no LLM planner, so the technical disclosure must show
+// that honestly: zero attempts, no model named, and no issue list implying
+// a failed attempt that never happened.
+// ---------------------------------------------------------------------------
+
+describe("ReorganiseResult — deterministic_direct planning", () => {
+  function directResult(overrides = {}) {
+    return makeGeneratedResult({
+      planning: makePlanning({
+        provenance: "deterministic_direct",
+        attempts: 0,
+        issues: [],
+        model_name: null,
+        prompt_version: null,
+        ...overrides,
+      }),
+    });
+  }
+
+  test("renders the provenance and a zero attempt count truthfully", () => {
+    render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
+    expect(screen.getByText("deterministic_direct")).toBeInTheDocument();
+    const attempts = screen.getByText("Attempts").closest("div");
+    expect(attempts).toHaveTextContent("0");
+  });
+
+  test("shows no model or prompt version, rather than inventing one", () => {
+    render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
+    expect(screen.getByText("Model").closest("div")).toHaveTextContent("—");
+    expect(screen.getByText("Prompt version").closest("div")).toHaveTextContent("—");
+    expect(screen.queryByText("phi4-mini")).not.toBeInTheDocument();
+  });
+
+  test("renders no planning-issues section, since no attempt was made to fail", () => {
+    render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
+    expect(screen.queryByText(/issues encountered while planning/i)).not.toBeInTheDocument();
+  });
+
+  test("still renders the full plan and the planning duration", () => {
+    render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
+    expect(screen.getByText("Keep in place")).toBeInTheDocument();
+    expect(screen.getByText(/planning duration/i)).toBeInTheDocument();
+    expect(screen.getByText("0.01s")).toBeInTheDocument();
+  });
+
+  test("keeps the technical detail collapsed by default, like every other provenance", () => {
+    render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
+    expect(screen.getByText("Planning details").closest("details")).not.toHaveAttribute("open");
+  });
+});

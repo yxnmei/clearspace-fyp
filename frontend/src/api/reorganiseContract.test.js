@@ -852,3 +852,105 @@ describe("normaliseConfirmedGenerateResponse", () => {
     expect(() => normaliseConfirmedGenerateResponse(null, CONFIRMED_OPTS)).toThrow(/must be an object/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// deterministic_direct — the production provenance
+//
+// Production calls no LLM planner for Reorganise, so the response reports
+// zero attempts, no issues and no model identity. The contract accepts
+// exactly that shape and rejects any response that mixes it with evidence
+// of an LLM call that never happened.
+// ---------------------------------------------------------------------------
+
+function makeDirectPlanning(overrides = {}) {
+  return makePlanning({
+    provenance: "deterministic_direct",
+    attempts: 0,
+    issues: [],
+    model_name: null,
+    prompt_version: null,
+    ...overrides,
+  });
+}
+
+describe("reorganiseContract — deterministic_direct", () => {
+  test("accepts the production shape: zero attempts, no issues, null metadata", () => {
+    const ok = makeGeneratedResponse({ planning: makeDirectPlanning() });
+    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
+  });
+
+  test("normalises to a usable result with the provenance preserved", () => {
+    const result = normaliseGenerateResponse(makeGeneratedResponse({ planning: makeDirectPlanning() }), OPTS);
+    expect(result.planning.provenance).toBe("deterministic_direct");
+    expect(result.planning.attempts).toBe(0);
+    expect(result.planning.issues).toEqual([]);
+    expect(result.planning.model_name).toBeNull();
+    expect(result.planning.prompt_version).toBeNull();
+  });
+
+  test("accepts it on the Both (/generate/confirmed) contract too", () => {
+    // Both's plan covers only the server-derived confirmed Keep set.
+    const ok = makeConfirmedGenerateResponse({
+      planning: makeDirectPlanning({
+        plan: {
+          zones: [{ zone_name: "Keep in place", item_ids: ["item_001"], instruction: "keep as is" }],
+          image_prompt: "a tidy bedroom",
+          negative_prompt: null,
+        },
+      }),
+    });
+    expect(() => normaliseConfirmedGenerateResponse(ok, CONFIRMED_OPTS)).not.toThrow();
+  });
+
+  test("still requires an unavailable image result to normalise cleanly", () => {
+    const ok = makeUnavailableResponse("service_unreachable", { planning: makeDirectPlanning() });
+    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
+  });
+
+  // --- contradictory combinations are rejected ---------------------------
+
+  test.each([1, 2])("rejects deterministic_direct claiming %i attempt(s)", (attempts) => {
+    const bad = makeGeneratedResponse({ planning: makeDirectPlanning({ attempts }) });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/attempts must be 0 for deterministic_direct/);
+  });
+
+  test("rejects deterministic_direct carrying a failed-attempt issue", () => {
+    const bad = makeGeneratedResponse({
+      planning: makeDirectPlanning({
+        issues: [{ attempt: "initial", kind: "invalid_json", detail: "did not happen", conversion_errors: [] }],
+      }),
+    });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues to be empty/);
+  });
+
+  test("rejects deterministic_direct naming a model", () => {
+    const bad = makeGeneratedResponse({
+      planning: makeDirectPlanning({ model_name: "phi4-mini", prompt_version: "v1" }),
+    });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/no model was called/);
+  });
+
+  // --- the other provenances keep their existing attempt rules -----------
+
+  test.each(["raw_valid", "mechanically_repaired", "recovery_used", "deterministic_fallback"])(
+    "%s still rejects zero attempts",
+    (provenance) => {
+      const bad = makeGeneratedResponse({ planning: makePlanning({ provenance, attempts: 0 }) });
+      expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/attempts must be 1 or 2/);
+    }
+  );
+
+  test.each([
+    ["raw_valid", 1],
+    ["mechanically_repaired", 1],
+    ["recovery_used", 2],
+  ])("%s still accepts its real attempt count of %i", (provenance, attempts) => {
+    const ok = makeGeneratedResponse({ planning: makePlanning({ provenance, attempts }) });
+    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
+  });
+
+  test("an unrecognised provenance is still rejected", () => {
+    const bad = makeGeneratedResponse({ planning: makePlanning({ provenance: "deterministic_directish" }) });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/provenance/);
+  });
+});

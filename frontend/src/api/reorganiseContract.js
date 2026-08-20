@@ -51,7 +51,18 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 // rejects both.
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
 const ITEM_ID_RE = /^item_\d{3,}$/;
-const VALID_PROVENANCE = new Set(["raw_valid", "mechanically_repaired", "recovery_used", "deterministic_fallback"]);
+// "deterministic_direct" is the PRODUCTION value: no LLM planner is
+// called at all, so the plan is built deterministically from the start.
+// Distinct from "deterministic_fallback", which means two planner
+// attempts were made and both were rejected — see the per-provenance
+// attempt rules enforced below.
+const VALID_PROVENANCE = new Set([
+  "raw_valid",
+  "mechanically_repaired",
+  "recovery_used",
+  "deterministic_fallback",
+  "deterministic_direct",
+]);
 const VALID_IMAGE_STATUS = new Set(["generated", "unavailable"]);
 const VALID_UNAVAILABLE_REASONS = new Set([
   "service_unreachable",
@@ -244,8 +255,22 @@ function validatePlanning(planning, runId, selectedItemIds) {
   if (!VALID_PROVENANCE.has(planning.provenance)) {
     fail(`planning.provenance is not a recognised value: ${JSON.stringify(planning.provenance)}`);
   }
-  if (planning.attempts !== 1 && planning.attempts !== 2) {
-    fail(`planning.attempts must be 1 or 2, got ${JSON.stringify(planning.attempts)}`);
+  // Attempt count is provenance-specific, not a single blanket rule.
+  // attempts === 0 is valid ONLY for deterministic_direct (no planner was
+  // called, so there is no attempt to count); every LLM-derived
+  // provenance still requires a real attempt count of 1 or 2, so a
+  // response cannot quietly claim zero attempts while also claiming the
+  // model produced the plan.
+  if (planning.provenance === "deterministic_direct") {
+    if (planning.attempts !== 0) {
+      fail(
+        `planning.attempts must be 0 for deterministic_direct (no planner is called), got ${JSON.stringify(planning.attempts)}`
+      );
+    }
+  } else if (planning.attempts !== 1 && planning.attempts !== 2) {
+    fail(
+      `planning.attempts must be 1 or 2 for provenance ${JSON.stringify(planning.provenance)}, got ${JSON.stringify(planning.attempts)}`
+    );
   }
 
   const issues = requireArray(planning.issues, "planning.issues");
@@ -286,6 +311,18 @@ function validatePlanning(planning, runId, selectedItemIds) {
   const bothNull = modelName === null && promptVersion === null;
   if (!bothPresent && !bothNull) {
     fail("planning.model_name and planning.prompt_version must either both be non-empty strings or both be null");
+  }
+
+  // deterministic_direct means NO model ran. A response naming a model or
+  // reporting a failed attempt alongside it would be claiming evidence of
+  // an LLM call that never happened — rejected rather than displayed.
+  if (planning.provenance === "deterministic_direct") {
+    if (!bothNull) {
+      fail("deterministic_direct requires planning.model_name and planning.prompt_version to both be null — no model was called");
+    }
+    if (issues.length !== 0) {
+      fail(`deterministic_direct requires planning.issues to be empty — no attempt was made to fail, got ${issues.length}`);
+    }
   }
 }
 

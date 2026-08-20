@@ -832,3 +832,134 @@ def test_module_import_boundary():
     ]
     for token in forbidden:
         assert token not in source, f"forbidden import found in reorganise_service.py: {token!r}"
+
+
+# ================================= deterministic_direct (production) =====
+
+
+def _direct(**overrides):
+    kwargs = dict(
+        run_id="run1",
+        selected_items=[_item("item_001"), _item("item_002", label="chair")],
+        scene_label="bedroom",
+        user_context=None,
+    )
+    kwargs.update(overrides)
+    return reorganise_service.plan_reorganisation_direct(**kwargs)
+
+
+def test_direct_reports_truthful_zero_attempt_provenance():
+    result = _direct()
+
+    assert result.provenance == PlanProvenance.DETERMINISTIC_DIRECT
+    assert result.attempts == 0
+    assert result.issues == []
+    assert result.model_name is None
+    assert result.prompt_version is None
+
+
+def test_direct_covers_every_selected_item_exactly_once():
+    items = [_item(f"item_{n:03d}") for n in range(1, 13)]
+    result = _direct(selected_items=items)
+
+    planned = [i for zone in result.plan.zones for i in zone.item_ids]
+    assert sorted(planned) == sorted(i.item_id for i in items)
+    assert len(planned) == len(set(planned))
+
+
+def test_direct_preserves_scene_and_user_context():
+    result = _direct(scene_label="kitchen", user_context="i want a neat room")
+
+    assert "kitchen" in result.plan.image_prompt
+    assert "i want a neat room" in result.plan.image_prompt
+
+
+def test_direct_reports_one_real_reorganise_plan_timing():
+    result = _direct()
+
+    assert len(result.stage_timings) == 1
+    assert result.stage_timings[0].stage == "reorganise_plan"
+    assert result.stage_timings[0].duration_ms >= 0.0
+
+
+def test_direct_validates_caller_input_the_same_way_as_the_llm_path():
+    with pytest.raises(ValueError):
+        _direct(selected_items=[])
+    with pytest.raises(ValueError):
+        _direct(scene_label="   ")
+    with pytest.raises(ValueError):
+        _direct(run_id="  ")
+    with pytest.raises(ValueError):
+        _direct(selected_items=[_item("item_001"), _item("item_001")])
+
+
+def test_direct_calls_no_planner_at_all():
+    """plan_reorganisation_direct takes no planner parameter — there is
+    nothing to inject and nothing that could call out."""
+    import inspect as _inspect
+
+    params = _inspect.signature(reorganise_service.plan_reorganisation_direct).parameters
+    assert "llm_planner" not in params
+
+
+# --- the invariant rejects fabricated LLM evidence -----------------------
+
+
+def test_deterministic_direct_rejects_a_fabricated_issue():
+    issue = PlanningIssue(attempt="initial", kind="invalid_json", detail="did not happen")
+    with pytest.raises(ValidationError, match="zero issues"):
+        ReorganisePlanningResult(
+            run_id="run1",
+            plan=_dummy_plan(),
+            provenance=PlanProvenance.DETERMINISTIC_DIRECT,
+            issues=[issue],
+            attempts=0,
+            model_name=None,
+            prompt_version=None,
+            stage_timings=[StageTiming(stage="reorganise_plan", duration_ms=1.0)],
+        )
+
+
+@pytest.mark.parametrize("bad_attempts", [1, 2])
+def test_deterministic_direct_rejects_non_zero_attempts(bad_attempts):
+    with pytest.raises(ValidationError, match="zero attempts"):
+        ReorganisePlanningResult(
+            run_id="run1",
+            plan=_dummy_plan(),
+            provenance=PlanProvenance.DETERMINISTIC_DIRECT,
+            issues=[],
+            attempts=bad_attempts,
+            model_name=None,
+            prompt_version=None,
+            stage_timings=[StageTiming(stage="reorganise_plan", duration_ms=1.0)],
+        )
+
+
+def test_deterministic_direct_rejects_fabricated_model_metadata():
+    with pytest.raises(ValidationError, match="no model was called"):
+        ReorganisePlanningResult(
+            run_id="run1",
+            plan=_dummy_plan(),
+            provenance=PlanProvenance.DETERMINISTIC_DIRECT,
+            issues=[],
+            attempts=0,
+            model_name="phi4-mini",
+            prompt_version="v1",
+            stage_timings=[StageTiming(stage="reorganise_plan", duration_ms=1.0)],
+        )
+
+
+def test_other_provenances_still_reject_zero_attempts():
+    """attempts=0 was widened to ge=0 for deterministic_direct only — the
+    LLM provenances must still require their real attempt counts."""
+    with pytest.raises(ValidationError):
+        ReorganisePlanningResult(
+            run_id="run1",
+            plan=_dummy_plan(),
+            provenance=PlanProvenance.RAW_VALID,
+            issues=[],
+            attempts=0,
+            model_name="phi4-mini",
+            prompt_version="v1",
+            stage_timings=[StageTiming(stage="reorganise_plan", duration_ms=1.0)],
+        )

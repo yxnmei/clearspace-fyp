@@ -18,20 +18,25 @@ client-supplied") is enforced:
 
 Neither confirm_declutter_result()/confirmed_keep_ids() (app/core/
 confirmation.py, app/services/confirmation_service.py) nor
-run_reorganise_pipeline()/plan_reorganisation() (app/services/
+run_reorganise_pipeline()/plan_reorganisation_direct() (app/services/
 reorganise_pipeline_service.py, app/services/reorganise_service.py) is
 modified or reimplemented anywhere in this module — this file only
 sequences them.
 
-Lazy planner loading (binding, mirrors app/api/routes.py's existing
-two-level Ollama DI for /upload's declutter path and /generate's own
-planner): this module receives an UNRESOLVED planner loader (a zero-arg
-callable performing the real ollama import), never the resolved planner
-callable itself, and calls it ONLY after confirmation has succeeded and
-at least one confirmed Keep item exists — see run_both_generation's own
-docstring for the exact call-order guarantee. An empty-Keep request must
-never trigger the ollama import, never call plan_reorganisation, and
-never call image_generator.
+No planner, and no Ollama, anywhere on this path: this module passes
+llm_planner=None to run_reorganise_pipeline(), which builds the
+deterministic plan directly and reports provenance DETERMINISTIC_DIRECT.
+There is no planner loader to resolve and no ollama import to trigger —
+the previous two-level lazy-loading DI existed only to defer that
+import, and became dead weight once the import stopped happening at all.
+See backend/evaluation/README.md for the evaluation that motivated the
+policy, and app/services/reorganise_service.py for the retained LLM path
+(still reachable by passing a planner explicitly, for research).
+
+An empty-Keep request still short-circuits before anything else runs:
+plan_reorganisation_direct is not called and image_generator is not
+called — see run_both_generation's own docstring for the exact
+call-order guarantee.
 
 Service/API boundary (same discipline as reorganise_pipeline_service.py):
 this module returns raw internal domain data only — BothGenerationResult
@@ -50,8 +55,6 @@ outside FastAPI, with no schema validation having run at all.
 
 from __future__ import annotations
 
-from typing import Callable
-
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.core.schemas import AnalysisResult, DecisionOverride, NonEmptyStr
@@ -63,16 +66,6 @@ from app.services.reorganise_pipeline_service import (
     ReorganisePipelineResult,
     run_reorganise_pipeline,
 )
-from app.services.reorganise_service import ReorganisePlanner
-
-# Loader = a zero-arg callable that performs the real ollama import and
-# returns the concrete planner callable — the exact same shape as
-# app/api/routes.py's own ReorganisePlannerLoader, redeclared here rather
-# than imported from routes.py (services/ must never import from api/ —
-# wrong dependency direction).
-ReorganisePlannerLoader = Callable[[], ReorganisePlanner]
-
-
 class BothPipelineInputError(ValueError):
     """Malformed caller input to run_both_generation() itself — a run_id
     that doesn't match analysis.run_id/declutter.run_id, or a
@@ -147,7 +140,6 @@ def run_both_generation(
     image_media_type: str,
     expected_input_image_sha256: str,
     user_context: str | None,
-    llm_planner_provider: ReorganisePlannerLoader,
     image_generator: ImageGenerator,
 ) -> BothGenerationResult:
     """
@@ -162,13 +154,14 @@ def run_both_generation(
          (malformed overrides — a duplicate or an override referencing an
          unknown item_id) exactly as /confirm's own caller would see.
       3. If confirmation.confirmed_keep_ids is empty -> EmptyConfirmedKeepError,
-         raised HERE. llm_planner_provider is NOT called (no ollama
-         import happens), plan_reorganisation() is NOT called,
-         image_generator is NOT called.
-      4. Only now is llm_planner_provider() invoked and
-         run_reorganise_pipeline() called, with
+         raised HERE. No planning happens and image_generator is NOT
+         called.
+      4. Only now is run_reorganise_pipeline() called, with
          selected_item_ids=confirmation.confirmed_keep_ids — the ONLY
-         source of selection this function ever uses. image_bytes/
+         source of selection this function ever uses — and with
+         llm_planner=None, the explicit production choice: the
+         deterministic plan is built directly, no Ollama call is made,
+         and provenance is DETERMINISTIC_DIRECT. image_bytes/
          image_media_type/expected_input_image_sha256 are (re)validated
          inside run_reorganise_pipeline() itself (its own existing
          ReorganisePipelineInputError checks, unchanged, reused verbatim).
@@ -187,8 +180,6 @@ def run_both_generation(
             "no items were confirmed as Keep — nothing for Reorganise to plan around"
         )
 
-    llm_planner = llm_planner_provider()
-
     pipeline: ReorganisePipelineResult = run_reorganise_pipeline(
         run_id=run_id,
         analysis=analysis,
@@ -197,7 +188,7 @@ def run_both_generation(
         image_media_type=image_media_type,
         expected_input_image_sha256=expected_input_image_sha256,
         user_context=user_context,
-        llm_planner=llm_planner,
+        llm_planner=None,  # explicit production choice — see this function's docstring
         image_generator=image_generator,
     )
 

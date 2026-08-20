@@ -1,7 +1,19 @@
 """
-LLM reasoning: Reorganise plan generation via local Ollama (production
-default phi4-mini, resolved from config — this module is model-name-
-agnostic, never hardcoding a model name).
+LLM reasoning: Reorganise plan generation via local Ollama.
+
+RESEARCH PATH — NOT ON THE PRODUCTION REQUEST PATH. Since the 2026-08-20
+bounded planner screen (backend/evaluation/README.md) found no candidate
+model able to produce a semantically valid plan for a crowded 28-item
+room, Direct Reorganise and Both both build the deterministic plan
+directly (provenance "deterministic_direct") and never call this module.
+Nothing here is deleted: it remains fully wired for unit tests and for
+evaluation/scripts/compare_reorganise_planning.py, and
+run_reorganise_pipeline() still accepts a planner explicitly. Every call
+it does make is now bounded by an explicit client timeout and
+num_predict — see generate_reorganise_plan_once().
+
+Model name resolved from config — this module is model-name-agnostic,
+never hardcoding one.
 
 Deliberately a NEW, dedicated module — not added to mistral_llm.py.
 That module's own docstring already flags its filename as an inherited
@@ -259,12 +271,22 @@ def generate_reorganise_plan_once(
 
     settings = get_settings()
     resolved_model = model_name or settings.llm_model_name
-    client = ollama.Client(host=settings.ollama_host)
+    # Explicit request timeout: the installed ollama client's own default
+    # is None — no timeout at all — which is how a real planning stage
+    # reached 1440.81s. Reorganise-scoped setting; Declutter's own client
+    # (app/models/mistral_llm.py) is deliberately untouched.
+    client = ollama.Client(host=settings.ollama_host, timeout=settings.reorganise_llm_timeout_s)
 
     response = client.chat(
         model=resolved_model,
         messages=[{"role": "user", "content": prompt}],
-        options={"temperature": settings.llm_temperature},
+        options={
+            "temperature": settings.llm_temperature,
+            # Without this the model may generate until the context window
+            # is exhausted, which produces a truncated, unparseable plan
+            # after a very long wait. See config.py for how 1536 was derived.
+            "num_predict": settings.reorganise_llm_num_predict,
+        },
     )
     raw_text = response["message"]["content"]
 

@@ -23,7 +23,6 @@ from app.api.routes import (
     get_health_checker_provider,
     get_image_generator_provider,
     get_llm_classifier_provider,
-    get_reorganise_planner_provider,
     get_scene_classifier_provider,
 )
 from app.core.schemas import ItemValidity
@@ -130,36 +129,6 @@ def _do_both_upload(decisions: list[dict], image_bytes: bytes = PNG_BYTES) -> di
     return body
 
 
-def _valid_plan_json(item_ids: list[str]) -> dict:
-    return {
-        "zones": [{"zone_name": "Keep in place", "item_ids": item_ids, "instruction": "keep as is"}],
-        "image_prompt": "a tidy bedroom",
-        "negative_prompt": None,
-    }
-
-
-class FakePlanResult:
-    def __init__(self, parsed_json, is_valid_json=True, was_repaired=False, model_name="phi4-mini", prompt_version="v1"):
-        self.raw_text = "fake"
-        self.parsed_json = parsed_json
-        self.is_valid_json = is_valid_json
-        self.was_repaired = was_repaired
-        self.model_name = model_name
-        self.prompt_version = prompt_version
-
-
-class FakePlanner:
-    def __init__(self, result=None):
-        self.calls: list[dict] = []
-        self._result = result
-
-    def __call__(self, run_id, selected_items, scene_label, user_context, validation_feedback=None, model_name=None):
-        self.calls.append(dict(run_id=run_id, selected_items=selected_items))
-        if self._result is not None:
-            return self._result
-        return FakePlanResult(_valid_plan_json([item.item_id for item in selected_items]))
-
-
 class FakeGenerator:
     def __init__(self, result=None, exception=None):
         self.calls: list[dict] = []
@@ -204,27 +173,55 @@ def _generation_result(run_id: str, image_bytes: bytes, prompt: str) -> Generati
     )
 
 
-class LoaderRecorder:
-    """A zero-arg loader thunk override, matching get_reorganise_planner_provider's
-    contract — used here (instead of _provider_override's plain lambda) so
-    tests can assert whether the loader itself was ever invoked, separate
-    from whether the resulting planner was called."""
+class PlanningSpy:
+    """Wraps the REAL production planning function
+    (plan_reorganisation_direct) and records each call.
 
-    def __init__(self, planner: FakePlanner | None = None):
-        self.calls = 0
-        self._planner = planner or FakePlanner()
+    Replaces the former LoaderRecorder/FakePlanner pair: Both no longer
+    resolves or receives a planner at all — run_both_generation() passes
+    llm_planner=None — so there is no loader to record and no planner to
+    fake. `.calls` still answers the two questions these tests actually
+    ask: was planning reached, and with which server-derived selection.
+    Delegating to the real function keeps the success path exercising
+    genuine deterministic planning."""
 
-    def __call__(self) -> FakePlanner:
-        self.calls += 1
-        return self._planner
+    def __init__(self, real):
+        self._real = real
+        self.calls: list[dict] = []
+
+    def __call__(self, run_id, selected_items, scene_label, user_context):
+        self.calls.append(
+            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
+        )
+        return self._real(
+            run_id=run_id,
+            selected_items=selected_items,
+            scene_label=scene_label,
+            user_context=user_context,
+        )
 
 
-def _override_generate_deps(planner=None, generator=None):
-    loader = LoaderRecorder(planner)
+_planning_spy: PlanningSpy | None = None
+
+
+@pytest.fixture(autouse=True)
+def _spy_on_direct_planning(monkeypatch):
+    global _planning_spy
+    import app.services.reorganise_pipeline_service as pipeline_mod
+
+    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
+    _planning_spy = spy
+    yield
+    _planning_spy = None
+
+
+def _override_generate_deps(generator=None):
+    """Returns (planning_spy, generator). No planner override exists —
+    /generate/confirmed has no planner dependency any more."""
     generator = generator or FakeGenerator()
-    app.dependency_overrides[get_reorganise_planner_provider] = lambda: loader
     app.dependency_overrides[get_image_generator_provider] = lambda: generator
-    return loader, generator
+    return _planning_spy, generator
 
 
 def _confirmed_generate_body(upload_body: dict, image_bytes: bytes, overrides=None, **field_overrides) -> dict:
@@ -254,7 +251,7 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
             {"item_number": 2, "label": "book", "decision": "donate", "reason": "already read"},
         ]
     )
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
 
     response = client.post("/generate/confirmed", json=body)
@@ -262,15 +259,22 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
     assert response.status_code == 200
     result = response.json()
 
-    # server-derived: only item_001 (Keep) reaches the planner, never item_002
+    # server-derived: only item_001 (Keep) reaches planning, never item_002
     assert result["confirmation"]["confirmed_keep_ids"] == ["item_001"]
-    assert [item.item_id for item in loader._planner.calls[0]["selected_items"]] == ["item_001"]
+    assert [item.item_id for item in planner.calls[0]["selected_items"]] == ["item_001"]
 
     assert result["image_status"] == "generated"
     assert result["image"]["api_version"] == IMAGE_GEN_API_VERSION
-    assert result["planning"]["attempts"] == 1
-    assert result["planning"]["provenance"] == "raw_valid"
-    assert loader.calls == 1
+    planning = result["planning"]
+    assert planning["provenance"] == "deterministic_direct"
+    assert planning["attempts"] == 0
+    assert planning["issues"] == []
+    assert planning["model_name"] is None
+    assert planning["prompt_version"] is None
+    # the server-derived Keep set is exactly what got planned, once each
+    planned = [i for zone in planning["plan"]["zones"] for i in zone["item_ids"]]
+    assert planned == ["item_001"]
+    assert len(planner.calls) == 1
     assert len(generator.calls) == 1
 
 
@@ -281,7 +285,7 @@ def test_generate_confirmed_overrides_change_the_server_derived_keep_set():
             {"item_number": 2, "label": "book", "decision": "keep", "reason": "reading it"},
         ]
     )
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     overrides = [{"item_id": "item_001", "decision": "keep"}]
     body = _confirmed_generate_body(upload_body, PNG_BYTES, overrides=overrides)
 
@@ -290,7 +294,7 @@ def test_generate_confirmed_overrides_change_the_server_derived_keep_set():
     assert response.status_code == 200
     result = response.json()
     assert result["confirmation"]["confirmed_keep_ids"] == ["item_001", "item_002"]
-    assert [item.item_id for item in loader._planner.calls[0]["selected_items"]] == ["item_001", "item_002"]
+    assert [item.item_id for item in planner.calls[0]["selected_items"]] == ["item_001", "item_002"]
 
 
 def test_generate_confirmed_duplicate_label_items_resolve_independently():
@@ -300,7 +304,7 @@ def test_generate_confirmed_duplicate_label_items_resolve_independently():
             {"item_number": 2, "label": "picture frame", "decision": "sell", "reason": "duplicate"},
         ]
     )
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
 
     response = client.post("/generate/confirmed", json=body)
@@ -352,27 +356,27 @@ def test_generate_confirmed_empty_keep_returns_409_and_calls_nothing():
             {"item_number": 2, "label": "book", "decision": "donate", "reason": "already read"},
         ]
     )
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
-    assert loader.calls == 0  # the real ollama import never happens
-    assert loader._planner.calls == []
+    assert planner.calls == []  # planning is never reached
+    assert planner.calls == []
     assert generator.calls == []
 
 
 def test_generate_confirmed_all_keep_excluded_returns_409():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     overrides = [{"item_id": "item_001", "excluded": True}]
     body = _confirmed_generate_body(upload_body, PNG_BYTES, overrides=overrides)
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -383,7 +387,7 @@ def test_generate_confirmed_all_keep_excluded_returns_409():
 
 def test_generate_confirmed_incomplete_declutter_returns_409():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
 
     # Simulate an incomplete DeclutterResult by clearing ai_decisions and
     # marking the one expected item unresolved — declutter.expected_item_ids
@@ -399,7 +403,7 @@ def test_generate_confirmed_incomplete_declutter_returns_409():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -410,14 +414,14 @@ def test_generate_confirmed_incomplete_declutter_returns_409():
 
 def test_generate_confirmed_unknown_override_item_id_returns_422():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     overrides = [{"item_id": "item_999", "decision": "discard"}]
     body = _confirmed_generate_body(upload_body, PNG_BYTES, overrides=overrides)
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -426,14 +430,14 @@ def test_generate_confirmed_override_missing_both_fields_returns_422():
     # override setting neither is a 422 at the pydantic layer, before
     # this endpoint's own body ever runs.
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     overrides = [{"item_id": "item_001"}]
     body = _confirmed_generate_body(upload_body, PNG_BYTES, overrides=overrides)
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -444,13 +448,13 @@ def test_generate_confirmed_override_missing_both_fields_returns_422():
 
 def test_generate_confirmed_run_id_mismatch_returns_422():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES, run_id="a-different-run-id")
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -461,7 +465,7 @@ def test_generate_confirmed_mismatched_expected_ids_returns_422():
             {"item_number": 2, "label": "book", "decision": "donate", "reason": "read"},
         ]
     )
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     # Corrupt declutter to only expect one of the two actionable items —
     # analysis/declutter are no longer a genuine matched pair.
     declutter = dict(upload_body["declutter"])
@@ -474,7 +478,7 @@ def test_generate_confirmed_mismatched_expected_ids_returns_422():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -485,27 +489,27 @@ def test_generate_confirmed_mismatched_expected_ids_returns_422():
 
 def test_generate_confirmed_rejects_selected_item_ids_field():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
     body["selected_item_ids"] = ["item_001"]
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
 def test_generate_confirmed_rejects_unrelated_unknown_top_level_field():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
     body["some_unrecognised_field"] = "surprise"
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
@@ -516,13 +520,10 @@ def test_generate_confirmed_rejects_unrelated_unknown_top_level_field():
 
 def test_generate_confirmed_image_hash_mismatch_returns_422():
     # Image/hash validation happens INSIDE run_reorganise_pipeline(),
-    # after the planner loader is already resolved (mirroring /generate's
-    # own existing behavior — see generate_reorganisation() in routes.py,
-    # which resolves its loader unconditionally too) — so the loader
-    # itself is resolved here, but the real planner/ollama call (and the
-    # image generator) is never reached.
+    # before planning — so neither planning nor the image generator is
+    # ever reached.
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(
         upload_body, PNG_BYTES, input_image_sha256=hashlib.sha256(OTHER_PNG_BYTES).hexdigest()
     )
@@ -530,35 +531,34 @@ def test_generate_confirmed_image_hash_mismatch_returns_422():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader._planner.calls == []
+    assert planner.calls == []
     assert generator.calls == []
 
 
 def test_generate_confirmed_invalid_base64_returns_422():
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES)
     body["image"] = "not-valid-base64!!!"
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader.calls == 0
+    assert planner.calls == []
     assert generator.calls == []
 
 
 def test_generate_confirmed_media_type_mismatch_returns_422():
-    # Same reasoning as the hash-mismatch test above: the loader is
-    # resolved, but the real planner/ollama call and the image generator
-    # are never reached.
+    # Same reasoning as the hash-mismatch test above: neither planning
+    # nor the image generator is ever reached.
     upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
-    loader, generator = _override_generate_deps()
+    planner, generator = _override_generate_deps()
     body = _confirmed_generate_body(upload_body, PNG_BYTES, image_media_type="image/jpeg")
 
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 422
-    assert loader._planner.calls == []
+    assert planner.calls == []
     assert generator.calls == []
 
 
