@@ -46,6 +46,7 @@ from evaluation.scripts.compare_reorganise_planning import (
 from evaluation.scripts.reorganise_v2 import (
     BATCH_SIZE,
     OPERATIONS,
+    PLANNER_V2_PROMPT_VERSION,
     V2Planner,
     build_batches,
     issue_counts,
@@ -111,6 +112,9 @@ def evaluate_case(
         "fixture_kind": "crowded" if crowded else "simple",
         "model": model_name,
         "mode": "plain",
+        # Per case as well as per report: cases get read in isolation when
+        # results are compared side by side.
+        "prompt_version": PLANNER_V2_PROMPT_VERSION,
         "seed": seed,
         "n_items": n_items,
         "batch_size": BATCH_SIZE,
@@ -247,7 +251,11 @@ def run_stage(
     seeds is reported but is not itself a pass/fail gate."""
     report: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(),
+        # planner_version names the harness family (batching, validation,
+        # recovery, merge); prompt_version names the semantic guidance and
+        # moves independently of it.
         "planner_version": "v2",
+        "prompt_version": PLANNER_V2_PROMPT_VERSION,
         "stage": "crowded" if crowded else "simple",
         "status": "incomplete",
         "model": model_name,

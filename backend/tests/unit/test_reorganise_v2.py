@@ -20,12 +20,16 @@ from app.core.schemas import BoundingBox, DetectedItem
 from evaluation.scripts.reorganise_v2 import (
     BATCH_SIZE,
     OPERATIONS,
+    PLANNER_V2_PROMPT_VERSION,
+    PROMPT_MAX_ZONES,
+    PROMPT_MIN_ZONES,
     AcceptedRow,
     V2Planner,
     build_batch_prompt,
     build_batches,
     issue_counts,
     merge_assignments,
+    planning_rules,
     run_planner_v2,
     validate_batch_rows,
 )
@@ -213,6 +217,115 @@ def test_recovery_prompt_says_the_previous_response_was_unusable():
     retry = build_batch_prompt(items(4), ids(4), "bedroom", None, [], unresolved_retry=True)
     assert "did not produce a usable assignment" in retry
     assert "did not produce a usable assignment" not in normal
+
+
+# ============ v2.1 semantic guidance =====================================
+#
+# Asserted by distinctive phrase, never by whole-prompt snapshot: a
+# snapshot fails on every wording tweak while proving nothing about which
+# constraint was lost.
+
+
+def test_prompt_version_is_recorded_and_is_v2_1():
+    assert PLANNER_V2_PROMPT_VERSION == "v2.1"
+
+
+@pytest.mark.parametrize(
+    "constraint, fragment",
+    [
+        ("zones are functional, not positional", "broad functional area"),
+        ("a zone is not the item's position", "never an item's current position"),
+        ("not one zone per object", "never one zone per object"),
+        ("small coherent plan", "zones for the whole room"),
+        ("reuse established zones", "Reuse a zone already established"),
+        ("same label shares a zone", "normally belong in the same zone"),
+        ("no invented objects", "Never introduce a physical object that is not in the FULL ROOM list"),
+        ("no invented containers", "do not invent drawers, bins, boxes, shelves"),
+        ("store needs a real destination", 'Use "store" only when the FULL ROOM list already contains'),
+        ("group means several items", 'Use "group" only when several related objects'),
+        ("keep_in_place is not the default", "It is not the default answer"),
+        ("instructions are concrete actions", "states one concrete, useful action"),
+        ("no annotation copying", "Never copy the size and position annotation"),
+    ],
+)
+def test_prompt_states_each_v2_1_semantic_constraint(constraint, fragment):
+    """One row per constraint, so a failure names the guidance that was
+    dropped instead of reporting that 'the prompt changed'."""
+    prompt = build_batch_prompt(items(28), ids(28)[:7], "bedroom", "i want a neat room", [])
+    assert fragment.lower() in prompt.lower(), f"v2.1 lost: {constraint}"
+
+
+def test_prompt_states_the_zone_count_target_using_the_shared_constants():
+    prompt = build_batch_prompt(items(28), ids(28)[:7], "bedroom", None, [])
+    assert f"{PROMPT_MIN_ZONES} to {PROMPT_MAX_ZONES} zones" in prompt
+
+
+def test_user_preference_guides_the_batch_without_demanding_repetition():
+    """The preference must shape what the model CHOOSES, not become a
+    phrase it pastes into every instruction — a rule to apply it "to every
+    row" invites exactly that."""
+    prompt = build_batch_prompt(items(4), ids(4), "bedroom", "i want a neat room", [])
+
+    assert "when choosing this batch's operations, zones and instructions" in prompt
+    assert "do not simply repeat it back" in prompt.lower()
+    assert "every row" not in prompt.lower()
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_preference_rule_is_absent_without_user_context(blank):
+    """A rule telling the model to honour a preference it was never given
+    is noise it can only misread."""
+    prompt = build_batch_prompt(items(4), ids(4), "bedroom", blank, [])
+    assert "stated user preference" not in prompt
+
+
+def test_planning_rules_are_numbered_contiguously_from_one():
+    rules = planning_rules(has_user_context=True)
+    assert [r.split(".", 1)[0] for r in rules] == [str(n) for n in range(1, len(rules) + 1)]
+    assert len(planning_rules(has_user_context=False)) == len(rules) - 1
+
+
+def test_same_label_rule_does_not_contradict_the_distinct_object_callout():
+    """Rule 4 says same-label objects share a zone; the assignable list
+    says they are distinct objects. Both are true and the prompt must say
+    so, or a model can reasonably merge two cups into one row."""
+    labels = ["cup", "cup", "lamp", "chair"]
+    prompt = build_batch_prompt(items(4, labels), ids(4), "bedroom", None, [])
+    assert "each still needs" in prompt and "its own row" in prompt
+    assert prompt.count("a DISTINCT object") == 2
+
+
+def test_semantic_rules_leak_no_item_ids():
+    """The rules block sits in the context half of the prompt, where a
+    single id would undo the hidden-id design."""
+    for has_context in (True, False):
+        for rule in planning_rules(has_user_context=has_context):
+            assert "item_" not in rule
+
+
+def test_v2_1_rules_do_not_disturb_the_structural_prompt_contract():
+    """The guidance is additive: hidden non-target ids, assignable target
+    ids, duplicate distinctness, zone reuse and the recovery notice must
+    all survive it."""
+    labels = ["cup", "cup"] + [f"object{i:02d}" for i in range(26)]
+    prompt = build_batch_prompt(
+        items(28, labels), ids(28)[7:14], "bedroom", "i want a neat room", ["artwork"],
+        unresolved_retry=True,
+    )
+
+    assert "PLANNING RULES:" in prompt
+    for item_id in ids(28)[:7] + ids(28)[14:]:
+        assert item_id not in prompt
+    for item_id in ids(28)[7:14]:
+        assert item_id in prompt
+    context = prompt.split("ASSIGN ONLY THESE ITEMS")[0]
+    assert "[1 of 2]" in context and "[2 of 2]" in context
+    for item_id in ids(28):
+        assert item_id not in context
+    assert "reuse an existing zone name" in prompt and "artwork" in prompt
+    assert "did not produce a usable assignment" in prompt
+    for op in OPERATIONS:
+        assert op in prompt
 
 
 # --- row validation ------------------------------------------------------

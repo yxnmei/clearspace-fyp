@@ -61,6 +61,20 @@ _ITEM_ID_RE = re.compile(r"^item_\d{3,}$")
 # Zone-instruction text used when no item in a zone owns a validated row.
 KEEP_IN_PLACE_INSTRUCTION = "Leave these items where they are."
 
+# Prompt revision, recorded in every evaluation artefact so results from
+# different prompts can never be compared as though they shared one. Bump
+# it — never edit in place — whenever the semantic guidance changes.
+# Distinct from the runner's `planner_version`, which names the harness
+# family and does not move when only the prompt does.
+PLANNER_V2_PROMPT_VERSION = "v2.1"
+
+# Zone-count target shown to the model. Mirrors the runner's MIN_ZONES /
+# MAX_ZONES gate, and a test asserts the two stay equal so the prompt
+# cannot ask for output the gate rejects. Stating the target to the model
+# is not the same as relaxing the gate.
+PROMPT_MIN_ZONES = 2
+PROMPT_MAX_ZONES = 8
+
 # Per-item validity — mirrors app.core.schemas.ItemValidity's vocabulary
 # exactly, but declared here because this is evaluation-layer state and
 # must not imply a production schema change.
@@ -315,6 +329,49 @@ def build_batches(item_ids: list[str], batch_size: int = BATCH_SIZE) -> list[lis
 # --- prompt --------------------------------------------------------------
 
 
+def planning_rules(*, has_user_context: bool) -> list[str]:
+    """The v2.1 semantic guidance, one numbered rule per line.
+
+    Each rule targets a failure mode the baseline artefacts record — zones
+    named after positions, one zone per item, identical labels split apart,
+    invented containers, `keep_in_place` as a default, and instructions
+    that echo the input annotation instead of proposing an action.
+
+    The preference rule is omitted when the fixture has no user context: an
+    instruction to honour a preference that was never given is noise the
+    model can only misread.
+    """
+    rules = [
+        "A zone is a broad functional area of the room, such as a workspace or a "
+        "storage area. A zone is never an item's current position, and never one "
+        "zone per object.",
+        f"Keep the plan small and coherent: aim for {PROMPT_MIN_ZONES} to "
+        f"{PROMPT_MAX_ZONES} zones for the whole room.",
+        "Reuse a zone already established for this room whenever it fits "
+        "functionally. Create a new zone only when none of them does.",
+        "Objects sharing the same label are separate objects and each still needs "
+        "its own row, but they normally belong in the same zone. Put them in "
+        "different zones only when there is a clear functional reason.",
+        "Never introduce a physical object that is not in the FULL ROOM list. Do "
+        "not invent drawers, bins, boxes, shelves, cupboards, wardrobes, doors or "
+        "windows. A zone name is a grouping label, not a new object.",
+        'Use "store" only when the FULL ROOM list already contains something that '
+        "can hold the item. Otherwise choose an operation that is true of what you "
+        "are actually proposing.",
+        'Use "group" only when several related objects are being placed together.',
+        'Use "keep_in_place" only when the item genuinely needs no improvement. It '
+        "is not the default answer.",
+        "Each instruction states one concrete, useful action. Never copy the size "
+        "and position annotation shown above into the instruction text.",
+    ]
+    if has_user_context:
+        rules.append(
+            "Use the stated user preference when choosing this batch's operations, "
+            "zones and instructions. Do not simply repeat it back."
+        )
+    return [f"{n}. {rule}" for n, rule in enumerate(rules, start=1)]
+
+
 def build_batch_prompt(
     all_items: list[DetectedItem],
     target_ids: list[str],
@@ -385,6 +442,12 @@ def build_batch_prompt(
         ]
         lines += [f"- {name}" for name in known_zone_names]
         lines.append("Create a new zone only when none of the above genuinely fits.")
+
+    # After the room and zone context, so the rules about reuse and
+    # invented objects have something concrete to refer back to; before the
+    # assignable list, which stays adjacent to the output format.
+    lines += ["", "PLANNING RULES:"]
+    lines += planning_rules(has_user_context=bool(user_context and user_context.strip()))
 
     lines += ["", "ASSIGN ONLY THESE ITEMS — exactly one row each, and no others:"]
     for item_id in target_ids:

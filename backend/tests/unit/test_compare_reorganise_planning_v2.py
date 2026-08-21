@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from evaluation.scripts.compare_reorganise_planning import load_fixture
+from evaluation.scripts import reorganise_v2
 from evaluation.scripts.reorganise_v2 import V2Planner, build_batches
 from evaluation.scripts import compare_reorganise_planning_v2 as runner
 from tests.unit.test_reorganise_v2 import FakeChat, ids, payload, row
@@ -630,3 +631,53 @@ def test_console_never_prints_an_unqualified_pass(crowded_fixture, tmp_path, cap
     assert "Automatic gates are NOT acceptance" in out
     # every PASS token is qualified as AUTO-PASS, never bare
     assert out.count("PASS") == out.count("AUTO-PASS")
+
+
+# ============ v2.1 prompt provenance =====================================
+
+
+def test_report_and_every_case_record_the_prompt_version(crowded_fixture, tmp_path):
+    """A result that cannot say which prompt produced it is not evidence.
+    `planner_version` names the harness family; the prompt revision is
+    recorded separately and moves independently."""
+    out = tmp_path / "v21.json"
+    runner.run_stage(
+        crowded_fixture,
+        "phi4-mini",
+        [11, 22],
+        factory(perfect_crowded(seeds=2)),
+        crowded=True,
+        save=runner._writer(out),
+    )
+
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["planner_version"] == "v2"
+    assert written["prompt_version"] == "v2.1"
+    assert [c["prompt_version"] for c in written["cases"]] == ["v2.1", "v2.1"]
+
+
+def test_prompt_version_comes_from_the_planner_not_a_literal(crowded_fixture, monkeypatch):
+    """Recorded from the planner's own constant, so bumping the prompt can
+    never leave the artefact claiming the previous revision."""
+    monkeypatch.setattr(runner, "PLANNER_V2_PROMPT_VERSION", "v9.9-test")
+    report = runner.run_stage(
+        crowded_fixture, "phi4-mini", [11], factory(perfect_crowded()), crowded=True
+    )
+    assert report["prompt_version"] == "v9.9-test"
+    assert report["cases"][0]["prompt_version"] == "v9.9-test"
+
+
+def test_prompt_zone_target_matches_the_zone_count_gate():
+    """The prompt tells the model to aim for 2-8 zones; the gate enforces
+    2-8. If either moves without the other, the prompt is either asking
+    for output the gate rejects or quietly relaxing the gate."""
+    assert reorganise_v2.PROMPT_MIN_ZONES == runner.MIN_ZONES
+    assert reorganise_v2.PROMPT_MAX_ZONES == runner.MAX_ZONES
+
+
+def test_zone_count_gate_thresholds_are_unchanged_by_the_v2_1_revision():
+    """Explicit guard: a prompt revision must never quietly widen the
+    thresholds its own output is scored against."""
+    assert (runner.MIN_ZONES, runner.MAX_ZONES) == (2, 8)
+    assert runner.MAX_RECOVERY_RATE == 0.20
+    assert runner.MIN_DISTINCT_OPERATIONS == 2
