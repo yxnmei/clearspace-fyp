@@ -25,6 +25,15 @@ regex==2024.11.6
 
 # --- speech-to-text ---
 openai-whisper==20240930
+# Audio decode for POST /transcribe. Declared explicitly rather than
+# relied on transitively: PyAV reaches this environment only through
+# faster-whisper, which is evaluation-only (requirements-eval.txt), so a
+# clean `pip install -r requirements.txt` would otherwise not have it.
+# Uploads are decoded in-memory to float32 16kHz mono and passed to the
+# model as an ndarray, so no temp file is written and — since
+# whisper.load_audio is never called — no ffmpeg CLI is needed at
+# runtime either. PyAV bundles its own FFmpeg libraries.
+av==18.0.0
 
 # --- LLM reasoning (local via Ollama) ---
 ollama==0.4.5

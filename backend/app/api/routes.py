@@ -101,8 +101,16 @@ import math
 from typing import Callable, Literal, Protocol
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from app.config import get_settings
+from app.core.audio_decode import (
+    AudioContainerMismatchError,
+    AudioTooLongError,
+    AudioValidationError,
+    MalformedAudioError,
+    UnsupportedAudioTypeError,
+)
 from app.core.confirmation import ConfirmationInputError
 from app.core.schemas import AnalysisResult, DecisionOverride, ItemId, NonEmptyStr
 from app.logging_utils import new_run_id
@@ -143,7 +151,18 @@ from app.services.reorganise_pipeline_service import (
     Sha256Hex,
     run_reorganise_pipeline,
 )
+from app.models.whisper_stt import (
+    TranscriberUnavailableError,
+    TranscriptContractError,
+    TranscriptionFailedError,
+    resolve_model_name,
+    validate_transcript_result,
+)
 from app.services.reorganise_service import ReorganisePlanningResult
+from app.services.transcription_service import (
+    TranscriptionBusyError,
+    transcribe_audio,
+)
 
 router = APIRouter()
 
@@ -517,9 +536,163 @@ def override(
     return OverrideResponse(run_id=request.run_id, analysis=result.analysis, declutter=result.declutter)
 
 
-@router.post("/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    raise NotImplementedError("Depends on app/models/whisper_stt.py")
+# --- /transcribe ---------------------------------------------------------
+
+# Voice is an OPTIONAL way to supply user_context, never a command
+# channel. This route returns a transcript and nothing else: it starts no
+# run, touches no analysis, and is not correlated with any later request.
+# The reviewed text reaches a model only when the user submits the
+# ordinary context field, exactly as typed text does.
+
+
+class TranscribeResponse(BaseModel):
+    """Strict response shape. extra="forbid" plus the validators below
+    mean a malformed model result cannot escape through the API: a
+    backend adapter returning NaN, a negative duration or a blank model
+    name raises here and becomes a 503, rather than reaching the browser
+    as a 200 carrying nonsense.
+
+    `transcript` is a plain str, deliberately NOT NonEmptyStr — a silent
+    recording is a legitimate empty transcript, not a server error.
+
+    `transcription_ms` is inference wall-clock and excludes model load;
+    `audio_duration_s` is the length of the decoded audio. The two were
+    one ambiguous "duration_ms" in the placeholder contract and are kept
+    separate here because the V3 comparison needs them apart.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transcript: str
+    model_name: NonEmptyStr
+    transcription_ms: float
+    audio_duration_s: float
+
+    @field_validator("transcription_ms", "audio_duration_s", mode="before")
+    @classmethod
+    def _real_finite_non_negative(cls, v: object) -> object:
+        """bool is rejected explicitly and BEFORE coercion: it is an int
+        subclass, so pydantic would otherwise turn `True` into 1.0 and
+        report a one-millisecond transcription for a broken backend."""
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError("must be a real number")
+        if not math.isfinite(v):
+            raise ValueError("must be a finite number")
+        if v < 0:
+            raise ValueError("must not be negative")
+        return v
+
+
+Transcriber = Callable[..., object]
+TranscriberLoader = Callable[[], Transcriber]
+
+
+def _load_transcriber() -> Transcriber:
+    """Resolves the real transcriber. Called by the service AFTER the
+    audio has been validated and the single-flight slot taken — never at
+    import time and never for a request that is going to be rejected."""
+    from app.models.whisper_stt import transcribe as _transcribe
+
+    return _transcribe
+
+
+def get_transcriber_provider() -> TranscriberLoader:
+    """FastAPI dependency returning a LOADER, never the resolved
+    callable — the same two-level shape as get_llm_classifier_provider
+    above, and for the same reason: `import whisper` pulls in torch and
+    costs seconds, so it must not happen at import time for every other
+    endpoint. Tests override this seam rather than monkeypatching a
+    module-level name."""
+    return _load_transcriber
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+def transcribe(
+    audio: UploadFile = File(...),
+    transcriber_provider: TranscriberLoader = Depends(get_transcriber_provider),
+) -> TranscribeResponse:
+    """Synchronous by design: like /upload, a plain `def` path operation
+    runs in Starlette's threadpool, which keeps the blocking decode and
+    inference off the async event loop without manual thread management.
+
+    No detail string here contains exception text, a file path, audio
+    bytes, or the transcript.
+    """
+    settings = get_settings()
+    max_bytes = settings.stt_max_upload_bytes
+
+    # Bounded read: one byte past the limit is enough to know the upload
+    # is too large. Reading the whole body first and measuring afterwards
+    # is the denial-of-service this avoids.
+    audio_bytes = audio.file.read(max_bytes + 1)
+    if len(audio_bytes) > max_bytes:
+        raise HTTPException(status_code=413, detail="audio upload is too large")
+
+    # Only the typed misconfiguration is caught. A programming defect here
+    # must surface as a 500, not be dressed up as a service outage.
+    try:
+        model_name = resolve_model_name(settings.stt_backend, settings.whisper_model_size)
+    except TranscriberUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="transcription is unavailable") from exc
+
+    # Every `except` below names a specific typed failure. There is
+    # deliberately no `except Exception`: an unrelated ValueError,
+    # AssertionError or TypeError is a BUG, and reporting it as
+    # "transcription is unavailable" would hide it behind a message that
+    # tells the user to try again later — for a fault that retrying can
+    # never clear. Broad catches live only at the PyAV and model-library
+    # boundaries, where third-party exception types are normalised on
+    # purpose.
+    try:
+        result = transcribe_audio(
+            audio_bytes,
+            audio.content_type,
+            transcriber_provider,
+            model_name=model_name,
+            max_audio_seconds=settings.stt_max_audio_seconds,
+            compute_type=settings.stt_compute_type,
+            local_files_only=settings.stt_local_files_only,
+            validate_result=validate_transcript_result,
+        )
+    except UnsupportedAudioTypeError as exc:
+        raise HTTPException(status_code=415, detail="audio format is not supported") from exc
+    except AudioContainerMismatchError as exc:
+        raise HTTPException(
+            status_code=415, detail="audio does not match its declared format"
+        ) from exc
+    except AudioTooLongError as exc:
+        raise HTTPException(status_code=413, detail="audio is too long") from exc
+    except MalformedAudioError as exc:
+        raise HTTPException(status_code=400, detail="audio could not be read") from exc
+    except AudioValidationError as exc:
+        # Any future sibling of the four above still fails closed as a
+        # client error rather than escaping as a 500.
+        raise HTTPException(status_code=400, detail="audio could not be read") from exc
+    except TranscriptionBusyError as exc:
+        # Nothing was started and nothing is queued — the client may retry.
+        raise HTTPException(
+            status_code=503,
+            detail="transcription is busy",
+            headers={"Retry-After": "5"},
+        ) from exc
+    except TranscriberUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="transcription is unavailable") from exc
+    except (TranscriptionFailedError, TranscriptContractError) as exc:
+        # The model ran but produced nothing servable. Sanitised, and
+        # distinct in the logs from a model that could not be loaded.
+        raise HTTPException(status_code=503, detail="transcription is unavailable") from exc
+
+    # The service already validated the result against the requested model
+    # and the decoded audio; this is the wire-shape check.
+    try:
+        return TranscribeResponse(
+            transcript=result.text,
+            model_name=result.model_name,
+            transcription_ms=result.transcription_ms,
+            audio_duration_s=result.audio_duration_s,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=503, detail="transcription is unavailable") from exc
 
 
 # --- /generate (R4) -------------------------------------------------------

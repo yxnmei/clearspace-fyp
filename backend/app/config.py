@@ -9,9 +9,18 @@ from here instead, so eval scripts and the API always agree on config.
 
 import math
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# The spellings a truthy stt_local_files_only may take. Deliberately
+# narrow: only `True` itself and the four strings pydantic-settings could
+# hand over from an environment variable. Module level, not a class
+# attribute — a leading underscore inside a pydantic model becomes a
+# ModelPrivateAttr rather than the frozenset.
+_LOCAL_FILES_ONLY_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
 
 
 class Settings(BaseSettings):
@@ -69,7 +78,39 @@ class Settings(BaseSettings):
     reorganise_llm_num_predict: int = 1536
 
     # --- speech-to-text ---
-    whisper_model_size: str = "base"
+    # Exactly "base": this is the only size the project evaluates or
+    # ships, and the value is handed to loaders that treat it as a path
+    # or repo id, so leaving it open would let configuration name an
+    # arbitrary checkpoint. Literal rejects other sizes, absolute paths,
+    # traversal sequences and whitespace-padded values alike.
+    whisper_model_size: Literal["base"] = "base"
+    # openai-whisper is the production backend and the only one declared
+    # in requirements.txt; "faster-whisper" is reachable for the V3
+    # comparison and lives in requirements-eval.txt. Literal, so an
+    # unrecognised or blank value is a startup failure rather than a
+    # backend that silently resolves to nothing.
+    stt_backend: Literal["whisper", "faster-whisper"] = "whisper"
+    # 10MB. Bounds what the route will read from one upload; the read is
+    # capped at this + 1 byte so an oversized body is detected without
+    # ever being held in memory in full.
+    stt_max_upload_bytes: int = 10 * 1024 * 1024
+    # 60s of DECODED audio. This, with the byte cap, is what bounds
+    # transcription work — deliberately NOT a timeout: a timeout around a
+    # worker thread cannot stop CPU-bound inference, so one would promise
+    # a cancellation that does not happen. See
+    # app/services/transcription_service.py's module docstring.
+    stt_max_audio_seconds: int = 60
+    # CTranslate2 quantisation for the faster-whisper backend only;
+    # ignored by openai-whisper. int8 is the realistic CPU setting.
+    stt_compute_type: str = "int8"
+    # Weights must already be on disk. Pinned to True by a validator, not
+    # merely defaulted: a false value in a .env would let a user request
+    # start a multi-hundred-megabyte download mid-flight, on a machine
+    # that may be offline, while holding the single transcription slot.
+    # The wrapper still accepts local_files_only=False so an explicitly
+    # approved evaluation/download step can fetch weights deliberately —
+    # production simply cannot express it.
+    stt_local_files_only: bool = True
 
     # --- image generation (remote Colab/ngrok service — see §5) ---
     image_gen_base_url: str = "https://REPLACE-ME.ngrok-free.app"  # reserved/static domain, not the rotating free kind
@@ -162,6 +203,86 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError(f"reorganise_llm_num_predict must be greater than zero, got {v!r}")
         return v
+
+    @field_validator("stt_max_upload_bytes", "stt_max_audio_seconds", mode="before")
+    @classmethod
+    def _check_positive_whole_limit(cls, v: object) -> object:
+        """Both STT limits must resolve to a genuine positive WHOLE number.
+
+        Same discipline as reorganise_llm_num_predict above, and for the
+        same reasons: a digit string is accepted because that is how
+        pydantic-settings delivers an environment variable; bool is
+        rejected explicitly (an int subclass — `True` would become a
+        1-byte or 1-second limit that rejects everything); a float is
+        rejected even when whole, since a fractional byte or second
+        budget is a configuration mistake rather than something to round.
+        """
+        if isinstance(v, bool):
+            raise ValueError("STT limits must be an integer, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("STT limits must not be blank")
+            try:
+                v = int(text)  # rejects "10.5", "1e3", "nan", "abc"
+            except ValueError as exc:
+                raise ValueError(f"STT limits must be a whole number, got {v!r}") from exc
+        elif not isinstance(v, int):
+            raise ValueError(f"STT limits must be an integer, not {type(v).__name__}")
+        if v <= 0:
+            raise ValueError(f"STT limits must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("stt_local_files_only", mode="before")
+    @classmethod
+    def _require_local_files_only(cls, v: object) -> object:
+        """Accepts ONLY boolean `True` or a recognised truthy string.
+
+        Everything else is a startup failure, including every integer.
+        `1` is rejected along with `0`: an int is not how this value is
+        ever legitimately supplied — an env var arrives as a string and
+        code should pass a bool — so accepting `1` would only widen the
+        surface on which a stray numeric could disable the one protection
+        stopping a user request from starting a model download. Rejecting
+        the whole type is simpler to reason about than allowing half of
+        it, and `bool` is checked first because it subclasses `int`.
+        """
+        if isinstance(v, bool):
+            if v:
+                return True
+            raise ValueError(
+                "stt_local_files_only must be true — production must never download "
+                "model weights during a request"
+            )
+        if isinstance(v, str):
+            text = v.strip().lower()
+            if text in _LOCAL_FILES_ONLY_TRUE_STRINGS:
+                return True
+            if text in {"false", "0", "no", "off"}:
+                raise ValueError(
+                    "stt_local_files_only must be true — production must never download "
+                    "model weights during a request"
+                )
+            raise ValueError(f"stt_local_files_only must be a boolean, got {v!r}")
+        raise ValueError(
+            f"stt_local_files_only must be a boolean, not {type(v).__name__}"
+        )
+
+    @field_validator("stt_compute_type", mode="before")
+    @classmethod
+    def _check_compute_type(cls, v: object) -> object:
+        """A non-blank string. Not an allowlist: CTranslate2 accepts a
+        long and version-dependent set of quantisations, and hardcoding a
+        subset here would reject valid ones on a future release. A blank
+        value, though, silently means "library default" rather than the
+        configured one, so it is rejected."""
+        if isinstance(v, bool) or not isinstance(v, str):
+            raise ValueError(
+                f"stt_compute_type must be a string, not {type(v).__name__}"
+            )
+        if not v.strip():
+            raise ValueError("stt_compute_type must not be blank")
+        return v.strip()
 
 
 @lru_cache

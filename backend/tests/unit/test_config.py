@@ -191,3 +191,275 @@ def test_env_booleans_are_rejected_as_strings_too(env):
             env(num_predict=raw)
         with pytest.raises(ValidationError):
             env(timeout=raw)
+
+
+# --- speech-to-text settings ---------------------------------------------
+#
+# These carry validators for the same reason the Reorganise bounds do:
+# each one being wrong reintroduces a failure it exists to prevent. A
+# non-positive byte or second limit rejects every upload; a blank
+# compute type silently means "library default" rather than the
+# configured one; and stt_local_files_only being anything but a real
+# bool would let a user request start a model download.
+#
+# There is deliberately no transcription timeout to test — a timeout
+# around a worker thread cannot stop CPU-bound inference, so one would
+# promise a cancellation that never happens.
+
+
+@pytest.fixture
+def stt_env(monkeypatch):
+    """Loads Settings with one STT env var set, ignoring any local .env."""
+
+    def _load(**overrides: str) -> Settings:
+        for name in (
+            "STT_BACKEND",
+            "STT_MAX_UPLOAD_BYTES",
+            "STT_MAX_AUDIO_SECONDS",
+            "STT_COMPUTE_TYPE",
+            "STT_LOCAL_FILES_ONLY",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        for key, value in overrides.items():
+            monkeypatch.setenv(key.upper(), value)
+        return Settings(_env_file=None)
+
+    return _load
+
+
+def test_stt_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.stt_backend == "whisper"  # production backend
+    assert settings.stt_max_upload_bytes == 10485760  # 10MB
+    assert settings.stt_max_audio_seconds == 60
+    assert settings.stt_compute_type == "int8"
+    assert settings.stt_local_files_only is True
+
+
+def test_documented_env_example_stt_values_load(stt_env):
+    settings = stt_env(
+        stt_backend="whisper",
+        stt_max_upload_bytes="10485760",
+        stt_max_audio_seconds="60",
+        stt_compute_type="int8",
+        stt_local_files_only="true",
+    )
+    assert settings.stt_backend == "whisper"
+    assert settings.stt_max_upload_bytes == 10485760
+    assert settings.stt_max_audio_seconds == 60
+    assert settings.stt_compute_type == "int8"
+    assert settings.stt_local_files_only is True
+
+
+def test_no_transcription_timeout_setting_exists():
+    """Guard against one being added: a thread timeout cannot terminate
+    inference and must not be presented as hard cancellation."""
+    names = set(Settings.model_fields)
+    assert not [n for n in names if n.startswith("stt_") and "timeout" in n]
+
+
+# --- stt_backend ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("good", ["whisper", "faster-whisper"])
+def test_backend_accepts_both_supported_values(good):
+    assert Settings(_env_file=None, stt_backend=good).stt_backend == good
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "Whisper", "vosk", "whisper ", None, True, 1, []])
+def test_backend_rejects_anything_else(bad):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, stt_backend=bad)
+
+
+# --- stt_max_upload_bytes / stt_max_audio_seconds -------------------------
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+@pytest.mark.parametrize("good", [1, 60, 1024, 10485760])
+def test_limits_accept_positive_whole_numbers(field, good):
+    assert getattr(Settings(_env_file=None, **{field: good}), field) == good
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+@pytest.mark.parametrize("bad", [0, -1, -1024])
+def test_limits_reject_zero_or_negative(field, bad):
+    """A zero limit is not 'unlimited', it rejects every upload."""
+    with pytest.raises(ValidationError, match="greater than zero"):
+        Settings(_env_file=None, **{field: bad})
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+@pytest.mark.parametrize("bad", [True, False])
+def test_limits_reject_bool(field, bad):
+    """bool is an int subclass — True would become a 1-byte/1-second cap."""
+    with pytest.raises(ValidationError, match="not bool"):
+        Settings(_env_file=None, **{field: bad})
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+@pytest.mark.parametrize("bad", [60.0, 1.5, float("nan"), float("inf"), None, [], {}])
+def test_limits_reject_non_integers(field, bad):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: bad})
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+@pytest.mark.parametrize("bad", ["", "   ", "60.0", "1e3", "abc", "nan", "inf", "true", "-5", "0"])
+def test_limits_reject_bad_env_strings(field, bad):
+    """pydantic-settings hands every env var over as a string, so the
+    string forms must keep every rejection the typed ones have."""
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: bad})
+
+
+@pytest.mark.parametrize("field", ["stt_max_upload_bytes", "stt_max_audio_seconds"])
+def test_limits_parse_a_digit_env_string(field):
+    assert getattr(Settings(_env_file=None, **{field: " 120 "}), field) == 120
+
+
+# --- stt_compute_type -----------------------------------------------------
+
+
+@pytest.mark.parametrize("good", ["int8", "float32", "int8_float16", " int8 "])
+def test_compute_type_accepts_non_blank_strings(good):
+    assert Settings(_env_file=None, stt_compute_type=good).stt_compute_type == good.strip()
+
+
+@pytest.mark.parametrize("bad", ["", "   "])
+def test_compute_type_rejects_blank(bad):
+    """Blank silently means 'library default', not the configured value."""
+    with pytest.raises(ValidationError, match="must not be blank"):
+        Settings(_env_file=None, stt_compute_type=bad)
+
+
+@pytest.mark.parametrize("bad", [None, True, False, 8, 1.0, [], {}])
+def test_compute_type_rejects_non_strings(bad):
+    with pytest.raises(ValidationError, match="must be a string"):
+        Settings(_env_file=None, stt_compute_type=bad)
+
+
+# --- stt_local_files_only -------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["true", "True", "1", "yes", "on"])
+def test_local_files_only_accepts_the_truthy_env_spellings(stt_env, raw):
+    assert stt_env(stt_local_files_only=raw).stt_local_files_only is True
+
+
+@pytest.mark.parametrize("raw", ["false", "False", "0", "no", "off"])
+def test_a_false_local_files_only_env_value_fails_startup(stt_env, raw):
+    """Production must never download weights during a request. A false
+    value in a .env would let one start a multi-hundred-megabyte fetch
+    mid-request, possibly offline, while holding the single slot — so it
+    is a startup failure, not a supported configuration."""
+    with pytest.raises(ValidationError, match="must be true"):
+        stt_env(stt_local_files_only=raw)
+
+
+def test_local_files_only_cannot_be_disabled_from_the_constructor_either():
+    """The refusal must not be bypassable in code any more than in a
+    .env file."""
+    with pytest.raises(ValidationError, match="must be true"):
+        Settings(_env_file=None, stt_local_files_only=False)
+
+
+def test_only_real_true_is_accepted_as_a_boolean():
+    assert Settings(_env_file=None, stt_local_files_only=True).stt_local_files_only is True
+
+
+@pytest.mark.parametrize("bad", [0, 1, 2, -1, 100])
+def test_local_files_only_rejects_every_integer(bad):
+    """`1` is rejected alongside `0`. An int is never how this value is
+    legitimately supplied — an env var arrives as a string and code
+    should pass a bool — so accepting truthy ints would only widen the
+    surface on which a stray numeric could switch off the one protection
+    stopping a user request from starting a model download."""
+    with pytest.raises(ValidationError, match="must be a boolean"):
+        Settings(_env_file=None, stt_local_files_only=bad)
+
+
+@pytest.mark.parametrize("bad", [1.0, 0.0, 1.5, float("nan")])
+def test_local_files_only_rejects_floats(bad):
+    with pytest.raises(ValidationError, match="must be a boolean"):
+        Settings(_env_file=None, stt_local_files_only=bad)
+
+
+@pytest.mark.parametrize("bad", [None, [], {}, (), set(), b"true", object()])
+def test_local_files_only_rejects_containers_and_other_types(bad):
+    with pytest.raises(ValidationError, match="must be a boolean"):
+        Settings(_env_file=None, stt_local_files_only=bad)
+
+
+@pytest.mark.parametrize("bad", ["maybe", "", "   ", "TRUE!", "y", "t", "enabled", "2"])
+def test_local_files_only_rejects_unrecognised_strings(bad):
+    with pytest.raises(ValidationError, match="must be a boolean"):
+        Settings(_env_file=None, stt_local_files_only=bad)
+
+
+@pytest.mark.parametrize("raw", ["TRUE", "  True  ", "YES", "On", "1"])
+def test_truthy_strings_are_accepted_case_insensitively_and_trimmed(raw):
+    """These are the spellings pydantic-settings can hand over from a
+    real environment variable."""
+    assert Settings(_env_file=None, stt_local_files_only=raw).stt_local_files_only is True
+
+
+def test_the_wrapper_still_accepts_local_files_only_false():
+    """Settings cannot express it, but the model wrapper must still
+    support it — that is how an explicitly approved evaluation step
+    downloads weights on purpose, outside any user request."""
+    import inspect
+
+    from app.models.whisper_stt import load_model
+
+    assert inspect.signature(load_model).parameters["local_files_only"].default is True
+
+
+# --- whisper_model_size ---------------------------------------------------
+
+
+def test_model_size_defaults_to_base():
+    assert Settings(_env_file=None).whisper_model_size == "base"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "tiny",
+        "small",
+        "medium",
+        "large",
+        "large-v3",
+        "Base",
+        "BASE",
+        " base",
+        "base ",
+        " base ",
+        "",
+        "   ",
+        "../base",
+        "../../etc/passwd",
+        "/abs/path/model.pt",
+        "C:/weights/model.pt",
+        "~/.cache/whisper/base.pt",
+        "base/../large",
+        "openai/whisper-large-v3",
+        "https://example.invalid/base.pt",
+        None,
+        7,
+        True,
+        [],
+    ],
+)
+def test_model_size_rejects_everything_but_base(bad):
+    """The value is handed to loaders that treat it as a path or repo id,
+    so leaving it open would let configuration name an arbitrary
+    checkpoint."""
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, whisper_model_size=bad)
+
+
+def test_model_size_rejects_a_path_from_the_environment(monkeypatch):
+    monkeypatch.setenv("WHISPER_MODEL_SIZE", "/weights/anything.pt")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
