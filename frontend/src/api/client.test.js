@@ -4,6 +4,7 @@ import {
   generateConfirmedReorganisation,
   generateReorganisation,
   overrideItem,
+  transcribeAudio,
   uploadImage,
 } from "./client";
 
@@ -554,5 +555,91 @@ describe("generateConfirmedReorganisation", () => {
       inputImageSha256: "a".repeat(64),
     });
     expect(confirmedFetch.mock.calls[0][0]).toMatch(/\/generate\/confirmed$/);
+  });
+});
+
+describe("transcribeAudio", () => {
+  function audioBlob(type = "audio/webm") {
+    return new Blob(["fake audio bytes"], { type });
+  }
+
+  test("sends a POST to /transcribe", async () => {
+    const fetchMock = mockFetchOnce({ transcript: "tidy the desk" });
+
+    await transcribeAudio({ audioBlob: audioBlob() });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/transcribe$/);
+    expect(options.method).toBe("POST");
+  });
+
+  test("sends multipart form data under the field name the route expects", async () => {
+    const fetchMock = mockFetchOnce({ transcript: "tidy the desk" });
+    const blob = audioBlob();
+
+    await transcribeAudio({ audioBlob: blob });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.body).toBeInstanceOf(FormData);
+    // The backend route is `audio: UploadFile = File(...)` — any other
+    // field name is a 422 there, so this name is the contract.
+    expect([...options.body.keys()]).toEqual(["audio"]);
+    const sent = options.body.get("audio");
+    expect(sent).toBeInstanceOf(Blob);
+    expect(sent.size).toBe(blob.size);
+  });
+
+  test("carries the blob's own media type, which the backend cross-checks", async () => {
+    const fetchMock = mockFetchOnce({ transcript: "" });
+
+    await transcribeAudio({ audioBlob: audioBlob("audio/ogg") });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.body.get("audio").type).toBe("audio/ogg");
+  });
+
+  test("sets no Content-Type header — the browser must add the multipart boundary", async () => {
+    const fetchMock = mockFetchOnce({ transcript: "tidy the desk" });
+
+    await transcribeAudio({ audioBlob: audioBlob() });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.headers).toBeUndefined();
+  });
+
+  test("returns the parsed transcription contract", async () => {
+    mockFetchOnce({
+      transcript: "tidy the desk",
+      model_name: "whisper-base",
+      transcription_ms: 812.5,
+      audio_duration_s: 3.25,
+    });
+
+    const response = await transcribeAudio({ audioBlob: audioBlob() });
+
+    expect(response).toEqual({
+      transcript: "tidy the desk",
+      model_name: "whisper-base",
+      transcription_ms: 812.5,
+      audio_duration_s: 3.25,
+    });
+  });
+
+  test("an empty transcript is a normal response, not an error", async () => {
+    mockFetchOnce({ transcript: "", model_name: "whisper-base", transcription_ms: 5, audio_duration_s: 1 });
+
+    await expect(transcribeAudio({ audioBlob: audioBlob() })).resolves.toMatchObject({ transcript: "" });
+  });
+
+  test("a non-ok response rejects with the status, which callers map to a safe message", async () => {
+    mockFetchOnce({ detail: "transcription is busy" }, { ok: false, status: 503 });
+
+    await expect(transcribeAudio({ audioBlob: audioBlob() })).rejects.toThrow(/503/);
+  });
+
+  test("a network failure propagates", async () => {
+    mockFetchReject(new TypeError("Failed to fetch"));
+
+    await expect(transcribeAudio({ audioBlob: audioBlob() })).rejects.toThrow(/Failed to fetch/);
   });
 });

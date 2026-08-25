@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import VoiceContextInput from "./VoiceContextInput";
 
 // Presentational + its own small local UI state (selected file, context
 // text, preview URL) — none of that is workflow state, so it stays out
@@ -9,6 +10,10 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   const [file, setFile] = useState(null);
   const [context, setContext] = useState("");
   const [previewUrl, setPreviewUrl] = useState(null);
+  // Owned here, reported up by VoiceContextInput: submitting while
+  // the microphone or a transcription request is live would upload
+  // context the user has not finished dictating.
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const previewUrlRef = useRef(null);
 
   const isUploading = status === "uploading";
@@ -43,7 +48,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
 
   function handleSubmit(event) {
     event.preventDefault();
-    if (!file || isUploading) return;
+    if (!file || isUploading || voiceBusy) return;
     onSubmit({ file, context: context.trim() || null });
   }
 
@@ -91,9 +96,19 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
         />
       </div>
 
+      {/* Optional voice route into the SAME context field above — it
+          hands back text for setContext, and never writes it itself. */}
+      <VoiceContextInput
+        idPrefix="declutter"
+        context={context}
+        onApplyTranscript={setContext}
+        onBusyChange={setVoiceBusy}
+        disabled={isUploading}
+      />
+
       <button
         type="submit"
-        disabled={!file || isUploading}
+        disabled={!file || isUploading || voiceBusy}
         className="rounded-md bg-green-800 px-4 py-2 text-sm font-medium text-white hover:bg-green-900 disabled:cursor-not-allowed disabled:bg-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
       >
         {isUploading ? "Analysing…" : "Analyse room"}

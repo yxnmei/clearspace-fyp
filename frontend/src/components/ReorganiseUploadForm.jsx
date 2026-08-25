@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import VoiceContextInput from "./VoiceContextInput";
 
 // Presentational + its own small local UI state (selected file, context
 // text, preview URL) — mirrors DeclutterUploadForm's own established
@@ -18,6 +19,9 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
   const [context, setContext] = useState("");
   const [previewUrl, setPreviewUrl] = useState(null);
   const [typeError, setTypeError] = useState(null);
+  // Same reasoning as DeclutterUploadForm's own voiceBusy: an upload
+  // must not start while the microphone or a transcription is live.
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const previewUrlRef = useRef(null);
 
   const isAnalysing = phase === "analysing";
@@ -56,7 +60,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
 
   function handleSubmit(event) {
     event.preventDefault();
-    if (!file || isAnalysing) return;
+    if (!file || isAnalysing || voiceBusy) return;
     onSubmit({ file, context: context.trim() || null });
   }
 
@@ -109,9 +113,19 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
         />
       </div>
 
+      {/* The same reusable voice UI DeclutterUploadForm mounts — it
+          fills the context field above only when the user applies it. */}
+      <VoiceContextInput
+        idPrefix="reorganise"
+        context={context}
+        onApplyTranscript={setContext}
+        onBusyChange={setVoiceBusy}
+        disabled={isAnalysing}
+      />
+
       <button
         type="submit"
-        disabled={!file || isAnalysing}
+        disabled={!file || isAnalysing || voiceBusy}
         className="rounded-md bg-green-800 px-4 py-2 text-sm font-medium text-white hover:bg-green-900 disabled:cursor-not-allowed disabled:bg-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
       >
         {isAnalysing ? "Analysing…" : "Analyse room"}
