@@ -1,7 +1,34 @@
-[
-  {
-    "filename": "context_01.webm",
-    "reference_transcript": "the blue jacket was a gift from my grandmother so I want to keep it",
-    "notes": "TEMPLATE ROW — copy this file to audio_labels.json, record real short context clips into data/audio_clips/ (gitignored), and manually transcribe them here as ground truth."
-  }
-]
+{
+  "schema_version": 1,
+  "recorded_by": "self",
+  "consent": "self_recorded",
+  "clips": [
+    {
+      "clip_id": "clip_001",
+      "filename": "clip_001.wav",
+      "media_type": "audio/wav",
+      "category": "context_typical",
+      "reference_transcript": "i am downsizing before a move and i want to be decisive about what i keep",
+      "wer_scored": true,
+      "notes": "TEMPLATE ROW — copy this file to audio_labels.json and replace every row with real recordings."
+    },
+    {
+      "clip_id": "clip_002",
+      "filename": "clip_002.wav",
+      "media_type": "audio/wav",
+      "category": "proper_nouns",
+      "reference_transcript": "the blue jacket was a gift from my grandmother so i want to keep it",
+      "wer_scored": true,
+      "notes": "TEMPLATE ROW"
+    },
+    {
+      "clip_id": "clip_012",
+      "filename": "clip_012.wav",
+      "media_type": "audio/wav",
+      "category": "silence",
+      "reference_transcript": "",
+      "wer_scored": false,
+      "notes": "TEMPLATE ROW — room tone only, no speech. Excluded from WER; scored for hallucination instead."
+    }
+  ]
+}

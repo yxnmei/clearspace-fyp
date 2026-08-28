@@ -174,3 +174,138 @@ correspondence must be adjudicated again for that image, independently —
 never assumed reusable. Only `Adjudication.label_quality` is expected to
 differ between variants once that verification holds. Not built in
 Phase C1.
+
+---
+
+# Audio ground truth for the Voice V3 STT comparison
+
+`audio_labels.json` (you create it; committed) is the ground truth for
+the `whisper-base` vs `faster-whisper-base` comparison. The recordings
+themselves live in `data/audio_clips/` and are **gitignored** — only
+this labels file, which references them by bare filename, is committed.
+Same discipline as the image set above, for the same reason.
+
+`audio_labels.example.json` is a three-row **template**, not data. Copy
+it, then replace every row.
+
+## Record with a local recorder or a browser recording tool — NOT the ClearSpace UI
+
+The app's Record control captures a Blob, uploads it, and discards it.
+There is no "save recording" path in the UI, so a clip recorded there
+cannot end up in `data/audio_clips/`. Use whatever desktop recorder or
+browser recording page you like and save the file yourself.
+
+This does not weaken the comparison: both backends receive the same
+post-decode waveform, so the container and codec affect them equally.
+
+Accepted `media_type` values are exactly
+`app/core/audio_decode.py`'s `SUPPORTED_AUDIO_MEDIA_TYPES`:
+
+`audio/webm` · `audio/ogg` · `audio/wav` · `audio/x-wav` · `audio/wave` ·
+`audio/mpeg` · `audio/mp3` · `audio/mp4` · `audio/m4a` · `audio/x-m4a`
+
+WAV (16-bit mono, 16 kHz) is the simplest choice and avoids a codec
+step; `audio/webm` with Opus matches what a browser recording produces.
+Either is fine, and a mix is fine.
+
+## Schema
+
+```json
+{
+  "schema_version": 1,
+  "recorded_by": "self",
+  "consent": "self_recorded",
+  "clips": [
+    {
+      "clip_id": "clip_001",
+      "filename": "clip_001.wav",
+      "media_type": "audio/wav",
+      "category": "context_typical",
+      "reference_transcript": "i am downsizing before a move and i want to be decisive about what i keep",
+      "wer_scored": true,
+      "notes": ""
+    }
+  ]
+}
+```
+
+Every field is required on every clip, and **unrecognised fields are
+rejected** — the loader mirrors the API's own `extra="forbid"`
+discipline, because an extra key means the file and the loader disagree
+about the schema rather than that one of them should give way.
+
+- `recorded_by` — must be exactly `"self"`.
+- `consent` — must be exactly `"self_recorded"`.
+
+  Both are **pinned to one value**, not validated as "some non-blank
+  string". They are copied verbatim into the result artefact, and an
+  open string field is exactly where a real name, a username or an email
+  ends up. This is a self-recorded single-speaker pilot; if that ever
+  changes, widening these is a deliberate code edit with a consent story
+  attached, not something a label file can do on its own.
+
+- `clip_id` — stable, unique. Identity is `clip_id`, never the
+  transcript text.
+- `filename` — a **bare filename**. A path, a directory component, `..`,
+  or an absolute path is rejected: a committed labels file must not
+  widen what the runner reads or leak a directory layout into the repo.
+- `media_type` — the declared type. `check_container_matches_media_type()`
+  cross-checks it against the real container during preflight, so a
+  mislabelled clip fails loudly instead of quietly producing a result.
+- `category` — free text; the suggested set is below.
+- `reference_transcript` — what was actually said. Plain lowercase, no
+  punctuation, numbers spelled as words ("twenty nineteen").
+- `wer_scored` — `false` only for silence clips. A `true` clip whose
+  reference normalises to no words is **rejected at load**: WER is
+  errors ÷ reference words, and there is no rate to report with a zero
+  denominator. Dividing by `max(len, 1)` instead — which the previous
+  harness did — silently returns the hypothesis word count and presents
+  it as a rate.
+- `notes` — may be empty, must be present.
+
+Also rejected: an unknown `schema_version`, a duplicate `clip_id`, a
+duplicate `filename` (two labels pointing at one recording would
+double-count it in the corpus totals — compared **case-insensitively**,
+since Windows treats `Clip_001.wav` and `clip_001.wav` as one file), an
+unsupported `media_type`, and more than **30** clips.
+
+A file that exists but cannot be read becomes a bounded preflight error
+naming only the `clip_id` — never the path, because an `OSError`'s own
+text quotes the full path it failed on.
+
+## Suggested set — 12 clips minimum
+
+| Count | `category` | Purpose | Length |
+|---|---|---|---|
+| 4 | `context_typical` | The real use case | 6–12 s |
+| 2 | `proper_nouns` | Names and brands — the weak spot for `base` | 6–12 s |
+| 2 | `long_form` | Multi-sentence, tests segmentation | 20–35 s |
+| 2 | `short` | Clipped phrases | 2–4 s |
+| 1 | `numeric` | "three boxes", "the 2019 receipts" | 5–10 s |
+| 1 | `silence` | Room tone, no speech, `wer_scored: false` | 3–5 s |
+
+Fewer than about ten clips lets one misrecognised word swing corpus WER
+by several points.
+
+Every clip must decode to **under 60 seconds** (matching
+`stt_max_audio_seconds`). The runner refuses a longer one rather than
+truncating it.
+
+## Transcribe by hand, before any run
+
+Write what was said, yourself. Do **not** paste a model's output and
+correct it — that biases the ground truth toward whichever backend
+produced it, which is precisely the thing being measured.
+
+## Privacy
+
+`reference_transcript` is committed and read in a diff. Say only what
+you are willing to publish: no names, addresses, account numbers, or
+anything you would not put in the dissertation. Writing the sentences
+first and reading them aloud is the safest approach and also gives
+cleaner ground truth, since there is no ambiguity about what was said.
+
+Raw audio stays in gitignored `data/audio_clips/`; results stay in
+gitignored `evaluation/results/`. The result artefact records bare
+filenames only — never an absolute path, a home directory, a username,
+or an environment value.
