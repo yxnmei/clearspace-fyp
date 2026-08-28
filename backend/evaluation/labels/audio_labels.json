@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "recorded_by": "self",
+  "consent": "self_recorded",
+  "clips": [
+    {
+      "clip_id": "clip_001",
+      "filename": "clip_001.m4a",
+      "media_type": "audio/m4a",
+      "category": "context_typical",
+      "reference_transcript": "i am downsizing before a move and i want to be decisive about what i keep",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_002",
+      "filename": "clip_002.m4a",
+      "media_type": "audio/m4a",
+      "category": "context_typical",
+      "reference_transcript": "please reorganise my bedroom so the floor is clear and everyday items are easy to reach",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_003",
+      "filename": "clip_003.m4a",
+      "media_type": "audio/m4a",
+      "category": "context_typical",
+      "reference_transcript": "keep the books on the shelf and place the charging cables neatly beside the desk",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_004",
+      "filename": "clip_004.m4a",
+      "media_type": "audio/m4a",
+      "category": "context_typical",
+      "reference_transcript": "i want to donate the clothes i no longer wear and discard any damaged boxes",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_005",
+      "filename": "clip_005.m4a",
+      "media_type": "audio/m4a",
+      "category": "proper_nouns",
+      "reference_transcript": "keep the nintendo switch and place it beside the samsung monitor",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_006",
+      "filename": "clip_006.m4a",
+      "media_type": "audio/m4a",
+      "category": "proper_nouns",
+      "reference_transcript": "the ikea kallax shelf should stay and the dyson fan can sit nearby",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_007",
+      "filename": "clip_007.m4a",
+      "media_type": "audio/m4a",
+      "category": "long_form",
+      "reference_transcript": "i want the bedroom to feel calmer tidier and easier to clean every day keep all the existing furniture in the room but fold the blankets neatly place loose clothing together and organise the smaller objects across the shelves clear the walking space beside the bed and remove anything blocking the floor keep the possessions i use most often visible and easy to reach while placing less frequently used belongings into suitable storage the finished room should still feel familiar and personal but it should look organised enough that i can find things quickly and move around safely",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_008",
+      "filename": "clip_008.m4a",
+      "media_type": "audio/m4a",
+      "category": "long_form",
+      "reference_transcript": "please organise the desk area first because i use this workspace every day for studying and completing assignments keep the monitor keyboard mouse charger and important documents within easy reach group similar stationery together arrange loose cables neatly and place objects i rarely use into appropriate storage leave enough empty space on the desk for a notebook and a cup without replacing or removing the existing furniture frequently used equipment should remain visible while unnecessary clutter should be moved away from the main working area so that the entire space feels tidy practical and comfortable",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_009",
+      "filename": "clip_009.m4a",
+      "media_type": "audio/m4a",
+      "category": "short",
+      "reference_transcript": "please keep the small blue lamp",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_010",
+      "filename": "clip_010.m4a",
+      "media_type": "audio/m4a",
+      "category": "short",
+      "reference_transcript": "donate these old paperback books",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_011",
+      "filename": "clip_011.m4a",
+      "media_type": "audio/m4a",
+      "category": "numeric",
+      "reference_transcript": "put three boxes on the lower shelf and keep the twenty nineteen receipts together",
+      "wer_scored": true,
+      "notes": ""
+    },
+    {
+      "clip_id": "clip_012",
+      "filename": "clip_012.m4a",
+      "media_type": "audio/m4a",
+      "category": "silence",
+      "reference_transcript": "",
+      "wer_scored": false,
+      "notes": "room tone only"
+    }
+  ]
+}
