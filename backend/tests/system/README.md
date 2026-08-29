@@ -141,6 +141,31 @@ DINO/Ollama dependencies, no dependency overrides:
   project's history). Full numbers in `DEVLOG.md` (local-only) under the
   same date.
 
+- **2026-08-29 manual run — real browser voice smoke test, first run
+  with `faster-whisper` as the production default:** backend started
+  with `STT_BACKEND=faster-whisper`; `clip_001.m4a` (5.995 s) chosen
+  through the voice audio-file control in the upload form. The
+  faster-whisper logger reported `Processing audio with duration
+  00:05.995`, which is what establishes *which backend* served the
+  request — no DevTools capture of the response body was taken, so
+  `model_name` is not independently evidenced here. Exactly one observed
+  `POST /transcribe`, HTTP 200. The selected filename displayed
+  correctly while the request ran; typed context stayed unchanged; the
+  transcript appeared in the review panel only, and entered the context
+  textarea **only** after an explicit `Replace context` click, after
+  which the filename reset to `No audio file selected`. No room photo
+  was selected and room analysis stayed disabled throughout, so no
+  CLIP/Grounding DINO/Ollama/Colab work ran. **Verifies integration of
+  the promoted default and the review-before-apply gate on one clip, one
+  speaker, one browser journey — it is not an STT accuracy result.** The
+  12-clip comparison in `backend/evaluation/README.md` remains the
+  accuracy evidence. An earlier attempt on the same day reached the same
+  backend successfully but was **not** accepted: it exposed a
+  filename-display defect (the control read "No file chosen" immediately
+  after selection, because the file input is cleared to preserve
+  same-file retry). That was fixed and the run above is the passing
+  rerun.
+
 **Colab image-generation tests** (`/generate`, the Reorganise path) have
 a **manual precondition that can never be automated the way
 Declutter-path tests can**: the Colab notebook must be running and its
