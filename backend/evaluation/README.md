@@ -183,3 +183,89 @@ reported as `AUTO-PASS — MANUAL REVIEW PENDING`. The manual usefulness
 review is required, is never auto-scored, and the simple-fixture case above
 is exactly why: it passed every automatic gate while producing a plan that
 proposed no actual reorganisation.
+
+## 2026-08-28 — Speech-to-text: whisper-base vs faster-whisper-base
+
+Harness: `evaluation/scripts/compare_stt.py` (committed `c83868d`), WER
+rule in `evaluation/metrics/stt_metrics.py`. Labels: 12 hand-written
+reference transcripts, committed `3656cea`. Recordings
+(`data/audio_clips/`) and the raw artefact
+(`evaluation/results/compare_stt_20260828.json`) are gitignored and
+local-only.
+
+`status: "complete"` · 12 clips · 3 repetitions · **72 measured calls**
+plus 2 discarded warm-ups · **0 failed calls** · single decode per clip
+shared by both backends.
+
+### Dataset
+
+12 self-recorded `audio/m4a` clips, **one speaker**, 122.069 s total:
+4 `context_typical`, 2 `proper_nouns`, 2 `long_form`, 2 `short`,
+1 `numeric`, and 1 `silence` clip (`wer_scored: false`, scored for
+hallucination rather than WER). 11 clips scored, 304 reference words.
+
+### Results
+
+| | whisper-base | faster-whisper-base |
+|---|---|---|
+| corpus WER | **0.075658** (7.57%) | **0.075658** (7.57%) |
+| errors / reference words | 23 / 304 | 23 / 304 |
+| substitutions / deletions / insertions | 17 / 5 / 1 | 17 / 5 / 1 |
+| mean per-clip WER *(secondary, length-biased)* | 0.113394 | 0.113394 |
+| cold load | 3467.936 ms | **986.028 ms** |
+| median latency, short (<5 s) | 486.464 ms | 482.260 ms |
+| median latency, mid (5–15 s) | 583.756 ms | 559.370 ms |
+| median latency, long (>15 s) | 1898.360 ms | **1402.405 ms** |
+| deterministic across all 3 reps | yes, every clip | yes, every clip |
+| hallucinated on the silence clip | no | no |
+| failed calls | 0 | 0 |
+
+**Accuracy is identical, not merely similar.** The two backends produced
+byte-identical transcripts on 10 of 12 clips; the two that differed
+(`clip_005`, `clip_008`) differed only in capitalisation and sentence
+punctuation, which the normalisation rule removes. After normalisation
+all 12 pairs are identical, which is why every accuracy figure ties
+exactly rather than approximately.
+
+### Findings
+
+1. **Both backends made the same substantive errors.** `ikea kallax
+   shelf` → "IKEA collect-shout" and `dyson fan can sit` → "Dyson friend
+   can seat" (`clip_006`, WER 0.385); `donate these old paperback books`
+   → "Don't eat these old paperback books" (`clip_010`, WER 0.400).
+2. **One error changes user intent.** "Donate these" → "Don't eat these"
+   inverts the instruction. It is a plausible-sounding sentence, so
+   nothing downstream could detect it as wrong.
+3. **Strict WER also charges formatting differences.** `three` → "3",
+   `twenty nineteen` → "2019" (`clip_011`), and `reorganise` →
+   "reorganize" (`clip_002`). The rule deliberately does not convert
+   numbers or reconcile spelling variants, because either would flatter
+   whichever backend shares the reference's convention.
+4. **Neither backend invented speech on silence**, and both were
+   deterministic across all three repetitions.
+
+### Consequence
+
+**Production is unchanged and remains `stt_backend = "whisper"`.** Human
+review passed (all four judgement fields `true` in the artefact) and
+recommends advancing `faster-whisper-base` to a **separate, separately
+approved production-default smoke test** — on the grounds that it
+matched, and did not beat, whisper-base on accuracy, while improving
+cold load (3.5× faster) and long-form latency (~26% faster). Speed alone
+is not the basis for a default change, and no default was changed here.
+
+The intent-changing error is direct evidence for the existing
+review-before-apply design: the frontend never writes a transcript into
+`user_context` automatically, and the user edits and explicitly applies
+it. Review passed *because* that gate exists, not despite the errors.
+
+### Not established
+
+This is a **small, single-speaker pilot**: 12 clips, one voice, one
+accent, one recording device, one language, quiet conditions. It does
+not establish that either backend is generally better, and it says
+nothing about accented speech, multiple speakers, noisy rooms, or other
+model sizes. `faster-whisper-base` is **not** shown to be more accurate
+— it tied. Latency was measured on one machine (Windows, AMD64,
+CPU-only, `compute_type="int8"`) and does not transfer to other
+hardware.
