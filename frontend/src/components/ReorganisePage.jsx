@@ -23,23 +23,15 @@ import ReorganiseResult from "./ReorganiseResult";
 // correctly through analysing/selecting/generating/result and is
 // revoked/replaced exactly when useReorganiseFlow's own file state
 // changes (a new upload, or reset() setting it back to null).
-export default function ReorganisePage({ onBackToPathSelection }) {
+// The "Back to workflows" control lives in AppShell (rendered by App for
+// every workflow page), so this page no longer renders its own.
+export default function ReorganisePage() {
   const flow = useReorganiseFlow();
   const health = useImageGenHealth();
   const imageUrl = useObjectUrl(flow.file);
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onBackToPathSelection}
-          className="text-sm text-stone-600 underline hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-        >
-          ← Back to workflow selection
-        </button>
-      </div>
-
       <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
 
       <div className="mt-4">

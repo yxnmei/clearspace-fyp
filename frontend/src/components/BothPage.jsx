@@ -42,7 +42,9 @@ import ReorganiseResult from "./ReorganiseResult";
 const NEXT_STEP_NOTE =
   "These confirmed Keep items will be sent to reorganisation next — nothing is generated automatically.";
 
-export default function BothPage({ onBackToPathSelection }) {
+// The "Back to workflows" control lives in AppShell (rendered by App for
+// every workflow page), so this page no longer renders its own.
+export default function BothPage() {
   const flow = useBothFlow();
   const health = useImageGenHealth();
   const imageUrl = useObjectUrl(flow.file);
@@ -53,16 +55,6 @@ export default function BothPage({ onBackToPathSelection }) {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onBackToPathSelection}
-          className="text-sm text-stone-600 underline hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-        >
-          ← Back to workflow selection
-        </button>
-      </div>
-
       <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
 
       <div className="mt-4">

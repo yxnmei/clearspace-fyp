@@ -93,13 +93,13 @@ function makeGeneratedResponse() {
 
 describe("ReorganisePage — health ownership", () => {
   test("mounting the page issues exactly one health request", async () => {
-    render(<ReorganisePage onBackToPathSelection={vi.fn()} />);
+    render(<ReorganisePage />);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
   });
 
   test("an unavailable health status is shown via the banner, sourced from the one hook instance", async () => {
     client.getImageGenHealth.mockResolvedValue({ available: false });
-    render(<ReorganisePage onBackToPathSelection={vi.fn()} />);
+    render(<ReorganisePage />);
     await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
     expect(client.getImageGenHealth).toHaveBeenCalledTimes(1);
   });
@@ -111,7 +111,7 @@ describe("ReorganisePage — end-to-end phase flow", () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     client.generateReorganisation.mockResolvedValue(makeGeneratedResponse());
 
-    render(<ReorganisePage onBackToPathSelection={vi.fn()} />);
+    render(<ReorganisePage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -127,10 +127,6 @@ describe("ReorganisePage — end-to-end phase flow", () => {
     expect(screen.getByText("Keep in place")).toBeInTheDocument();
   });
 
-  test("Back to workflow selection calls onBackToPathSelection", async () => {
-    const onBack = vi.fn();
-    render(<ReorganisePage onBackToPathSelection={onBack} />);
-    await userEvent.click(screen.getByRole("button", { name: /back to workflow selection/i }));
-    expect(onBack).toHaveBeenCalled();
-  });
+  // The "Back to workflows" control moved to AppShell; App.test.jsx covers
+  // that returning from Reorganise unmounts the workflow.
 });

@@ -140,13 +140,13 @@ function makeConfirmedGenerateResponse(confirmed, { imageStatus = "generated", u
 
 describe("BothPage — health ownership", () => {
   test("mounting the page issues exactly one health request", async () => {
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
   });
 
   test("an unavailable health status is shown via the banner but never blocks anything", async () => {
     client.getImageGenHealth.mockResolvedValue({ available: false });
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
     await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
   });
 });
@@ -154,7 +154,7 @@ describe("BothPage — health ownership", () => {
 describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> result", () => {
   test("no second item-selection screen — DeclutterReview alone drives what's kept", async () => {
     client.uploadImage.mockResolvedValue(makeBothUploadResponse());
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -172,7 +172,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
     client.confirmDecisions.mockResolvedValue(
       makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
     );
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -195,7 +195,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
     client.generateConfirmedReorganisation.mockResolvedValue(
       makeConfirmedGenerateResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
     );
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -223,7 +223,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
         unavailableReason: "service_unreachable",
       })
     );
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -241,7 +241,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
     client.confirmDecisions.mockResolvedValue(
       makeConfirmResponse([{ itemId: "item_001", aiDecision: "sell", confirmedDecision: "sell" }])
     );
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -259,7 +259,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
       makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
     );
     client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -291,7 +291,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
     client.generateConfirmedReorganisation.mockResolvedValue(
       makeConfirmedGenerateResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
     );
-    render(<BothPage onBackToPathSelection={vi.fn()} />);
+    render(<BothPage />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
     await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
@@ -308,10 +308,6 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
     expect(URL.revokeObjectURL).toHaveBeenCalled(); // the retained file's object URL is released
   });
 
-  test("Back to workflow selection calls onBackToPathSelection", async () => {
-    const onBack = vi.fn();
-    render(<BothPage onBackToPathSelection={onBack} />);
-    await userEvent.click(screen.getByRole("button", { name: /back to workflow selection/i }));
-    expect(onBack).toHaveBeenCalled();
-  });
+  // The "Back to workflows" control moved to AppShell; App.test.jsx covers
+  // that returning from Both unmounts the workflow.
 });

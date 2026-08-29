@@ -1,3 +1,79 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ClearSpace design foundation (redesign Phase 1).
+ *
+ * All colour, radius and elevation decisions live here as CSS variables and
+ * are surfaced to Tailwind as named tokens in tailwind.config.js. Components
+ * must consume the tokens (bg-primary, text-muted-foreground, rounded-card,
+ * shadow-card, ring-ring, …) rather than raw hex or arbitrary values.
+ *
+ * Colours are stored as space-separated HSL channels so Tailwind can wrap
+ * them in hsl(var(--token) / <alpha-value>) and opacity utilities keep
+ * working (bg-primary/80, ring-ring/40, …).
+ */
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 40 30% 97%;        /* warm off-white page */
+    --surface: 0 0% 100%;           /* cards, header */
+    --surface-muted: 150 32% 95%;   /* soft mint panel */
+
+    /* Brand */
+    --primary: 152 45% 18%;         /* deep forest green */
+    --primary-foreground: 150 30% 97%;
+    --primary-hover: 152 47% 14%;
+
+    /* Mint accent (selected states, quiet fills) */
+    --accent: 150 34% 91%;
+    --accent-foreground: 152 42% 16%;
+
+    /* Neutral stone text + lines */
+    --foreground: 40 9% 14%;
+    --muted-foreground: 40 6% 40%;
+    --border: 40 14% 87%;
+    --input: 40 14% 80%;
+    --ring: 152 42% 30%;
+
+    /* Semantic */
+    --success: 152 52% 30%;
+    --success-foreground: 150 30% 97%;
+    --warning: 33 82% 42%;
+    --warning-foreground: 40 45% 12%;
+    --error: 0 62% 45%;
+    --error-foreground: 0 30% 97%;
+
+    /* Shape */
+    --radius: 0.75rem;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100vh;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: theme("fontFamily.sans");
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/* Honour an explicit request for reduced motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

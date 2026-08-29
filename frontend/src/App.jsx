@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AppShell from "./components/AppShell";
 import PathSelector from "./components/PathSelector";
 import DeclutterPage from "./components/DeclutterPage";
 import ReorganisePage from "./components/ReorganisePage";
@@ -18,46 +19,33 @@ import BothPage from "./components/BothPage";
 // between workflows, with zero extra reset logic needed here. This is
 // also exactly why PathSelector is cards, not tabs — tabs imply
 // state-preserving switching, which is the wrong model for this app.
+//
+// The single "Back to workflows" action is provided by AppShell and shown
+// on every workflow page (i.e. whenever mode !== "choose"). There is
+// deliberately no universal progress indicator: the three workflows have
+// different state machines.
 export default function App() {
   const [mode, setMode] = useState("choose"); // "choose" | "declutter" | "reorganise" | "both"
 
+  const backToChoose = mode === "choose" ? undefined : () => setMode("choose");
+
   return (
-    <div className="min-h-screen bg-stone-50">
-      {/* Widened from max-w-3xl: the analysed-room panel + item list need
-          room to sit side by side on desktop (DeclutterReview §3). */}
-      <div className="mx-auto max-w-5xl p-6">
-        <h1 className="mb-2 text-2xl font-semibold text-stone-900">ClearSpace</h1>
+    <AppShell onBack={backToChoose}>
+      {mode === "choose" && <PathSelector onChoose={setMode} />}
 
-        {mode === "choose" && (
-          <>
-            <p className="mb-6 text-stone-600">
-              Photograph a room to declutter it, reorganise it, or both. Choose a workflow to get started.
-            </p>
-            <PathSelector onChoose={setMode} />
-          </>
-        )}
+      {mode === "declutter" && (
+        <>
+          <p className="mb-6 max-w-2xl text-muted-foreground">
+            Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in a room, then review and
+            confirm each one yourself before anything is finalised.
+          </p>
+          <DeclutterPage />
+        </>
+      )}
 
-        {mode === "declutter" && (
-          <>
-            <p className="mb-6 text-stone-600">
-              Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in a room, then review and
-              confirm each one yourself before anything is finalised.
-            </p>
-            <button
-              type="button"
-              onClick={() => setMode("choose")}
-              className="mb-4 text-sm text-stone-600 underline hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-            >
-              ← Back to workflow selection
-            </button>
-            <DeclutterPage />
-          </>
-        )}
+      {mode === "reorganise" && <ReorganisePage />}
 
-        {mode === "reorganise" && <ReorganisePage onBackToPathSelection={() => setMode("choose")} />}
-
-        {mode === "both" && <BothPage onBackToPathSelection={() => setMode("choose")} />}
-      </div>
-    </div>
+      {mode === "both" && <BothPage />}
+    </AppShell>
   );
 }

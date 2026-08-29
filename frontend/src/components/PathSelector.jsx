@@ -1,52 +1,152 @@
-// Top-level workflow entry point — presentational, no state of its own.
-// App.jsx owns the actual `mode` state; this component only renders the
-// three choices and calls onChoose("declutter" | "reorganise" | "both").
+import { useState } from "react";
+import { ArrowRight, Check, PackageOpen, LayoutGrid, Sparkles, ShieldCheck, Star } from "lucide-react";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { cn } from "../lib/cn";
+
+// Top-level workflow entry point. Presentational apart from a single piece of
+// local UI state: which card is currently selected in the radio group.
+// App.jsx still owns the real `mode` state — this component only calls
+// onChoose("declutter" | "reorganise" | "both") once, when Continue is
+// pressed.
 //
-// Cards, not tabs: tabs imply state-preserving switching between panes,
-// which is the WRONG model here — picking a workflow should start it
-// fresh every time (see App.jsx's own docstring on why switching away
-// fully unmounts the previous workflow). Cards better communicate "make
-// a decision, then commit to it".
-//
-// Both is a real, enabled button as of R6 (BothPage) — mirrors
-// Declutter/Reorganise exactly, no disabled/"Coming later" state left.
+// The three cards are ONE native radio group (name="workflow"), so keyboard
+// selection is the browser's own arrow-key behaviour and nothing here
+// re-implements it. Continue stays disabled until a workflow is chosen, and
+// decorative card content never navigates on its own.
+const WORKFLOWS = [
+  {
+    value: "declutter",
+    title: "Declutter",
+    Icon: PackageOpen,
+    description:
+      "Get AI Keep, Sell, Donate and Discard suggestions for what's in your room, then review, change and confirm every decision yourself.",
+    footnote: "Best for quick item decisions",
+  },
+  {
+    value: "reorganise",
+    title: "Reorganise",
+    Icon: LayoutGrid,
+    description:
+      "Actionable items are included automatically. Optionally review the list to exclude items before generating a structured room plan and an AI visual preview.",
+    footnote: "Best for space planning",
+  },
+  {
+    value: "both",
+    title: "Both",
+    Icon: Sparkles,
+    recommended: true,
+    description:
+      "Confirm your Declutter decisions first, then reorganise using only the items you confirmed as Keep.",
+    footnote: "Best for full end-to-end guidance",
+  },
+];
+
 export default function PathSelector({ onChoose }) {
+  const [selected, setSelected] = useState(null);
+
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      <button
-        type="button"
-        onClick={() => onChoose("declutter")}
-        className="rounded-lg border border-stone-200 bg-white p-5 text-left shadow-sm hover:border-green-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
-      >
-        <h2 className="mb-1 text-lg font-medium text-stone-900">Declutter</h2>
-        <p className="text-sm text-stone-600">
-          Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in a room, then review and confirm
-          each one yourself.
+    <section className="mx-auto w-full max-w-5xl">
+      <div className="text-center">
+        <h1 className="text-title font-semibold tracking-tight text-foreground sm:text-display">
+          Let's get your space working for you
+        </h1>
+        <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
+          Choose a workflow to declutter a room, reorganise it, or do both in one guided pass.
         </p>
-      </button>
+      </div>
 
-      <button
-        type="button"
-        onClick={() => onChoose("reorganise")}
-        className="rounded-lg border border-stone-200 bg-white p-5 text-left shadow-sm hover:border-green-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
-      >
-        <h2 className="mb-1 text-lg font-medium text-stone-900">Reorganise</h2>
-        <p className="text-sm text-stone-600">
-          Choose which detected items to keep in place, then get a structured room plan and an AI-generated visual
-          preview.
-        </p>
-      </button>
+      <fieldset className="mt-10">
+        <legend className="mb-4 w-full text-center text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Choose a workflow
+        </legend>
 
-      <button
-        type="button"
-        onClick={() => onChoose("both")}
-        className="rounded-lg border border-stone-200 bg-white p-5 text-left shadow-sm hover:border-green-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
-      >
-        <h2 className="mb-1 text-lg font-medium text-stone-900">Both</h2>
-        <p className="text-sm text-stone-600">
-          Declutter first, then reorganise using only the items you chose to keep.
+        <div className="grid gap-4 lg:grid-cols-3">
+          {WORKFLOWS.map(({ value, title, Icon, description, footnote, recommended }) => {
+            const isSelected = selected === value;
+            return (
+              <label
+                key={value}
+                className="group relative block h-full cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="workflow"
+                  value={value}
+                  checked={isSelected}
+                  onChange={() => setSelected(value)}
+                  aria-label={title}
+                  aria-describedby={`workflow-${value}-desc`}
+                  className="peer sr-only"
+                />
+                <div
+                  className={cn(
+                    "relative flex h-full flex-col rounded-card border-2 bg-surface p-5 text-left shadow-card transition-colors",
+                    "group-hover:border-primary/40",
+                    isSelected ? "border-primary bg-accent/40" : "border-border",
+                    "peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background"
+                  )}
+                >
+                  {recommended ? (
+                    <Badge variant="primary" className="absolute right-3 top-3">
+                      <Star aria-hidden="true" width={12} height={12} />
+                      Recommended
+                    </Badge>
+                  ) : null}
+
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "inline-flex h-11 w-11 items-center justify-center rounded-control",
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-accent text-accent-foreground"
+                    )}
+                  >
+                    <Icon width={22} height={22} />
+                  </span>
+
+                  <span className="mt-4 flex items-center gap-2 text-lg font-semibold text-foreground">
+                    {title}
+                    <Check
+                      aria-hidden="true"
+                      width={18}
+                      height={18}
+                      className={cn("text-primary", isSelected ? "opacity-100" : "opacity-0")}
+                    />
+                  </span>
+
+                  <span id={`workflow-${value}-desc`} className="mt-2 flex-1 text-sm text-muted-foreground">
+                    {description}
+                  </span>
+
+                  <span className="mt-4 flex items-center gap-1.5 border-t border-border pt-3 text-xs font-medium text-foreground">
+                    <Check aria-hidden="true" width={14} height={14} className="text-primary" />
+                    {footnote}
+                  </span>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <div className="mt-8 flex flex-col items-center gap-4">
+        <Button
+          type="button"
+          size="lg"
+          disabled={selected === null}
+          onClick={() => selected !== null && onChoose(selected)}
+        >
+          Continue
+          <ArrowRight aria-hidden="true" width={18} height={18} />
+        </Button>
+
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <ShieldCheck aria-hidden="true" width={16} height={16} className="text-primary" />
+          You're in control — every AI suggestion is yours to review and change before anything is finalised.
         </p>
-      </button>
-    </div>
+      </div>
+    </section>
   );
 }
