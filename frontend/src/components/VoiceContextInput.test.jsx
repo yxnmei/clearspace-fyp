@@ -501,3 +501,278 @@ describe("VoiceContextInput — a failed recorder", () => {
     expect(screen.getByRole("button", { name: /record context/i })).toBeEnabled();
   });
 });
+
+describe("VoiceContextInput — the selected filename stays visible", () => {
+  // handleFileChange clears input.value straight away so the same file
+  // can be re-picked after a failure, which also wipes the browser's own
+  // filename label — hence the name is kept in component state.
+
+  function fileNamed(name, type = "audio/m4a") {
+    return new File(["fake audio bytes"], name, { type });
+  }
+
+  test("before any selection it says so honestly", () => {
+    render(<Host />);
+
+    expect(screen.getByText("No audio file selected")).toBeInTheDocument();
+    expect(screen.queryByText(/\.m4a$/)).not.toBeInTheDocument();
+  });
+
+  test("choosing a file displays its name", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("i am downsizing before a move");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    expect(await screen.findByText("clip_001.m4a")).toBeInTheDocument();
+    expect(screen.queryByText("No audio file selected")).not.toBeInTheDocument();
+  });
+
+  test("no contradictory native 'No file chosen' text is rendered beside it", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("hello");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    await screen.findByText("clip_001.m4a");
+    // What the browser draws for a visible file input; ours is hidden,
+    // so this must never appear as our own content either.
+    expect(screen.queryByText(/no file chosen/i)).not.toBeInTheDocument();
+  });
+
+  test("the native input is still cleared, so the SAME file can be picked again", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("hello");
+    render(<Host />);
+    const input = screen.getByLabelText(/audio file/i);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    expect(input.value).toBe("");
+    expect(input.files).toHaveLength(0);
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+  });
+
+  test("re-picking the same file after a failure still transcribes", async () => {
+    const user = userEvent.setup();
+    client.transcribeAudio.mockRejectedValueOnce(new Error("Failed to fetch"));
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+    await screen.findByRole("alert");
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+
+    transcribeResolves("second attempt worked");
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    expect(await screen.findByLabelText(/transcript to review/i)).toHaveValue(
+      "second attempt worked",
+    );
+    expect(client.transcribeAudio).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+  });
+
+  test("the name stays visible while transcription is running", async () => {
+    const user = userEvent.setup();
+    let settle;
+    client.transcribeAudio.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/transcribing/i);
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+
+    await act(async () => {
+      settle({
+        transcript: "done",
+        model_name: "faster-whisper-base",
+        transcription_ms: 10,
+        audio_duration_s: 1,
+      });
+    });
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+  });
+
+  test("the name stays visible while a transcript awaits review", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("keep the desk by the window");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    await screen.findByLabelText(/transcript to review/i);
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+  });
+
+  test("the name stays visible while an error is displayed", async () => {
+    const user = userEvent.setup();
+    client.transcribeAudio.mockRejectedValue(new Error("Failed to fetch"));
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(VOICE_MESSAGES.failed);
+    expect(screen.getByText("clip_001.m4a")).toBeInTheDocument();
+  });
+
+  test("the name stays visible when the file is rejected before any upload", async () => {
+    render(<Host />);
+
+    fireEvent.change(screen.getByLabelText(/audio file/i), {
+      target: { files: [new File(["x"], "room.png", { type: "image/png" })] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(VOICE_MESSAGES.unsupportedAudio);
+    expect(screen.getByText("room.png")).toBeInTheDocument();
+    expect(client.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  test("the name stays visible on a silent result", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_012.m4a"));
+
+    expect(await screen.findByText(/no speech detected/i)).toBeInTheDocument();
+    expect(screen.getByText("clip_012.m4a")).toBeInTheDocument();
+  });
+
+  test("choosing a different file replaces the displayed name", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("first");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+    await screen.findByText("clip_001.m4a");
+
+    transcribeResolves("second");
+    await uploadAudio(user, fileNamed("clip_007.m4a"));
+
+    expect(await screen.findByText("clip_007.m4a")).toBeInTheDocument();
+    expect(screen.queryByText("clip_001.m4a")).not.toBeInTheDocument();
+  });
+
+  test("applying the transcript clears the name", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("i am downsizing before a move");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+    await user.click(await screen.findByRole("button", { name: "Use as context" }));
+
+    expect(screen.getByText("No audio file selected")).toBeInTheDocument();
+    expect(screen.queryByText("clip_001.m4a")).not.toBeInTheDocument();
+    expect(contextBox()).toHaveValue("i am downsizing before a move");
+  });
+
+  test("discarding the transcript clears the name", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("something");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+    await user.click(await screen.findByRole("button", { name: /discard transcript/i }));
+
+    expect(screen.getByText("No audio file selected")).toBeInTheDocument();
+    expect(screen.queryByText("clip_001.m4a")).not.toBeInTheDocument();
+  });
+
+  test("discarding a silent result clears the name too", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_012.m4a"));
+    await user.click(await screen.findByRole("button", { name: /discard transcript/i }));
+
+    expect(screen.getByText("No audio file selected")).toBeInTheDocument();
+  });
+
+  test("starting a recording clears the name", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("from the file");
+    track(installRecordingSupport());
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+    await screen.findByText("clip_001.m4a");
+
+    await user.click(screen.getByRole("button", { name: /record context/i }));
+
+    expect(screen.getByText("No audio file selected")).toBeInTheDocument();
+    expect(screen.queryByText("clip_001.m4a")).not.toBeInTheDocument();
+  });
+
+  test("only File.name is shown — never a path", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("ok");
+    render(<Host />);
+
+    await uploadAudio(user, fileNamed("clip_001.m4a"));
+
+    const shown = await screen.findByText("clip_001.m4a");
+    expect(shown.textContent).toBe("clip_001.m4a");
+    expect(shown.textContent).not.toMatch(/[\\/]/);
+    expect(shown.textContent).not.toMatch(/fakepath|Users|audio_clips/i);
+  });
+});
+
+describe("VoiceContextInput — the file control stays accessible", () => {
+  test("the real file input is still present and reachable by its label", () => {
+    render(<Host />);
+    const input = screen.getByLabelText(/audio file/i);
+
+    expect(input).toBeInTheDocument();
+    expect(input.tagName).toBe("INPUT");
+    expect(input).toHaveAttribute("type", "file");
+    expect(input).toHaveAttribute("accept", "audio/*");
+  });
+
+  test("the visible label is associated with the input, so clicking it opens the picker", () => {
+    render(<Host idPrefix="host" />);
+    const input = screen.getByLabelText(/audio file/i);
+    const label = document.querySelector(`label[for="${input.id}"]`);
+
+    expect(label).not.toBeNull();
+    expect(label).toHaveTextContent("Audio file");
+  });
+
+  test("the input is focusable, so it is reachable by keyboard", async () => {
+    const user = userEvent.setup();
+    render(<Host />);
+    const input = screen.getByLabelText(/audio file/i);
+
+    await user.tab();
+    await user.tab();
+
+    input.focus();
+    expect(input).toHaveFocus();
+  });
+
+  test("the input is hidden visually but NOT removed from the accessibility tree", () => {
+    render(<Host />);
+    const input = screen.getByLabelText(/audio file/i);
+
+    expect(input).not.toHaveAttribute("hidden");
+    expect(input).not.toHaveAttribute("aria-hidden", "true");
+    expect(input.className).toContain("sr-only");
+  });
+
+  test("the input is still disabled while voice is busy", async () => {
+    const user = userEvent.setup();
+    track(installRecordingSupport());
+    render(<Host />);
+
+    await user.click(screen.getByRole("button", { name: /record context/i }));
+
+    expect(screen.getByLabelText(/audio file/i)).toBeDisabled();
+  });
+});

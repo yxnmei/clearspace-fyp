@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVoiceContext } from "../hooks/useVoiceContext";
 
 // The reusable voice half of the context field, mounted beside — never
@@ -58,6 +58,12 @@ export default function VoiceContextInput({
     return () => onBusyChangeRef.current?.(false);
   }, []);
 
+  // The chosen file's NAME, kept here because the native input cannot:
+  // handleFileChange clears input.value immediately (see below), which
+  // also wipes the browser's own filename label. Only File.name — never
+  // a path, which the browser does not expose anyway.
+  const [selectedFileName, setSelectedFileName] = useState(null);
+
   const audioInputId = `${idPrefix}-voice-file`;
   const transcriptId = `${idPrefix}-voice-transcript`;
   const hasContext = context.trim().length > 0;
@@ -67,16 +73,35 @@ export default function VoiceContextInput({
     const input = event.target;
     const file = input.files?.[0] ?? null;
     // Clear the input so choosing the SAME file again after a failure
-    // still fires a change event.
+    // still fires a change event. This is why the name is held in state
+    // rather than read back off the input.
     input.value = "";
-    if (file) await transcribeFile(file);
+    if (!file) return;
+    // Set before transcribing and kept on failure: a rejected file is
+    // when the user most needs to see which one they picked.
+    setSelectedFileName(file.name);
+    await transcribeFile(file);
   }
 
+  // Apply, discard and record-instead are the three moments the chosen
+  // file stops being what the panel is about; every other state keeps
+  // the name on screen.
   function handleApply() {
     const text = (pendingTranscript ?? "").trim();
     if (!text) return;
     onApplyTranscript?.(text);
+    setSelectedFileName(null);
     discard();
+  }
+
+  function handleDiscard() {
+    setSelectedFileName(null);
+    discard();
+  }
+
+  function handleStartRecording() {
+    setSelectedFileName(null);
+    return startRecording();
   }
 
   return (
@@ -101,7 +126,7 @@ export default function VoiceContextInput({
           ) : (
             <button
               type="button"
-              onClick={startRecording}
+              onClick={handleStartRecording}
               disabled={disabled || isBusy}
               className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
             >
@@ -109,17 +134,28 @@ export default function VoiceContextInput({
             </button>
           ))}
 
-        <label htmlFor={audioInputId} className="text-sm text-stone-700">
-          Audio file
-        </label>
+        {/* The real input is kept and only its native rendering is
+            replaced: visually hidden, so it stays focusable and
+            labelled, with `peer` carrying focus and disabled onto the
+            label. Hiding it is what stops the browser's own "No file
+            chosen" contradicting the retained filename beside it. */}
         <input
           id={audioInputId}
           type="file"
           accept="audio/*"
           onChange={handleFileChange}
           disabled={disabled || isBusy}
-          className="block max-w-full text-xs text-stone-700 file:mr-3 file:rounded-md file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-xs file:font-medium hover:file:bg-stone-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
+          className="peer sr-only"
         />
+        <label
+          htmlFor={audioInputId}
+          className="cursor-pointer rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-800 hover:bg-stone-100 peer-disabled:cursor-not-allowed peer-disabled:opacity-60 peer-focus-visible:ring-2 peer-focus-visible:ring-green-700"
+        >
+          Audio file
+        </label>
+        <span className="max-w-full truncate text-xs text-stone-600">
+          {selectedFileName ?? "No audio file selected"}
+        </span>
       </div>
 
       {!recordingSupported && (
@@ -154,7 +190,7 @@ export default function VoiceContextInput({
               <div className="mt-3">
                 <button
                   type="button"
-                  onClick={discard}
+                  onClick={handleDiscard}
                   className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
                 >
                   Discard transcript
@@ -189,7 +225,7 @@ export default function VoiceContextInput({
                 </button>
                 <button
                   type="button"
-                  onClick={discard}
+                  onClick={handleDiscard}
                   className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
                 >
                   Discard transcript
