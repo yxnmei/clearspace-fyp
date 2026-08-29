@@ -1,11 +1,12 @@
 # ClearSpace backend — evaluation-only dependencies
 # Kept separate from requirements.txt: these exist purely to produce the
-# §2 model comparisons (faster-whisper vs Whisper, Places365 vs CLIP) and
-# should never be a runtime dependency of the shipped app.
+# §2 model comparisons (Places365 vs CLIP) and should never be a runtime
+# dependency of the shipped app.
 #
 # Install with: pip install -r requirements.txt -r requirements-eval.txt
-
-faster-whisper==1.1.1
+#
+# Both STT backends live in requirements.txt, not here — either one can
+# be the configured production backend.
 
 # Places365 comparison: no maintained PyPI package — this pulls the
 # reference ResNet18-Places365 checkpoint + category file at eval time.

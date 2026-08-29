@@ -25,12 +25,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes import get_transcriber_provider
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.main import app
 from app.models.whisper_stt import (
     TranscriberUnavailableError,
     TranscriptionFailedError,
     TranscriptResult,
+    resolve_model_name,
 )
 from app.services import transcription_service
 from app.api import routes as routes_module
@@ -43,6 +44,30 @@ client = TestClient(app)
 # genuine programming defect can be asserted as a 500 rather than as a
 # sanitized "service unavailable".
 raw_client = TestClient(app, raise_server_exceptions=False)
+
+
+def production_model_name() -> str:
+    """The model name the route will ask for, resolved the way the route
+    resolves it.
+
+    Derived, never hardcoded: the route rejects a result whose
+    model_name is not the one it requested, so a fake pinned to one
+    backend turns into a 503 the moment the configured default changes.
+    These tests are about the route's contract, not about which backend
+    is default.
+    """
+    settings = get_settings()
+    return resolve_model_name(settings.stt_backend, settings.whisper_model_size)
+
+
+def other_model_name() -> str:
+    """A valid model name that is NOT the configured one, so the
+    mismatch test stays a real mismatch under either default."""
+    return (
+        "whisper-base"
+        if production_model_name() != "whisper-base"
+        else "faster-whisper-base"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -77,15 +102,17 @@ def override_transcriber(fake):
     app.dependency_overrides[get_transcriber_provider] = lambda: (lambda: fake)
 
 
-def fake_result(text="hello there", model_name="whisper-base", ms=12.5, duration=None):
+def fake_result(text="hello there", model_name=None, ms=12.5, duration=None):
     """By default the fake echoes the duration of the audio it was
     actually given, because the service now checks that a result belongs
-    to the audio it was produced from. `duration` forces a mismatch."""
+    to the audio it was produced from. `duration` forces a mismatch.
+    `model_name` defaults to whatever the route will request."""
+    resolved = production_model_name() if model_name is None else model_name
 
     def _transcribe(decoded, **kwargs):
         return TranscriptResult(
             text=text,
-            model_name=model_name,
+            model_name=resolved,
             transcription_ms=ms,
             audio_duration_s=decoded.duration_s if duration is None else duration,
         )
@@ -111,7 +138,7 @@ def test_success_returns_the_exact_contract():
     body = response.json()
     assert body == {
         "transcript": "hello there",
-        "model_name": "whisper-base",
+        "model_name": production_model_name(),
         "transcription_ms": 12.5,
         "audio_duration_s": 0.5,
     }
@@ -135,7 +162,7 @@ def test_the_route_receives_genuinely_decoded_audio():
         seen["ndim"] = decoded.waveform.ndim
         seen["dtype"] = decoded.waveform.dtype.name
         seen["model_name"] = kwargs["model_name"]
-        return TranscriptResult("ok", "whisper-base", 1.0, decoded.duration_s)
+        return TranscriptResult("ok", production_model_name(), 1.0, decoded.duration_s)
 
     override_transcriber(_transcribe)
     assert post(audio=wav_bytes(0.75, rate=44100, channels=2)).status_code == 200
@@ -143,7 +170,9 @@ def test_the_route_receives_genuinely_decoded_audio():
         "sample_rate": 16000,
         "ndim": 1,
         "dtype": "float32",
-        "model_name": "whisper-base",
+        # Asserting a fixed backend here would test the default rather
+        # than the plumbing.
+        "model_name": production_model_name(),
     }
 
 
@@ -305,7 +334,7 @@ def test_bool_and_non_finite_result_numbers_are_rejected(field, value):
     def _transcribe(decoded, **kwargs):
         values = {
             "text": "hi",
-            "model_name": "whisper-base",
+            "model_name": production_model_name(),
             "transcription_ms": 1.0,
             "audio_duration_s": decoded.duration_s,
         }
@@ -319,7 +348,7 @@ def test_bool_and_non_finite_result_numbers_are_rejected(field, value):
 def test_a_result_for_a_different_model_is_rejected():
     """A backend that quietly answered for another model would silently
     invalidate anything built on the model_name field."""
-    override_transcriber(fake_result(model_name="faster-whisper-base"))
+    override_transcriber(fake_result(model_name=other_model_name()))
     assert post().status_code == 503
 
 
@@ -415,7 +444,7 @@ def test_the_transcriber_is_resolved_through_the_dependency_seam():
 
     def _transcribe(decoded, **kwargs):
         calls["count"] += 1
-        return TranscriptResult("via seam", "whisper-base", 1.0, 0.5)
+        return TranscriptResult("via seam", production_model_name(), 1.0, 0.5)
 
     override_transcriber(_transcribe)
     assert post().json()["transcript"] == "via seam"

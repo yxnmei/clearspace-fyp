@@ -24,11 +24,14 @@ regex==2024.11.6
 # (openai/CLIP has no PyPI release)
 
 # --- speech-to-text ---
+# BOTH backends belong here, not in requirements-eval.txt: faster-whisper
+# is the default and openai-whisper is the supported override, so a clean
+# `pip install -r requirements.txt` must be able to serve either one.
+faster-whisper==1.1.1
 openai-whisper==20240930
-# Audio decode for POST /transcribe. Declared explicitly rather than
-# relied on transitively: PyAV reaches this environment only through
-# faster-whisper, which is evaluation-only (requirements-eval.txt), so a
-# clean `pip install -r requirements.txt` would otherwise not have it.
+# Audio decode for POST /transcribe. Pinned explicitly rather than taken
+# transitively from faster-whisper, so the decoder's version stays under
+# this project's control rather than another package's.
 # Uploads are decoded in-memory to float32 16kHz mono and passed to the
 # model as an ndarray, so no temp file is written and — since
 # whisper.load_audio is never called — no ffmpeg CLI is needed at

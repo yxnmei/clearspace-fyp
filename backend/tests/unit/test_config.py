@@ -10,10 +10,14 @@ an unbounded request.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 def test_defaults_are_the_screened_bounds():
@@ -229,7 +233,7 @@ def stt_env(monkeypatch):
 
 def test_stt_defaults():
     settings = Settings(_env_file=None)
-    assert settings.stt_backend == "whisper"  # production backend
+    assert settings.stt_backend == "faster-whisper"  # production backend
     assert settings.stt_max_upload_bytes == 10485760  # 10MB
     assert settings.stt_max_audio_seconds == 60
     assert settings.stt_compute_type == "int8"
@@ -238,13 +242,13 @@ def test_stt_defaults():
 
 def test_documented_env_example_stt_values_load(stt_env):
     settings = stt_env(
-        stt_backend="whisper",
+        stt_backend="faster-whisper",
         stt_max_upload_bytes="10485760",
         stt_max_audio_seconds="60",
         stt_compute_type="int8",
         stt_local_files_only="true",
     )
-    assert settings.stt_backend == "whisper"
+    assert settings.stt_backend == "faster-whisper"
     assert settings.stt_max_upload_bytes == 10485760
     assert settings.stt_max_audio_seconds == 60
     assert settings.stt_compute_type == "int8"
@@ -266,10 +270,104 @@ def test_backend_accepts_both_supported_values(good):
     assert Settings(_env_file=None, stt_backend=good).stt_backend == good
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "Whisper", "vosk", "whisper ", None, True, 1, []])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "   ",
+        "Whisper",
+        "vosk",
+        "whisper ",
+        "Faster-Whisper",
+        "faster whisper",
+        "faster-whisper-base",
+        " faster-whisper",
+        None,
+        True,
+        1,
+        [],
+    ],
+)
 def test_backend_rejects_anything_else(bad):
     with pytest.raises(ValidationError):
         Settings(_env_file=None, stt_backend=bad)
+
+
+# --- the production default, and the override that must survive it -------
+
+
+def test_the_production_default_backend_is_faster_whisper(stt_env):
+    """Chosen for load time on equal measured accuracy, never as an
+    accuracy claim — see backend/evaluation/README.md."""
+    assert stt_env().stt_backend == "faster-whisper"
+
+
+def test_explicit_whisper_is_still_fully_supported(stt_env):
+    """Promoting one backend must not strand the other."""
+    assert stt_env(stt_backend="whisper").stt_backend == "whisper"
+
+
+def test_switching_back_needs_only_the_one_env_var(stt_env):
+    """Size, quantisation, bounds and the download lock are untouched by
+    which backend is selected."""
+    settings = stt_env(stt_backend="whisper")
+
+    assert settings.whisper_model_size == "base"
+    assert settings.stt_compute_type == "int8"
+    assert settings.stt_local_files_only is True
+    assert settings.stt_max_upload_bytes == 10485760
+    assert settings.stt_max_audio_seconds == 60
+
+
+def test_the_model_size_stays_pinned(stt_env):
+    """The loaders take the size as a path or repo id, so a widened
+    value would let configuration name an arbitrary checkpoint."""
+    assert stt_env().whisper_model_size == "base"
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, whisper_model_size="small")
+
+
+def test_the_download_lock_holds_for_either_backend(stt_env):
+    """A production request must never be able to start a download."""
+    assert stt_env().stt_local_files_only is True
+    for value in (False, "false", "0", "no", 1, 0, None):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, stt_local_files_only=value)
+
+
+def test_the_committed_env_example_matches_the_shipped_default():
+    """.env.example is what a new install copies, so it must not
+    document a different backend than the code defaults to."""
+    example = (_BACKEND_DIR / ".env.example").read_text(encoding="utf-8")
+
+    assert "STT_BACKEND=faster-whisper" in example
+    assert "STT_BACKEND=whisper" not in example
+    assert "WHISPER_MODEL_SIZE=base" in example
+    assert "STT_LOCAL_FILES_ONLY=true" in example
+
+
+def _requirement_lines(filename: str) -> list[str]:
+    """Declared requirements only — comments and blanks dropped, so
+    these assertions cannot be satisfied or broken by prose."""
+    text = (_BACKEND_DIR / filename).read_text(encoding="utf-8")
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def test_both_backends_are_declared_as_runtime_dependencies():
+    """Either backend can be the configured one, so a clean
+    `pip install -r requirements.txt` must be able to serve both — an
+    app whose default backend is missing raises "backend is not
+    installed" on every call."""
+    runtime = _requirement_lines("requirements.txt")
+    evaluation = _requirement_lines("requirements-eval.txt")
+
+    assert "faster-whisper==1.1.1" in runtime
+    assert "openai-whisper==20240930" in runtime, "the override backend must stay installable"
+    assert not [line for line in evaluation if line.startswith("faster-whisper")]
 
 
 # --- stt_max_upload_bytes / stt_max_audio_seconds -------------------------

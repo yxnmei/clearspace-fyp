@@ -84,12 +84,14 @@ class Settings(BaseSettings):
     # arbitrary checkpoint. Literal rejects other sizes, absolute paths,
     # traversal sequences and whitespace-padded values alike.
     whisper_model_size: Literal["base"] = "base"
-    # openai-whisper is the production backend and the only one declared
-    # in requirements.txt; "faster-whisper" is reachable for the V3
-    # comparison and lives in requirements-eval.txt. Literal, so an
-    # unrecognised or blank value is a startup failure rather than a
-    # backend that silently resolves to nothing.
-    stt_backend: Literal["whisper", "faster-whisper"] = "whisper"
+    # faster-whisper is the default because the two backends measured
+    # IDENTICAL accuracy and it loads faster — NOT because it transcribes
+    # better (see backend/evaluation/README.md for the figures). Do not
+    # let that become an accuracy claim. "whisper" stays fully supported
+    # and is one STT_BACKEND=whisper away; both ship in requirements.txt.
+    # Literal, so an unrecognised or blank value is a startup failure
+    # rather than a backend that silently resolves to nothing.
+    stt_backend: Literal["whisper", "faster-whisper"] = "faster-whisper"
     # 10MB. Bounds what the route will read from one upload; the read is
     # capped at this + 1 byte so an oversized body is detected without
     # ever being held in memory in full.
