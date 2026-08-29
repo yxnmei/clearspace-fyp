@@ -234,8 +234,7 @@ exactly rather than approximately.
    can seat" (`clip_006`, WER 0.385); `donate these old paperback books`
    → "Don't eat these old paperback books" (`clip_010`, WER 0.400).
 2. **One error changes user intent.** "Donate these" → "Don't eat these"
-   inverts the instruction. It is a plausible-sounding sentence, so
-   nothing downstream could detect it as wrong.
+   inverts the instruction. It is a plausible-sounding sentence, so downstream schema and structural validation cannot determine from the transcript alone that it differs from the speaker's intent.
 3. **Strict WER also charges formatting differences.** `three` → "3",
    `twenty nineteen` → "2019" (`clip_011`), and `reorganise` →
    "reorganize" (`clip_002`). The rule deliberately does not convert
