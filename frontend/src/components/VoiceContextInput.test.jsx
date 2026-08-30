@@ -776,3 +776,53 @@ describe("VoiceContextInput — the file control stays accessible", () => {
     expect(screen.getByLabelText(/audio file/i)).toBeDisabled();
   });
 });
+
+describe("VoiceContextInput — controls keep native button semantics (redesign)", () => {
+  test("the record button is a type=button control", () => {
+    track(installRecordingSupport());
+    render(<Host />);
+    expect(screen.getByRole("button", { name: /record context/i })).toHaveAttribute("type", "button");
+  });
+
+  test("the stop button is a type=button control while recording", async () => {
+    const user = userEvent.setup();
+    track(installRecordingSupport());
+    render(<Host />);
+
+    await user.click(screen.getByRole("button", { name: /record context/i }));
+
+    expect(screen.getByRole("button", { name: /stop recording/i })).toHaveAttribute("type", "button");
+  });
+
+  test("the apply and discard controls are type=button, so neither submits a surrounding form", async () => {
+    const user = userEvent.setup();
+    transcribeResolves("keep the desk by the window");
+    render(<Host />);
+
+    await uploadAudio(user);
+
+    expect(await screen.findByRole("button", { name: "Use as context" })).toHaveAttribute("type", "button");
+    expect(screen.getByRole("button", { name: /discard transcript/i })).toHaveAttribute("type", "button");
+  });
+
+  test("the transcribing status announces itself without leaking transport internals", async () => {
+    const user = userEvent.setup();
+    let settle;
+    client.transcribeAudio.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    render(<Host />);
+
+    await uploadAudio(user);
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/transcribing/i);
+    expect(status.textContent).not.toMatch(/\d{3}|https?:|blob:|POST \//);
+
+    await act(async () => {
+      settle({ transcript: "x", model_name: "whisper-base", transcription_ms: 1, audio_duration_s: 1 });
+    });
+  });
+});

@@ -215,3 +215,67 @@ describe("ReorganiseUploadForm — voice context", () => {
     expect(screen.getByLabelText(/audio file/i)).toBeDisabled();
   });
 });
+
+describe("ReorganiseUploadForm — room photo presentation (redesign)", () => {
+  test("the file input is restricted to PNG and JPEG", () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
+  });
+
+  test("the selected filename is shown from File.name — no path, no fake path", async () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("living_room.png"));
+
+    const shown = screen.getByText("living_room.png");
+    expect(shown.textContent).toBe("living_room.png");
+    expect(shown.textContent).not.toMatch(/[\\/]/);
+    expect(shown.textContent).not.toMatch(/fakepath|Users|C:\\/i);
+  });
+
+  test("an unsupported type leaves the field empty, shows a field alert, and never shows that filename", () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/room photo/i), {
+      target: { files: [new File(["fake"], "clip.webp", { type: "image/webp" })] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/PNG or JPEG/i);
+    expect(screen.getByText("No photo selected")).toBeInTheDocument();
+    expect(screen.queryByText("clip.webp")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /analyse room/i })).toBeDisabled();
+  });
+
+  test("replacing the photo swaps the filename and revokes exactly the previous object URL", async () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("first.png"));
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("second.png"));
+
+    expect(screen.getByText("second.png")).toBeInTheDocument();
+    expect(screen.queryByText("first.png")).not.toBeInTheDocument();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-preview");
+  });
+
+  test("the photo and context areas sit side by side on wide screens", () => {
+    const { container } = render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+    expect(container.querySelector(".grid").className).toMatch(/lg:grid-cols-2/);
+  });
+
+  test("the real file input stays focusable and disables with the rest of the form", () => {
+    const { rerender } = render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+    const input = screen.getByLabelText(/room photo/i);
+    input.focus();
+    expect(input).toHaveFocus();
+
+    rerender(<ReorganiseUploadForm phase="analysing" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByLabelText(/room photo/i)).toBeDisabled();
+  });
+
+  test("the submit button is a real submit control, not a plain button", () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /analyse room/i })).toHaveAttribute("type", "submit");
+  });
+});

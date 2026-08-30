@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import RoomPhotoField from "./RoomPhotoField";
 import VoiceContextInput from "./VoiceContextInput";
+import { Button } from "./ui/button";
 
 // Presentational + its own small local UI state (selected file, context
 // text, preview URL) — none of that is workflow state, so it stays out
 // of useDeclutterFlow (§4: components stay presentational, hooks own
 // real state). onSubmit is the only thing this component calls out to;
 // it never talks to the API directly.
+//
+// The room-photo presentation is delegated to the shared, stateless
+// RoomPhotoField; file state, the object-URL lifecycle and the submit
+// guards stay here.
 export default function DeclutterUploadForm({ status, error, onSubmit }) {
   const [file, setFile] = useState(null);
   const [context, setContext] = useState("");
@@ -53,80 +59,73 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-      <h2 className="mb-4 text-lg font-medium text-stone-900">1. Upload a room photo</h2>
-
-      <div className="mb-4">
-        <label htmlFor="declutter-image" className="mb-1 block text-sm font-medium text-stone-700">
-          Room photo
-        </label>
-        <input
-          id="declutter-image"
-          type="file"
-          accept="image/*"
-          onChange={handleFileChange}
-          disabled={isUploading}
-          className="block w-full text-sm text-stone-700 file:mr-3 file:rounded-md file:border-0 file:bg-stone-100 file:px-3 file:py-2 file:text-sm file:font-medium hover:file:bg-stone-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-        />
-        <p className="mt-1 text-xs text-stone-500">JPG or PNG of one room, photographed so most items are visible.</p>
+    <form onSubmit={handleSubmit} className="rounded-card border border-border bg-surface shadow-card">
+      <div className="border-b border-border p-5 sm:p-6">
+        <h2 className="text-lg font-semibold text-foreground">1. Upload a room photo</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          One clear photo of the room, with most items in frame. You can add optional context for the AI too.
+        </p>
       </div>
 
-      {previewUrl && (
-        <div className="mb-4">
-          <img
-            src={previewUrl}
-            alt="Preview of the room photo you selected to declutter"
-            className="max-h-64 rounded-md border border-stone-200 object-contain"
+      <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
+        <RoomPhotoField
+          id="declutter-image"
+          accept="image/*"
+          disabled={isUploading}
+          onChange={handleFileChange}
+          fileName={file?.name ?? null}
+          previewUrl={previewUrl}
+          previewAlt="Preview of the room photo you selected to declutter"
+          helpText="JPG or PNG of one room, photographed so most items are visible."
+        />
+
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="declutter-context" className="block text-sm font-medium text-foreground">
+              Context for the AI (optional)
+            </label>
+            <textarea
+              id="declutter-context"
+              value={context}
+              onChange={(event) => setContext(event.target.value)}
+              disabled={isUploading}
+              rows={3}
+              placeholder="e.g. I'm downsizing before a move and want to be decisive."
+              className="mt-1 block w-full rounded-control border border-input bg-surface p-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+            />
+          </div>
+
+          {/* Optional voice route into the SAME context field above — it
+              hands back text for setContext, and never writes it itself. */}
+          <VoiceContextInput
+            idPrefix="declutter"
+            context={context}
+            onApplyTranscript={setContext}
+            onBusyChange={setVoiceBusy}
+            disabled={isUploading}
           />
         </div>
-      )}
-
-      <div className="mb-4">
-        <label htmlFor="declutter-context" className="mb-1 block text-sm font-medium text-stone-700">
-          Context for the AI (optional)
-        </label>
-        <textarea
-          id="declutter-context"
-          value={context}
-          onChange={(event) => setContext(event.target.value)}
-          disabled={isUploading}
-          rows={2}
-          placeholder="e.g. I'm downsizing before a move and want to be decisive."
-          className="block w-full rounded-md border border-stone-300 p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-        />
       </div>
 
-      {/* Optional voice route into the SAME context field above — it
-          hands back text for setContext, and never writes it itself. */}
-      <VoiceContextInput
-        idPrefix="declutter"
-        context={context}
-        onApplyTranscript={setContext}
-        onBusyChange={setVoiceBusy}
-        disabled={isUploading}
-      />
+      <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
+        <Button type="submit" disabled={!file || isUploading || voiceBusy} className="self-start">
+          {isUploading ? "Analysing…" : "Analyse room"}
+        </Button>
 
-      <button
-        type="submit"
-        disabled={!file || isUploading || voiceBusy}
-        className="rounded-md bg-green-800 px-4 py-2 text-sm font-medium text-white hover:bg-green-900 disabled:cursor-not-allowed disabled:bg-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
-      >
-        {isUploading ? "Analysing…" : "Analyse room"}
-      </button>
+        {isUploading && (
+          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span aria-hidden="true" className="h-2.5 w-2.5 animate-pulse rounded-pill bg-primary" />
+            Analysing your room. Scene classification, object detection and item reasoning may take up to two
+            minutes on this computer.
+          </p>
+        )}
 
-      {isUploading && (
-        <p role="status" className="mt-3 flex items-center gap-2 text-sm text-stone-600">
-          <span aria-hidden="true" className="h-3 w-3 animate-pulse rounded-full bg-green-700" />
-          Analysing your room. Scene classification, object detection and item reasoning may take up to two minutes
-          on this computer.
-        </p>
-      )}
-
-      {status === "error" && error && (
-        <p role="alert" className="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-          {error} You can try again — your selected photo and context are still here.
-        </p>
-      )}
+        {status === "error" && error && (
+          <p role="alert" className="rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error">
+            {error} You can try again — your selected photo and context are still here.
+          </p>
+        )}
+      </div>
     </form>
   );
 }

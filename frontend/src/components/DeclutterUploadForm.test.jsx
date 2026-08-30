@@ -218,3 +218,71 @@ describe("DeclutterUploadForm — voice context", () => {
     expect(screen.getByLabelText(/audio file/i)).toBeDisabled();
   });
 });
+
+describe("DeclutterUploadForm — room photo presentation (redesign)", () => {
+  test("the file input still accepts any image type", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/*");
+  });
+
+  test("the selected filename is shown from File.name — no path, no fake path", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile("living_room.jpg"));
+
+    const shown = screen.getByText("living_room.jpg");
+    expect(shown.textContent).toBe("living_room.jpg");
+    expect(shown.textContent).not.toMatch(/[\\/]/);
+    expect(shown.textContent).not.toMatch(/fakepath|Users|C:\\/i);
+  });
+
+  test("replacing the photo swaps the filename and revokes exactly the previous object URL", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile("first.jpg"));
+    expect(screen.getByText("first.jpg")).toBeInTheDocument();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile("second.jpg"));
+
+    expect(screen.getByText("second.jpg")).toBeInTheDocument();
+    expect(screen.queryByText("first.jpg")).not.toBeInTheDocument();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-preview-url");
+  });
+
+  test("a bounded preview with alt text replaces the empty state after selection", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+
+    expect(screen.getByText(/no photo selected yet/i)).toBeInTheDocument();
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile());
+
+    const img = screen.getByRole("img");
+    expect(img).toHaveAccessibleName(/preview of the room photo you selected to declutter/i);
+    expect(img.className).toMatch(/max-h-64/);
+    expect(screen.queryByText(/no photo selected yet/i)).not.toBeInTheDocument();
+  });
+
+  test("the photo and context areas sit side by side on wide screens", () => {
+    const { container } = render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    expect(container.querySelector(".grid").className).toMatch(/lg:grid-cols-2/);
+  });
+
+  test("the real file input stays focusable and disables with the rest of the form", () => {
+    const { rerender } = render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    const input = screen.getByLabelText(/room photo/i);
+    input.focus();
+    expect(input).toHaveFocus();
+
+    rerender(<DeclutterUploadForm status="uploading" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByLabelText(/room photo/i)).toBeDisabled();
+  });
+
+  test("the submit button is a real submit control, not a plain button", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /analyse room/i })).toHaveAttribute("type", "submit");
+  });
+});
