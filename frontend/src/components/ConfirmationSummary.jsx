@@ -1,16 +1,27 @@
+import { CheckCircle2, PackageCheck, Tag, HandHeart, Trash2, PencilLine, EyeOff } from "lucide-react";
+import { cn } from "../lib/cn";
+
 // Renders the normalized ConfirmationResult from useDeclutterFlow's
 // confirmation state. Confirmed Keep item_ids are matched back to
 // reviewItems strictly by item_id — never by label — so this component
 // can show a clean_label/position next to each confirmed Keep item.
 //
-// nextStepNote (R6, Both — required correction 6/"configurable
-// confirmation handoff wording"): optional, defaults to the exact
-// original hardcoded string below — DeclutterReview's own existing call
-// site never passes it, so Declutter's rendered output is byte-for-byte
-// unchanged. useBothFlow's BothPage passes a Both-specific note instead,
-// since for Both, Reorganise isn't a hypothetical "future stage" (a
-// separate workflow the user might start later) — it's the very next
-// step of the SAME flow, one click away.
+// nextStepNote: optional. Defaults to the standalone-Declutter wording
+// below (DeclutterReview does not pass it there). Both passes its own
+// note, since for Both, Reorganise is the immediate next step of the
+// same flow rather than a separate workflow the user might start later.
+function Count({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-center gap-2 rounded-control border border-success/30 bg-surface px-3 py-2">
+      <Icon aria-hidden="true" width={15} height={15} className="shrink-0 text-success" />
+      <div>
+        <dt className="text-xs text-success">{label}</dt>
+        <dd className="text-sm font-semibold text-foreground">{value}</dd>
+      </div>
+    </div>
+  );
+}
+
 export default function ConfirmationSummary({
   confirmation,
   reviewItems,
@@ -27,57 +38,47 @@ export default function ConfirmationSummary({
     matched: reviewItemsById.get(itemId) ?? null,
   }));
 
+  const decisionCount = confirmation.confirmedDecisions.length;
+
   return (
-    <section className="rounded-lg border border-green-300 bg-green-50 p-5 shadow-sm">
-      <h2 className="mb-1 text-lg font-medium text-green-900">Decisions confirmed</h2>
-      <p role="status" className="mb-4 text-sm text-green-800">
-        Run {confirmation.runId} — {confirmation.confirmedDecisions.length} decision
-        {confirmation.confirmedDecisions.length === 1 ? "" : "s"} confirmed.
+    <section className="rounded-card border border-success/40 bg-success/5 p-5 shadow-card sm:p-6">
+      <h2 className="flex items-center gap-2 text-lg font-semibold text-success">
+        <CheckCircle2 aria-hidden="true" width={20} height={20} />
+        Decisions confirmed
+      </h2>
+      <p role="status" className="mb-4 mt-1 text-sm text-foreground">
+        Run {confirmation.runId} — {decisionCount} decision
+        {decisionCount === 1 ? "" : "s"} confirmed.
       </p>
 
-      <dl className="mb-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
-        <div>
-          <dt className="text-green-700">Keep</dt>
-          <dd className="text-green-950">{counts.keep}</dd>
-        </div>
-        <div>
-          <dt className="text-green-700">Sell</dt>
-          <dd className="text-green-950">{counts.sell}</dd>
-        </div>
-        <div>
-          <dt className="text-green-700">Donate</dt>
-          <dd className="text-green-950">{counts.donate}</dd>
-        </div>
-        <div>
-          <dt className="text-green-700">Discard</dt>
-          <dd className="text-green-950">{counts.discard}</dd>
-        </div>
-        <div>
-          <dt className="text-green-700">Changed from AI</dt>
-          <dd className="text-green-950">{confirmation.decisionChangedCount}</dd>
-        </div>
-        <div>
-          <dt className="text-green-700">Excluded</dt>
-          <dd className="text-green-950">{confirmation.excludedCount}</dd>
-        </div>
+      <dl className="mb-4 grid grid-cols-2 gap-2.5 text-sm sm:grid-cols-3">
+        <Count icon={PackageCheck} label="Keep" value={counts.keep} />
+        <Count icon={Tag} label="Sell" value={counts.sell} />
+        <Count icon={HandHeart} label="Donate" value={counts.donate} />
+        <Count icon={Trash2} label="Discard" value={counts.discard} />
+        <Count icon={PencilLine} label="Changed from AI" value={confirmation.decisionChangedCount} />
+        <Count icon={EyeOff} label="Excluded" value={confirmation.excludedCount} />
       </dl>
 
-      <h3 className="mb-1 text-sm font-medium text-green-900">
-        Confirmed Keep items ({keepItems.length})
-      </h3>
-      <p className="mb-2 text-sm text-green-800">{nextStepNote}</p>
+      <h3 className="text-sm font-semibold text-success">Confirmed Keep items ({keepItems.length})</h3>
+      <p className="mb-2 mt-1 text-sm text-foreground">{nextStepNote}</p>
       {keepItems.length === 0 ? (
-        <p className="text-sm text-green-700">No items were confirmed as Keep.</p>
+        <p className="text-sm text-muted-foreground">No items were confirmed as Keep.</p>
       ) : (
-        <ul className="space-y-1">
+        <ul className="space-y-1.5">
           {keepItems.map(({ item_id, matched }) => (
-            <li key={item_id} className="rounded-md border border-green-200 bg-white p-2 text-sm text-stone-800">
+            <li
+              key={item_id}
+              className={cn(
+                "rounded-control border border-success/30 bg-surface p-2 text-sm text-foreground"
+              )}
+            >
               <code>{item_id}</code>
               {matched && (
                 <>
                   {" — "}
                   {matched.effective_label ?? matched.clean_label}
-                  {matched.position && <span className="text-stone-500"> ({matched.position})</span>}
+                  {matched.position && <span className="text-muted-foreground"> ({matched.position})</span>}
                 </>
               )}
             </li>

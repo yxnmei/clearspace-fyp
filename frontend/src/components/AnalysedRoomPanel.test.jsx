@@ -166,4 +166,27 @@ describe("AnalysedRoomPanel", () => {
     expect(box).toHaveClass("custom-reorganise-box-class");
     expect(getBoxClassName).toHaveBeenCalledWith(expect.objectContaining({ item_id: "item_001" }), false, false);
   });
+
+  describe("analysed-room presentation and controls", () => {
+    test("the only controls are the detection boxes and the Show all boxes checkbox — no zoom or retake", () => {
+      render(<AnalysedRoomPanel {...baseProps()} />);
+      expect(screen.getByRole("checkbox", { name: /show all boxes/i })).toBeInTheDocument();
+      expect(screen.getAllByRole("button")).toHaveLength(1); // one box, nothing else
+      expect(screen.queryByRole("button", { name: /zoom|retake|camera|crop/i })).not.toBeInTheDocument();
+    });
+
+    test("the default classifier still distinguishes unresolved / contextual / resolved boxes", () => {
+      const items = [
+        makeItem({ item_id: "item_010", is_unresolved: true, is_expected: true }),
+        makeItem({ item_id: "item_011", is_expected: false, is_unresolved: false }),
+        makeItem({ item_id: "item_012", is_expected: true, is_unresolved: false, review_decision: "discard" }),
+      ];
+      render(<AnalysedRoomPanel {...baseProps({ items })} />);
+      expect(screen.getByRole("button", { name: /detection 10/i }).className).toContain("border-dashed");
+      expect(screen.getByRole("button", { name: /detection 11/i }).className).toContain("border-dotted");
+      const resolved = screen.getByRole("button", { name: /detection 12/i }).className;
+      expect(resolved).not.toContain("border-dashed");
+      expect(resolved).not.toContain("border-dotted");
+    });
+  });
 });

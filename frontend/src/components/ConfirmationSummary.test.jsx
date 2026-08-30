@@ -126,7 +126,7 @@ describe("ConfirmationSummary", () => {
     expect(screen.getByText(/no items were confirmed as keep/i)).toBeInTheDocument();
   });
 
-  test("without nextStepNote, the original default 'future Reorganise stage' wording is shown unchanged (R6)", () => {
+  test("without nextStepNote, the default 'future Reorganise stage' wording is shown", () => {
     const confirmation = {
       runId: "run1",
       confirmedDecisions: [makeConfirmedDecision()],
@@ -139,7 +139,7 @@ describe("ConfirmationSummary", () => {
     expect(screen.getByText(/future reorganise stage/i)).toBeInTheDocument();
   });
 
-  test("a configured nextStepNote replaces the default wording (R6, Both)", () => {
+  test("a configured nextStepNote replaces the default wording (Both)", () => {
     const confirmation = {
       runId: "run1",
       confirmedDecisions: [makeConfirmedDecision()],
@@ -157,5 +157,35 @@ describe("ConfirmationSummary", () => {
     );
     expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
     expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+  });
+
+  test("success-toned panel keeps the run status line and every count / evidence field", () => {
+    const confirmation = {
+      runId: "run7",
+      confirmedDecisions: [
+        makeConfirmedDecision({ item_id: "item_001", confirmed_decision: "keep" }),
+        makeConfirmedDecision({ item_id: "item_002", confirmed_decision: "discard", decision_changed: true }),
+      ],
+      confirmedKeepIds: ["item_001"],
+      decisionChangedCount: 1,
+      excludedCount: 2,
+      response: {},
+    };
+    const { container } = render(
+      <ConfirmationSummary
+        confirmation={confirmation}
+        reviewItems={[{ item_id: "item_001", clean_label: "lamp", position: "left" }]}
+      />
+    );
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/run run7 — 2 decisions confirmed/i);
+    expect(ddFor("Keep")).toBe("1");
+    expect(ddFor("Discard")).toBe("1");
+    expect(ddFor("Changed from AI")).toBe("1");
+    expect(ddFor("Excluded")).toBe("2");
+    expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /confirmed keep items \(1\)/i })).toBeInTheDocument();
+    expect(container.querySelector("section").className).toMatch(/border-success/);
   });
 });

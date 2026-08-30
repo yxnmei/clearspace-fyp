@@ -19,19 +19,22 @@ import { decisionBorderColor, itemNumberLabel } from "../utils/format";
 // is_unresolved/is_expected/ai_decision — fields only Declutter's
 // reviewItems carry) — kept as the DEFAULT for the optional
 // getBoxClassName prop below, so Declutter's existing usage (which never
-// passes that prop) renders byte-identically to before. Direct
-// Reorganise's item shape has none of those fields (only a boolean
-// "selected" concept), so it supplies its own classifier instead of
-// reusing this one — see ReorganiseItemSelector.
+// passes that prop) keeps its box categories. Direct Reorganise's item
+// shape has none of those fields (only a boolean "selected" concept), so
+// it supplies its own classifier instead — see ReorganiseItemSelector.
 function declutterBoxClassName(item, isActive, isQuiet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = item.is_unresolved
-    ? "border-dashed border-red-500 bg-red-500/10"
+    ? "border-dashed border-error bg-error/10"
     : !item.is_expected
-      ? "border-dotted border-stone-400 bg-stone-400/10"
-      : `${decisionBorderColor(item.review_decision ?? item.ai_decision)} bg-white/10`;
+      ? "border-dotted border-muted-foreground bg-muted-foreground/10"
+      : `${decisionBorderColor(item.review_decision ?? item.ai_decision)} bg-surface/10`;
 
-  const state = isActive ? "z-20 border-4 ring-2 ring-stone-900 ring-offset-1 opacity-100" : isQuiet ? "opacity-30" : "opacity-90";
+  const state = isActive
+    ? "z-20 border-4 ring-2 ring-ring ring-offset-1 opacity-100"
+    : isQuiet
+      ? "opacity-30"
+      : "opacity-90";
 
   return `${base} ${category} ${state}`;
 }
@@ -50,21 +53,25 @@ export default function AnalysedRoomPanel({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-medium text-stone-900">Analysed room</h3>
-        <label className="flex items-center gap-1.5 text-xs text-stone-600">
+        <h3 className="text-sm font-semibold text-foreground">Analysed room</h3>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"
             checked={showAllBoxes}
             onChange={(event) => onToggleShowAllBoxes(event.target.checked)}
-            className="h-3.5 w-3.5"
+            className="h-3.5 w-3.5 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           Show all boxes
         </label>
       </div>
 
       {imageUrl ? (
-        <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-stone-100">
-          <img src={imageUrl} alt="The room photo you uploaded, with detected item outlines overlaid" className="block h-auto w-full" />
+        <div className="relative overflow-hidden rounded-card border border-border bg-surface-muted">
+          <img
+            src={imageUrl}
+            alt="The room photo you uploaded, with detected item outlines overlaid"
+            className="block h-auto w-full"
+          />
           {visibleItems.map((item) => {
             const isActive = item.item_id === activeItemId;
             const isQuiet = showAllBoxes && activeItemId != null && !isActive;
@@ -83,7 +90,7 @@ export default function AnalysedRoomPanel({
                   height: `${(item.box.y2 - item.box.y1) * 100}%`,
                 }}
               >
-                <span className="absolute -left-0.5 -top-0.5 rounded bg-stone-900 px-1 text-[10px] font-semibold leading-tight text-white">
+                <span className="absolute -left-0.5 -top-0.5 rounded bg-foreground px-1 text-[10px] font-semibold leading-tight text-background">
                   {itemNumberLabel(item.item_id)}
                 </span>
               </button>
@@ -91,10 +98,10 @@ export default function AnalysedRoomPanel({
           })}
         </div>
       ) : (
-        <p className="text-sm text-stone-500">Image preview unavailable.</p>
+        <p className="text-sm text-muted-foreground">Image preview unavailable.</p>
       )}
 
-      <p className="mt-2 text-xs text-stone-500">
+      <p className="mt-2 text-xs text-muted-foreground">
         AI detection may miss or misidentify belongings. Review the highlighted image before confirming.
       </p>
     </div>

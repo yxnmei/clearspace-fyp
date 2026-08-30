@@ -272,4 +272,135 @@ describe("DeclutterItemCard", () => {
       expect(onCorrectLabel).not.toHaveBeenCalled();
     });
   });
+
+  describe("segmented decision controls", () => {
+    const CATEGORY = {
+      Keep: { on: /border-green-600/, off: /border-green-200/, accent: /accent-green-600/ },
+      Sell: { on: /border-blue-600/, off: /border-blue-200/, accent: /accent-blue-600/ },
+      Donate: { on: /border-amber-600/, off: /border-amber-200/, accent: /accent-amber-600/ },
+      Discard: { on: /border-red-600/, off: /border-red-200/, accent: /accent-red-600/ },
+    };
+
+    test("stay native radios inside the fieldset — not tabs or div buttons", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      const radios = screen.getAllByRole("radio");
+      expect(radios).toHaveLength(4);
+      radios.forEach((r) => expect(r.tagName).toBe("INPUT"));
+      expect(radios[0].closest("fieldset")).not.toBeNull();
+      expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+      // exactly one checked value across the four
+      expect(radios.filter((r) => r.checked)).toHaveLength(1);
+    });
+
+    test.each([
+      ["Keep", "green"],
+      ["Sell", "blue"],
+      ["Donate", "amber"],
+      ["Discard", "red"],
+    ])("%s uses its %s category colour (radio accent + label border/text/hover)", (label, colour) => {
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ review_decision: null })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      const radio = screen.getByRole("radio", { name: label });
+      const segment = radio.closest("label").className;
+      // unselected: light category border, category text, matching hover
+      expect(segment).toMatch(CATEGORY[label].off);
+      expect(segment).toMatch(new RegExp(`text-${colour}-800`));
+      expect(segment).toMatch(new RegExp(`hover:bg-${colour}-50`));
+      // colour is not the only cue — the visible label text is still there
+      expect(radio.closest("label")).toHaveTextContent(label);
+      // the native radio accent carries the same category colour
+      expect(radio.className).toMatch(CATEGORY[label].accent);
+    });
+
+    test.each([
+      ["Keep", "green"],
+      ["Sell", "blue"],
+      ["Donate", "amber"],
+      ["Discard", "red"],
+    ])("the selected %s decision gets the stronger %s treatment; the rest stay light", (label, colour) => {
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ review_decision: label.toLowerCase() })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      const chosen = screen.getByRole("radio", { name: label });
+      expect(chosen).toBeChecked();
+      const chosenSegment = chosen.closest("label").className;
+      expect(chosenSegment).toMatch(CATEGORY[label].on); // stronger category border
+      expect(chosenSegment).toMatch(new RegExp(`bg-${colour}-50`)); // tinted background
+
+      for (const other of ["Keep", "Sell", "Donate", "Discard"].filter((l) => l !== label)) {
+        const seg = screen.getByRole("radio", { name: other }).closest("label").className;
+        expect(seg).toMatch(CATEGORY[other].off);
+        expect(seg).not.toMatch(CATEGORY[other].on);
+      }
+    });
+
+    test.each([
+      ["Keep", "keep"],
+      ["Sell", "sell"],
+      ["Donate", "donate"],
+      ["Discard", "discard"],
+    ])("clicking %s still calls onDecisionChange(item_id, %s)", async (label, decision) => {
+      const user = userEvent.setup();
+      const onDecisionChange = vi.fn();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ item_id: "item_042", review_decision: null })}
+          onDecisionChange={onDecisionChange}
+          onExcludedChange={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByRole("radio", { name: label }));
+
+      expect(onDecisionChange).toHaveBeenCalledWith("item_042", decision);
+    });
+
+    test("each radio keeps a visible keyboard focus ring", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      for (const label of ["Keep", "Sell", "Donate", "Discard"]) {
+        expect(screen.getByRole("radio", { name: label }).className).toMatch(/focus-visible:ring-2/);
+      }
+    });
+
+    test("the radio group name is derived from item_id, so duplicate labels stay independent", () => {
+      const { rerender } = render(
+        <DeclutterItemCard item={makeReviewItem({ item_id: "item_004" })} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />
+      );
+      expect(screen.getByRole("radio", { name: "Keep" })).toHaveAttribute("name", "decision-item_004");
+
+      rerender(
+        <DeclutterItemCard item={makeReviewItem({ item_id: "item_006" })} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />
+      );
+      expect(screen.getByRole("radio", { name: "Keep" })).toHaveAttribute("name", "decision-item_006");
+    });
+
+    test("exactly one checkbox (exclusion) — no extra toggles were introduced", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    });
+
+    test("status badges use real state, not invented metadata, and there is no item thumbnail", () => {
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ decision_changed: true, review_excluded: true, label_source: "user", effective_label: "hoodie" })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      expect(screen.getByText("Corrected by you")).toBeInTheDocument();
+      expect(screen.getByText("Changed")).toBeInTheDocument();
+      expect(screen.getByText("Excluded")).toBeInTheDocument();
+      expect(screen.getByText(/AI suggests:/i)).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+  });
 });

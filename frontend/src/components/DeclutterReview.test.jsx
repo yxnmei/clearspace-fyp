@@ -529,7 +529,7 @@ describe("DeclutterReview", () => {
   });
 });
 
-describe("DeclutterReview — confirmationNextStepNote (R6)", () => {
+describe("DeclutterReview — confirmation handoff copy", () => {
   function makeConfirmation() {
     return {
       runId: "run1",
@@ -565,5 +565,53 @@ describe("DeclutterReview — confirmationNextStepNote (R6)", () => {
     render(<DeclutterReview {...props} />);
     expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
     expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DeclutterReview — review page layout and presentation", () => {
+  test("shows a results header, a change-before-confirm explainer and a restrained You're in control notice", () => {
+    render(<DeclutterReview {...baseProps()} />);
+    expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
+    expect(screen.getByText(/yours to change, exclude or correct/i)).toBeInTheDocument();
+    expect(screen.getByText(/you're in control/i)).toBeInTheDocument();
+  });
+
+  test("does not add a universal workflow stepper", () => {
+    render(<DeclutterReview {...baseProps()} />);
+    expect(screen.queryByRole("navigation", { name: /progress|steps?/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/step \d+ of \d+/i)).not.toBeInTheDocument();
+  });
+
+  test("keeps the analysed image and the item list both in the DOM, side-by-side on desktop", () => {
+    const reviewItems = [makeResolvedReviewItem({ item_id: "item_001" })];
+    const { container } = render(
+      <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001"] }), reviewItems })} />
+    );
+    expect(screen.getByRole("img", { name: /detected item outlines/i })).toBeInTheDocument();
+    expect(screen.getByText("lamp")).toBeInTheDocument();
+    // CSS-only responsive split — column on mobile, row from lg up.
+    const split = container.querySelector(".lg\\:flex-row");
+    expect(split).toBeTruthy();
+    expect(split.className).toMatch(/(^|\s)flex-col(\s|$)/);
+  });
+
+  test("the confirm button exposes a visible keyboard focus ring", () => {
+    render(<DeclutterReview {...baseProps()} />);
+    const btn = screen.getByRole("button", { name: /confirm decisions/i });
+    btn.focus();
+    expect(btn).toHaveFocus();
+    expect(btn.className).toMatch(/focus-visible:ring/);
+  });
+
+  test("no per-item thumbnails or crops are introduced (backend provides none)", () => {
+    const reviewItems = [
+      makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
+      makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
+    ];
+    render(
+      <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
+    );
+    // The only image on the page is the single analysed-room photo.
+    expect(screen.getAllByRole("img")).toHaveLength(1);
   });
 });
