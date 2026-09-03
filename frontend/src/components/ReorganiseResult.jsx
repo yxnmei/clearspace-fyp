@@ -1,14 +1,14 @@
 import { itemNumberLabel } from "../utils/format";
 
 // Renders the normalised GenerateResponse (useReorganiseFlow's
-// generateResult) — the structured plan is ALWAYS shown; the generated/
+// generateResult), the structured plan is ALWAYS shown; the generated/
 // unavailable image is the only part that varies by image_status. Zone
 // items are joined back to the full analysis item list purely by
 // item_id, never by label text, matching every other join in this
 // codebase (declutterContract.js/confirmationContract.js).
 //
 // No visual-preview Retry button here, deliberately (R5 decision): the
-// current /generate contract has no "regenerate image only" endpoint —
+// current /generate contract has no "regenerate image only" endpoint,
 // a Retry would silently re-run Phi-4-mini planning again, real,
 // non-trivial CPU cost, for what looks like a cheap "try again". Start
 // over (a full reset) is the only recovery action offered until a
@@ -67,11 +67,11 @@ function PlanningDetails({ planning }) {
         </div>
         <div>
           <dt className="text-stone-500">Model</dt>
-          <dd>{planning.model_name ?? "—"}</dd>
+          <dd>{planning.model_name ?? "n/a"}</dd>
         </div>
         <div>
           <dt className="text-stone-500">Prompt version</dt>
-          <dd>{planning.prompt_version ?? "—"}</dd>
+          <dd>{planning.prompt_version ?? "n/a"}</dd>
         </div>
         <div>
           <dt className="text-stone-500">Planning duration</dt>
@@ -163,7 +163,7 @@ export default function ReorganiseResult({ generateResult, items, originalImageU
         <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
           <h2 className="mb-1 text-lg font-medium text-stone-900">Visual preview</h2>
           <p className="mb-4 text-sm text-stone-600">
-            An AI-generated impression of the reorganised room — objects and layout may not be preserved exactly.
+            An AI-generated impression of the reorganised room, objects and layout may not be preserved exactly.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>

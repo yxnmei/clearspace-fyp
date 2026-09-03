@@ -64,6 +64,17 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
+
+  /* Native form controls do not inherit the document font by default.
+   * Pin them to the same Manrope-first stack as the body so buttons,
+   * inputs, selects and textareas match the rest of the interface. */
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: theme("fontFamily.sans");
+  }
 }
 
 /* Honour an explicit request for reduced motion everywhere. */

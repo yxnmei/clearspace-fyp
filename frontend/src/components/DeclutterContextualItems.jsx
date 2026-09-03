@@ -20,7 +20,7 @@ export default function DeclutterContextualItems({
         Contextual items ({items.length})
       </h2>
       <p className="mb-3 mt-1.5 text-sm text-muted-foreground">
-        Detected for context only — not sent for a Declutter decision.
+        Detected for context only, not sent for a Declutter decision.
       </p>
       <ul className="space-y-2">
         {items.map((item) => {

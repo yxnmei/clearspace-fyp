@@ -5,27 +5,27 @@ import { serialiseDecisionOverrides } from "../api/confirmationContract";
 import { normaliseConfirmedGenerateResponse } from "../api/reorganiseContract";
 import { useDeclutterFlow } from "./useDeclutterFlow";
 
-// Both workflow state machine (R6) — COMPOSES useDeclutterFlow rather
+// Both workflow state machine (R6), COMPOSES useDeclutterFlow rather
 // than copying it (required correction 5): declutter/review/confirm is
 // exactly Declutter's own hook, configured to hit path="both" and
 // normaliseBothUploadResponse instead of path="declutter" and
 // normaliseDeclutterUploadResponse. Everything upload/review/correction/
 // confirmation-related below is a thin WRAPPER around the composed
-// hook's own functions — it never reimplements their logic, only adds
+// hook's own functions, it never reimplements their logic, only adds
 // the one thing Both needs on top: invalidating this hook's own
 // generation state whenever something the composed hook does could make
 // a prior generation stale.
 //
 // Three independent concurrency domains, matching the project's
 // established rule (see useDeclutterFlow's own extensive comment on why
-// a single shared ref caused a real stuck-state bug there — the same
+// a single shared ref caused a real stuck-state bug there, the same
 // lesson applies one layer further here):
-//   1. Flow domain (flowGenerationRef) — owned entirely by the composed
+//   1. Flow domain (flowGenerationRef), owned entirely by the composed
 //      useDeclutterFlow, untouched by this hook.
-//   2. Confirmation domain (confirmationGenerationRef) — likewise owned
+//   2. Confirmation domain (confirmationGenerationRef), likewise owned
 //      entirely by the composed hook.
 //   3. Generation domain (generateGenerationRef + activeGenerationRef
-//      ownership token, below) — owned by THIS hook, mirroring
+//      ownership token, below), owned by THIS hook, mirroring
 //      useReorganiseFlow's own exact two-part pattern (a monotonic
 //      counter for "is this response still current" plus an ownership
 //      token for "is a generation currently in flight", so a fast
@@ -36,9 +36,9 @@ import { useDeclutterFlow } from "./useDeclutterFlow";
 // Every composed-hook operation that can change what confirmation MEANT
 // (a new upload, a label correction, a decision/exclusion change, an
 // override cleared, or a fresh confirm() itself) invalidates the
-// generation domain here too — wrapped, not reimplemented: each wrapper
+// generation domain here too, wrapped, not reimplemented: each wrapper
 // below calls the composed hook's real function first (preserving its
-// existing synchronous validation/throw behavior exactly — e.g.
+// existing synchronous validation/throw behavior exactly, e.g.
 // correctLabel/setDecisionOverride still throw synchronously for an
 // invalid item_id, before this wrapper's own invalidateGeneration() ever
 // runs), then invalidates generation as a second, separate step.
@@ -49,7 +49,7 @@ export function useBothFlow() {
   });
 
   // file/context are retained here (unlike useDeclutterFlow, which never
-  // needs the image again after upload) — POST /generate/confirmed must
+  // needs the image again after upload), POST /generate/confirmed must
   // resubmit the original image bytes; no server-side storage exists
   // anywhere in this codebase by design. Mirrors useReorganiseFlow's own
   // retention convention (captured in the hook, not just at the page
@@ -66,7 +66,7 @@ export function useBothFlow() {
 
   const invalidateGeneration = useCallback(() => {
     generateGenerationRef.current += 1;
-    activeGenerationRef.current = null; // release the slot now — do not wait for a stale request to settle
+    activeGenerationRef.current = null; // release the slot now, do not wait for a stale request to settle
     setGenerationStatus("idle");
     setGenerateResult(null);
     setGenerateError(null);
@@ -84,7 +84,7 @@ export function useBothFlow() {
 
   const setDecisionOverride = useCallback(
     (...args) => {
-      declutter.setDecisionOverride(...args); // throws synchronously on an invalid item_id — propagates before invalidateGeneration runs
+      declutter.setDecisionOverride(...args); // throws synchronously on an invalid item_id, propagates before invalidateGeneration runs
       invalidateGeneration();
     },
     [declutter.setDecisionOverride, invalidateGeneration]
@@ -109,7 +109,7 @@ export function useBothFlow() {
   const correctLabel = useCallback(
     (...args) => {
       // declutter.correctLabel is itself a synchronous-validating wrapper
-      // (see useDeclutterFlow's own docstring) — an invalid itemId/blank
+      // (see useDeclutterFlow's own docstring), an invalid itemId/blank
       // label throws HERE, synchronously, before invalidateGeneration()
       // ever runs, preserving that exact contract for callers of this
       // wrapper too. A validated call returns a promise; generation is
@@ -130,7 +130,7 @@ export function useBothFlow() {
 
   const generate = useCallback(async () => {
     // Silent no-op guards, mirroring useReorganiseFlow.generate()'s own
-    // convention — a duplicate /generate/confirmed dispatch is expensive
+    // convention, a duplicate /generate/confirmed dispatch is expensive
     // (Phi-4-mini planning + a real remote generation call), so this
     // hook stays safe even if the disabled-button UI is ever bypassed.
     if (declutter.confirmationStatus !== "confirmed") return null;
@@ -174,7 +174,7 @@ export function useBothFlow() {
       });
 
       if (generateGenerationRef.current !== generation) {
-        return null; // superseded by a newer submit()/edit/confirm()/reset() — discard silently
+        return null; // superseded by a newer submit()/edit/confirm()/reset(), discard silently
       }
       setGenerateResult(normalised);
       setGenerationStatus("done");
@@ -184,14 +184,14 @@ export function useBothFlow() {
         return null; // a stale REJECTION is discarded too, not only a stale success
       }
       // declutter's own review/confirmation state, file, context, and
-      // overrides are deliberately left untouched here — a failed
+      // overrides are deliberately left untouched here, a failed
       // generate() must never erase confirmed work already done, so a
       // retry can call generate() again immediately without re-confirming.
       setGenerateError(err instanceof Error ? err.message : "Room-plan generation failed");
       setGenerationStatus("error");
       return null;
     } finally {
-      // Release the slot ONLY if this call still owns it — a stale call
+      // Release the slot ONLY if this call still owns it, a stale call
       // settling after a NEWER generate() (or a reset()) has already
       // claimed/released the slot must never clobber that newer state.
       if (activeGenerationRef.current === generation) {

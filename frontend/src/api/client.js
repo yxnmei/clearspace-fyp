@@ -1,4 +1,4 @@
-// Every network call in the app lives here, once — per §4, no fetch()
+// Every network call in the app lives here, once, per §4, no fetch()
 // calls scattered inline inside components or hooks. hooks/ import from
 // this file; they never call fetch directly.
 
@@ -34,8 +34,8 @@ export function uploadImage({ file, path, context }) {
 }
 
 // Decision confirmation (Keep/Sell/Donate/Discard overrides + exclusion)
-// — JSON body, distinct from overrideItem() below, which is the
-// *label-correction* endpoint (/override — implemented on the backend,
+// JSON body, distinct from overrideItem() below, which is the
+// *label-correction* endpoint (/override, implemented on the backend,
 // see app/api/routes.py's OverrideRequest/OverrideResponse). Never send
 // `declutter` reshaped/stripped: it's the exact validated nested object
 // POST /upload returned, round-tripped whole so the backend can
@@ -50,13 +50,13 @@ export function confirmDecisions({ runId, declutter, overrides = [] }) {
 }
 
 // Label correction (re-run LLM reasoning for exactly one item after the
-// user rejects its detected label) — JSON body, like confirmDecisions,
+// user rejects its detected label), JSON body, like confirmDecisions,
 // not the multipart shape this function used before /override was
 // implemented. `analysis`/`declutter` are round-tripped whole, same
 // reasoning as confirmDecisions above: the backend revalidates them
 // (including that they're a genuine matched pair from the same run)
 // rather than trusting anything the client claims. Distinct from
-// setDecisionOverride()/confirmDecisions() — this never touches a
+// setDecisionOverride()/confirmDecisions(), this never touches a
 // Keep/Sell/Donate/Discard decision directly, only a label, which may
 // change what decision the LLM produces as a side effect.
 export function overrideItem({ runId, analysis, declutter, itemId, correctedLabel, userContext = null }) {
@@ -80,19 +80,19 @@ export function transcribeAudio({ audioBlob }) {
   return request("/transcribe", { method: "POST", body: form });
 }
 
-// POST /generate (Direct Reorganise, R4/R5) — JSON body, matching
-// app/api/routes.py's GenerateRequest exactly (extra="forbid" there — an
+// POST /generate (Direct Reorganise, R4/R5), JSON body, matching
+// app/api/routes.py's GenerateRequest exactly (extra="forbid" there, an
 // unrecognised field, including any tuning parameter, is a 422, never
 // silently ignored). `analysis` is the exact validated AnalysisResult
 // object POST /upload (path="reorganise") returned, round-tripped whole,
 // same discipline as confirmDecisions()/overrideItem() above.
 //
 // Deliberately NEVER sends denoise_strength/controlnet_conditioning_scale
-// /seed — R4 always uses the backend's configured defaults; these are
+// /seed, R4 always uses the backend's configured defaults; these are
 // provisional generation-tuning values, not an ordinary user decision
 // (see app/services/reorganise_pipeline_service.py's own docstring).
 //
-// file.type is sent verbatim as image_media_type — validated here first
+// file.type is sent verbatim as image_media_type, validated here first
 // (PNG/JPEG only, matching the backend's supported set) so an
 // unsupported file type fails fast, client-side, with a clear message,
 // rather than as a generic sanitized 422 from the network.
@@ -125,20 +125,20 @@ export async function generateReorganisation({
   });
 }
 
-// POST /generate/confirmed (Both, R6) — matching app/api/routes.py's
+// POST /generate/confirmed (Both, R6), matching app/api/routes.py's
 // ConfirmedGenerateRequest exactly (extra="forbid" there too). Carries
 // the INPUTS to confirmation (declutter + overrides), never confirmation
 // OUTPUT: selection is derived entirely server-side from
-// confirm_declutter_result() -> confirmed_keep_ids — this function
+// confirm_declutter_result() -> confirmed_keep_ids, this function
 // deliberately has NO selectedItemIds/confirmedKeepIds parameter at all,
 // so there is no way to accidentally send one. `declutter`/`overrides`
 // are the exact same objects useBothFlow's composed useDeclutterFlow
-// already holds — round-tripped whole, same discipline as every other
+// already holds, round-tripped whole, same discipline as every other
 // object-carrying request in this file.
 //
 // Deliberately NEVER sends selected_item_ids, confirmed_keep_ids, or any
 // generation-tuning field (denoise_strength/controlnet_conditioning_scale
-// /seed) — same reasoning as generateReorganisation() above.
+// /seed), same reasoning as generateReorganisation() above.
 export async function generateConfirmedReorganisation({
   runId,
   analysis,

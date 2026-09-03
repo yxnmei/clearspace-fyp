@@ -1,17 +1,17 @@
-// Pure functions only — unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
 // utils/format.js and api/declutterContract.js for the same convention.
 //
 // Two related but distinct jobs live in this file:
-//   1. normaliseConfirmationResponse() — validates and normalizes the
+//   1. normaliseConfirmationResponse(), validates and normalizes the
 //      backend's POST /confirm response against the DeclutterResult it
 //      was confirmed from, joining purely by item_id.
 //   2. Local review-state helpers (setDecisionOverride/setItemExcluded/
 //      clearDecisionOverride/serialiseDecisionOverrides/buildReviewItems)
-//      — pure, immutable management of the in-progress override map the
+// pure, immutable management of the in-progress override map the
 //      UI builds up before calling /confirm, and the request payload it
 //      serializes into.
 //
-// Neither half ever joins by label text or introduces an `id` alias —
+// Neither half ever joins by label text or introduces an `id` alias,
 // item_id is the only identity that exists anywhere in this file.
 
 const VALID_DECISIONS = new Set(["keep", "sell", "donate", "discard"]);
@@ -76,7 +76,7 @@ export function normaliseConfirmationResponse(response, sourceDeclutter) {
     fail("sourceDeclutter is not complete: unresolved_item_ids is non-empty");
   }
 
-  // Every expected ID must have exactly one source AiDecision — dedupe
+  // Every expected ID must have exactly one source AiDecision, dedupe
   // (below) plus the membership check further down together guarantee
   // "exactly one", not just "at least one".
   const sourceAiById = new Map();
@@ -114,7 +114,7 @@ export function normaliseConfirmationResponse(response, sourceDeclutter) {
 
   // Per-decision integrity, plus tallying the derived Keep set and
   // counts so they can be cross-checked against the caller-supplied
-  // confirmed_keep_ids/decision_changed_count/excluded_count below —
+  // confirmed_keep_ids/decision_changed_count/excluded_count below,
   // those three are never trusted at face value.
   let actualChangedCount = 0;
   let actualExcludedCount = 0;
@@ -178,7 +178,7 @@ export function normaliseConfirmationResponse(response, sourceDeclutter) {
 // ---------------------------------------------------------------------------
 
 // overridesById shape: { [item_id]: { item_id, decision?, excluded?, user_reason? } }
-// — mirrors the backend's DecisionOverride wire shape closely enough
+// mirrors the backend's DecisionOverride wire shape closely enough
 // that serialiseDecisionOverrides() barely has to transform it, but
 // stays purely local state until /confirm is actually called.
 
@@ -195,12 +195,12 @@ export function setDecisionOverride(overridesById, itemId, decision, userReason 
     next.excluded = existing.excluded;
   }
 
-  // userReason distinguishes omission from explicit clearing — changing
+  // userReason distinguishes omission from explicit clearing, changing
   // the decision (e.g. clicking a different decision button) must not
   // silently erase text already typed into a reason field:
-  //   undefined (the default — argument not passed at all): preserve
+  //   undefined (the default, argument not passed at all): preserve
   //     whatever user_reason already existed, untouched.
-  //   null, or a blank/whitespace-only string: an explicit clear —
+  //   null, or a blank/whitespace-only string: an explicit clear,
   //     next.user_reason stays unset.
   //   a non-empty string: stored, trimmed.
   if (userReason === undefined) {
@@ -241,7 +241,7 @@ export function serialiseDecisionOverrides(overridesById, expectedItemIds) {
   // Network-boundary hardening: this is the last checkpoint before a
   // request body is built, so it validates overridesById structurally
   // rather than assuming every entry was produced by
-  // setDecisionOverride()/setItemExcluded() — a caller could have built
+  // setDecisionOverride()/setItemExcluded(), a caller could have built
   // or mutated overridesById by hand.
   if (!isPlainObject(overridesById)) fail("overridesById must be an object");
   requireArray(expectedItemIds, "expectedItemIds");
@@ -298,7 +298,7 @@ export function buildReviewItems(items, overridesById) {
   return items.map((item) => {
     if (item.is_expected !== true || item.is_unresolved === true) {
       // Contextual/non-expected items, AND still-unresolved expected
-      // items (still_invalid — no AiDecision exists to override yet),
+      // items (still_invalid, no AiDecision exists to override yet),
       // never receive a fabricated review decision, regardless of any
       // stray override entry that might exist for their item_id.
       // is_expected/is_unresolved themselves are preserved unchanged via

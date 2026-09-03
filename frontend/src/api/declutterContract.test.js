@@ -17,7 +17,7 @@ function makeDetection(overrides = {}) {
     position: "upper-left",
     relative_size: "small",
     confidence: 0.8,
-    // Real /upload and /override responses always carry these three —
+    // Real /upload and /override responses always carry these three,
     // label_source/effective_label are backend-computed from
     // corrected_label, so the defaults here agree with the "no
     // correction" case unless a test overrides corrected_label.
@@ -443,7 +443,7 @@ describe("normaliseDeclutterUploadResponse", () => {
     expect("id" in result.items[0]).toBe(false);
   });
 
-  // --- label-correction provenance (shared by both normalisers — see
+  // --- label-correction provenance (shared by both normalisers, see
   // normaliseOverrideResponse's own describe block below for the
   // override-specific scenarios) ---
 

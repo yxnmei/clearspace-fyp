@@ -10,7 +10,7 @@ import { cn } from "../lib/cn";
 // `onBack`, when provided, renders the single "Back to workflows" action for
 // a workflow page. App decides when to pass it (every mode except the
 // workflow chooser itself). There is deliberately no universal progress
-// indicator here — the three workflows have different state machines.
+// indicator here, the three workflows have different state machines.
 export default function AppShell({ onBack, children, className }) {
   return (
     <div className="relative isolate flex min-h-screen flex-col bg-background text-foreground">

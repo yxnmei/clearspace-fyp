@@ -181,7 +181,7 @@ function makeUnavailableResponse(reason = "service_unreachable", overrides = {})
 
 const OPTS = { runId: "run1", selectedItemIds: ["item_001", "item_002"], inputImageSha256: HASH_B };
 
-describe("normaliseGenerateResponse — generated", () => {
+describe("normaliseGenerateResponse, generated", () => {
   test("accepts a valid generated response", () => {
     const result = normaliseGenerateResponse(makeGeneratedResponse(), OPTS);
     expect(result.imageStatus).toBe("generated");
@@ -361,7 +361,7 @@ describe("normaliseGenerateResponse — generated", () => {
   });
 });
 
-describe("normaliseGenerateResponse — unavailable", () => {
+describe("normaliseGenerateResponse, unavailable", () => {
   test.each(["service_unreachable", "timeout", "request_failed", "service_error", "invalid_response"])(
     "accepts a valid unavailable response with reason %s",
     (reason) => {
@@ -397,7 +397,7 @@ describe("normaliseGenerateResponse — unavailable", () => {
   });
 });
 
-describe("normaliseGenerateResponse — top-level shape", () => {
+describe("normaliseGenerateResponse, top-level shape", () => {
   test("rejects a non-object response", () => {
     expect(() => normaliseGenerateResponse(null, OPTS)).toThrow(/must be an object/);
   });
@@ -413,7 +413,7 @@ describe("normaliseGenerateResponse — top-level shape", () => {
 // Correction 2 hardening
 // ---------------------------------------------------------------------------
 
-describe("normaliseReorganiseUploadResponse — item_id shape", () => {
+describe("normaliseReorganiseUploadResponse, item_id shape", () => {
   test.each(["item_1", "item_12", "item_abc", "item001", "ITEM_001", ""])(
     "rejects a malformed item_id %s",
     (badId) => {
@@ -430,7 +430,7 @@ describe("normaliseReorganiseUploadResponse — item_id shape", () => {
   });
 });
 
-describe("normaliseReorganiseUploadResponse — item_role", () => {
+describe("normaliseReorganiseUploadResponse, item_role", () => {
   test.each(["ACTIONABLE", "keep", "", null, 5])("rejects an invalid item_role %s", (badRole) => {
     const bad = makeUploadResponse();
     bad.analysis.items = [makeItem({ item_role: badRole })];
@@ -444,7 +444,7 @@ describe("normaliseReorganiseUploadResponse — item_role", () => {
   });
 });
 
-describe("normaliseReorganiseUploadResponse — confidence", () => {
+describe("normaliseReorganiseUploadResponse, confidence", () => {
   test.each([-0.1, 1.1, NaN, Infinity, -Infinity, "0.5", null])("rejects an invalid confidence %s", (bad) => {
     const badResponse = makeUploadResponse();
     badResponse.analysis.items = [makeItem({ confidence: bad })];
@@ -458,7 +458,7 @@ describe("normaliseReorganiseUploadResponse — confidence", () => {
   });
 });
 
-describe("normaliseReorganiseUploadResponse — box validity", () => {
+describe("normaliseReorganiseUploadResponse, box validity", () => {
   test.each([
     { x1: -0.1, y1: 0, x2: 0.5, y2: 0.5 },
     { x1: 0, y1: 0, x2: 1.1, y2: 0.5 },
@@ -489,7 +489,7 @@ describe("normaliseReorganiseUploadResponse — box validity", () => {
   });
 });
 
-describe("normaliseGenerateResponse — caller-supplied selectedItemIds", () => {
+describe("normaliseGenerateResponse, caller-supplied selectedItemIds", () => {
   test("rejects an empty selectedItemIds", () => {
     expect(() => normaliseGenerateResponse(makeGeneratedResponse(), { ...OPTS, selectedItemIds: [] })).toThrow(
       /selectedItemIds/
@@ -509,7 +509,7 @@ describe("normaliseGenerateResponse — caller-supplied selectedItemIds", () => 
   });
 });
 
-describe("normaliseGenerateResponse — negative_prompt strictness", () => {
+describe("normaliseGenerateResponse, negative_prompt strictness", () => {
   test("rejects an empty-string negative_prompt (must be null or non-empty)", () => {
     const bad = makeGeneratedResponse();
     bad.planning.plan.negative_prompt = "   ";
@@ -517,14 +517,14 @@ describe("normaliseGenerateResponse — negative_prompt strictness", () => {
   });
 });
 
-describe("normaliseGenerateResponse — generated image api_version exactness", () => {
+describe("normaliseGenerateResponse, generated image api_version exactness", () => {
   test("rejects an api_version that is a non-empty string but not exactly \"v1\"", () => {
     const bad = makeGeneratedResponse({ image: makeGeneratedImage({ api_version: "v2" }) });
     expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/api_version/);
   });
 });
 
-describe("normaliseGenerateResponse — base64 length/padding strictness", () => {
+describe("normaliseGenerateResponse, base64 length/padding strictness", () => {
   test.each([
     "aGVsbG8", // valid chars, but length not a multiple of 4 (no padding at all)
     "aGVsb=8=", // padding character in the middle
@@ -543,7 +543,7 @@ describe("normaliseGenerateResponse — base64 length/padding strictness", () =>
   });
 });
 
-describe("normaliseGenerateResponse — planning.issues field validation", () => {
+describe("normaliseGenerateResponse, planning.issues field validation", () => {
   test("rejects an issue with an invalid attempt", () => {
     const bad = makeGeneratedResponse({
       planning: makePlanning({
@@ -600,7 +600,7 @@ describe("normaliseGenerateResponse — planning.issues field validation", () =>
   });
 });
 
-describe("normaliseGenerateResponse — the single reorganise_plan stage timing", () => {
+describe("normaliseGenerateResponse, the single reorganise_plan stage timing", () => {
   test("rejects zero stage timings", () => {
     const bad = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [] }) });
     expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/stage_timings/);
@@ -681,7 +681,7 @@ function makeConfirmationResponse(overrides = {}) {
         ai_reason: "not needed",
       }),
     ],
-    confirmed_keep_ids: ["item_001"], // only item_001 is Keep — item_002 is Sell
+    confirmed_keep_ids: ["item_001"], // only item_001 is Keep, item_002 is Sell
     decision_changed_count: 0,
     excluded_count: 0,
     ...overrides,
@@ -690,7 +690,7 @@ function makeConfirmationResponse(overrides = {}) {
 
 // The plan reflects ONLY the server-derived confirmed Keep set
 // (["item_001"]), never the full expected_item_ids or any client-supplied
-// selection — there is no selection field in the /generate/confirmed
+// selection, there is no selection field in the /generate/confirmed
 // request at all (see api/client.js's generateConfirmedReorganisation).
 function makeConfirmedGenerateResponse(overrides = {}) {
   return {
@@ -743,13 +743,13 @@ describe("normaliseConfirmedGenerateResponse", () => {
     const bad = makeConfirmedGenerateResponse();
     bad.confirmation.confirmed_decisions = [
       makeConfirmedDecision({ item_id: "item_001" }),
-      makeConfirmedDecision({ item_id: "item_001" }), // duplicate — confirmationContract's own check
+      makeConfirmedDecision({ item_id: "item_001" }), // duplicate, confirmationContract's own check
     ];
     expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/duplicate/);
   });
 
   test("rejects when the server's confirmed_keep_ids drifts from the prior /confirm result", () => {
-    // The server now reports item_002 as Keep too — but the client's own
+    // The server now reports item_002 as Keep too, but the client's own
     // earlier /confirm call only ever reported item_001. Otherwise fully
     // internally consistent (satisfies normaliseConfirmationResponse's
     // own checks), so this specifically exercises the drift check.
@@ -778,10 +778,10 @@ describe("normaliseConfirmedGenerateResponse", () => {
   test("rejects a priorConfirmedKeepIds in a different order than the response, even with the same set", () => {
     // The response's own confirmed_keep_ids is internally pinned to
     // confirmed_decisions order (itself pinned to expected_item_ids
-    // order — see confirmationContract.js) — ["item_001", "item_002"] is
+    // order, see confirmationContract.js), ["item_001", "item_002"] is
     // the only internally-valid order for "both kept". A caller-supplied
     // priorConfirmedKeepIds in a different order (however it got that
-    // way) must still be rejected — the cross-check is order-sensitive,
+    // way) must still be rejected, the cross-check is order-sensitive,
     // not just set-equality.
     const bothKeep = makeConfirmedGenerateResponse({
       confirmation: makeConfirmationResponse({
@@ -815,7 +815,7 @@ describe("normaliseConfirmedGenerateResponse", () => {
     const bad = makeConfirmedGenerateResponse({
       confirmation: makeConfirmationResponse({ confirmed_keep_ids: ["item_001"] }),
     });
-    bad.planning.plan.zones[0].item_ids = []; // will fail on empty item_ids first — use a different zone instead
+    bad.planning.plan.zones[0].item_ids = []; // will fail on empty item_ids first, use a different zone instead
     bad.planning.plan.zones = [{ zone_name: "Elsewhere", item_ids: ["item_002"], instruction: "n/a" }];
     expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/omits/);
   });
@@ -854,7 +854,7 @@ describe("normaliseConfirmedGenerateResponse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deterministic_direct — the production provenance
+// deterministic_direct, the production provenance
 //
 // Production calls no LLM planner for Reorganise, so the response reports
 // zero attempts, no issues and no model identity. The contract accepts
@@ -873,7 +873,7 @@ function makeDirectPlanning(overrides = {}) {
   });
 }
 
-describe("reorganiseContract — deterministic_direct", () => {
+describe("reorganiseContract, deterministic_direct", () => {
   test("accepts the production shape: zero attempts, no issues, null metadata", () => {
     const ok = makeGeneratedResponse({ planning: makeDirectPlanning() });
     expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();

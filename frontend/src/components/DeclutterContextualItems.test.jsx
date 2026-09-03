@@ -31,7 +31,7 @@ describe("DeclutterContextualItems", () => {
   test("is visibly secondary and states it carries no Declutter decision", () => {
     render(<DeclutterContextualItems {...baseProps()} />);
     expect(screen.getByRole("heading", { name: /contextual items \(1\)/i })).toBeInTheDocument();
-    expect(screen.getByText(/detected for context only — not sent for a declutter decision/i)).toBeInTheDocument();
+    expect(screen.getByText(/detected for context only, not sent for a declutter decision/i)).toBeInTheDocument();
   });
 
   test("offers no decision controls and no label correction", () => {
@@ -42,7 +42,7 @@ describe("DeclutterContextualItems", () => {
     expect(screen.queryByRole("button", { name: /wrong label/i })).not.toBeInTheDocument();
   });
 
-  test("entries are still overlay-linkable — ref registered, activates on hover, marked aria-current", async () => {
+  test("entries are still overlay-linkable, ref registered, activates on hover, marked aria-current", async () => {
     const user = userEvent.setup();
     const registerItemRef = vi.fn();
     const activateItem = vi.fn();

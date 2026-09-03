@@ -15,7 +15,7 @@ vi.mock("../api/client", () => ({
 
 // Every fake installed by a test is registered here and removed
 // afterwards, so the NEXT test starts in a jsdom that has neither
-// MediaRecorder nor navigator.mediaDevices — which is what makes the
+// MediaRecorder nor navigator.mediaDevices, which is what makes the
 // unsupported-browser path testable at all.
 let installed = [];
 
@@ -65,7 +65,7 @@ async function startRecording(result) {
   });
 }
 
-describe("useVoiceContext — feature detection", () => {
+describe("useVoiceContext, feature detection", () => {
   test("reports recording unsupported when the browser has no MediaRecorder", () => {
     const { result } = renderHook(() => useVoiceContext());
     expect(result.current.recordingSupported).toBe(false);
@@ -94,7 +94,7 @@ describe("useVoiceContext — feature detection", () => {
   });
 });
 
-describe("useVoiceContext — MIME selection", () => {
+describe("useVoiceContext, MIME selection", () => {
   test("picks the first candidate the browser says it supports", async () => {
     const harness = track(installRecordingSupport({ supportedTypes: ["audio/webm"] }));
     const { result } = renderHook(() => useVoiceContext());
@@ -135,7 +135,7 @@ describe("useVoiceContext — MIME selection", () => {
   });
 });
 
-describe("useVoiceContext — recording lifecycle", () => {
+describe("useVoiceContext, recording lifecycle", () => {
   test("start moves to a visible recording state and marks the hook busy", async () => {
     track(installRecordingSupport());
     const { result } = renderHook(() => useVoiceContext());
@@ -164,7 +164,7 @@ describe("useVoiceContext — recording lifecycle", () => {
     const { audioBlob } = client.transcribeAudio.mock.calls[0][0];
     expect(audioBlob).toBeInstanceOf(Blob);
     expect(audioBlob.size).toBe("onetwothree".length);
-    // Codec parameters are stripped — the backend allowlists the bare type.
+    // Codec parameters are stripped, the backend allowlists the bare type.
     expect(audioBlob.type).toBe("audio/webm");
   });
 
@@ -231,7 +231,7 @@ describe("useVoiceContext — recording lifecycle", () => {
 // stop. The fake's fail() models exactly that sequence, so these tests
 // fail against a lifecycle that only reports the error without
 // invalidating the take.
-describe("useVoiceContext — a recorder error is terminal", () => {
+describe("useVoiceContext, a recorder error is terminal", () => {
   test("the trailing stop event never starts a transcription", async () => {
     transcribeResolves("this must never be requested");
     const harness = track(installRecordingSupport());
@@ -253,7 +253,7 @@ describe("useVoiceContext — a recorder error is terminal", () => {
 
     await startRecording(result);
     await act(async () => {
-      // A generous final buffer flush — none of it may be uploaded.
+      // A generous final buffer flush, none of it may be uploaded.
       harness.recorder.last().fail({ chunks: [["aaa"], ["bbb"], ["ccc"]] });
     });
 
@@ -326,7 +326,7 @@ describe("useVoiceContext — a recorder error is terminal", () => {
     clearIntervalSpy.mockRestore();
   });
 
-  test("stopRecording after a failure does nothing — the take is already gone", async () => {
+  test("stopRecording after a failure does nothing, the take is already gone", async () => {
     const harness = track(installRecordingSupport());
     const { result } = renderHook(() => useVoiceContext());
 
@@ -416,7 +416,7 @@ describe("useVoiceContext — a recorder error is terminal", () => {
   });
 });
 
-describe("useVoiceContext — microphone permission", () => {
+describe("useVoiceContext, microphone permission", () => {
   test("a denied permission keeps the other routes open and starts nothing", async () => {
     track(installRecordingSupport({ error: permissionDeniedError() }));
     const { result } = renderHook(() => useVoiceContext());
@@ -447,7 +447,7 @@ describe("useVoiceContext — microphone permission", () => {
     expect(result.current.error).toBe(VOICE_MESSAGES.microphoneUnavailable);
   });
 
-  test("after a denial the hook is free again — a later attempt is not stuck busy", async () => {
+  test("after a denial the hook is free again, a later attempt is not stuck busy", async () => {
     track(installRecordingSupport({ error: permissionDeniedError() }));
     const { result } = renderHook(() => useVoiceContext());
 
@@ -471,7 +471,7 @@ describe("useVoiceContext — microphone permission", () => {
   });
 });
 
-describe("useVoiceContext — microphone release", () => {
+describe("useVoiceContext, microphone release", () => {
   test("every track is stopped on a normal stop", async () => {
     transcribeResolves("something");
     const harness = track(installRecordingSupport({ trackCount: 2 }));
@@ -525,7 +525,7 @@ describe("useVoiceContext — microphone release", () => {
     });
 
     for (const t of harness.media.last().tracks) expect(t.stopCount).toBe(1);
-    // The recorder was never constructed — the operation was abandoned.
+    // The recorder was never constructed, the operation was abandoned.
     expect(harness.recorder.instances).toHaveLength(0);
   });
 
@@ -572,7 +572,7 @@ describe("useVoiceContext — microphone release", () => {
   });
 });
 
-describe("useVoiceContext — audio file upload", () => {
+describe("useVoiceContext, audio file upload", () => {
   test("an accepted audio file is posted straight to transcription", async () => {
     transcribeResolves("from a file");
     const { result } = renderHook(() => useVoiceContext());
@@ -642,7 +642,7 @@ describe("useVoiceContext — audio file upload", () => {
   });
 });
 
-describe("useVoiceContext — blank transcripts", () => {
+describe("useVoiceContext, blank transcripts", () => {
   test("an empty transcript becomes a visible blank result, not an error", async () => {
     transcribeResolves("");
     const { result } = renderHook(() => useVoiceContext());
@@ -668,7 +668,7 @@ describe("useVoiceContext — blank transcripts", () => {
     expect(result.current.pendingTranscript).toBe("");
   });
 
-  test("silence requires the server to SAY so — an explicit empty transcript, in a complete response", async () => {
+  test("silence requires the server to SAY so, an explicit empty transcript, in a complete response", async () => {
     transcribeResolves("");
     const { result } = renderHook(() => useVoiceContext());
 
@@ -681,7 +681,7 @@ describe("useVoiceContext — blank transcripts", () => {
   });
 });
 
-describe("useVoiceContext — malformed 200 responses", () => {
+describe("useVoiceContext, malformed 200 responses", () => {
   // A 200 is not proof of a usable body. None of these describes a
   // silent recording, so none of them may be presented as one.
   const MALFORMED = [
@@ -727,7 +727,7 @@ describe("useVoiceContext — malformed 200 responses", () => {
     expect(result.current.isPendingBlank).toBe(false);
   });
 
-  test("no validation detail — no field name, value or module prefix — reaches the message", async () => {
+  test("no validation detail, no field name, value or module prefix, reaches the message", async () => {
     client.transcribeAudio.mockResolvedValue({ transcript: 7, model_name: "whisper-base", secret_field: "x" });
     const { result } = renderHook(() => useVoiceContext());
 
@@ -740,7 +740,7 @@ describe("useVoiceContext — malformed 200 responses", () => {
     expect(shown).not.toMatch(/transcriptionContract|transcript|model_name|secret_field|must be/);
   });
 
-  test("the hook is free again after a malformed response — a later valid one works", async () => {
+  test("the hook is free again after a malformed response, a later valid one works", async () => {
     client.transcribeAudio.mockResolvedValue({ model_name: "whisper-base" });
     const { result } = renderHook(() => useVoiceContext());
 
@@ -781,7 +781,7 @@ describe("useVoiceContext — malformed 200 responses", () => {
   });
 });
 
-describe("useVoiceContext — error mapping", () => {
+describe("useVoiceContext, error mapping", () => {
   async function failWith(message) {
     client.transcribeAudio.mockRejectedValue(new Error(message));
     const { result } = renderHook(() => useVoiceContext());
@@ -852,7 +852,7 @@ describe("useVoiceContext — error mapping", () => {
   });
 });
 
-describe("useVoiceContext — one operation at a time", () => {
+describe("useVoiceContext, one operation at a time", () => {
   test("a second file while one is in flight is refused as busy, not queued", async () => {
     const deferred = deferredResponse();
     const { result } = renderHook(() => useVoiceContext());
@@ -917,7 +917,7 @@ describe("useVoiceContext — one operation at a time", () => {
   });
 });
 
-describe("useVoiceContext — stale responses", () => {
+describe("useVoiceContext, stale responses", () => {
   test("a response that lands after a discard cannot resurrect a pending transcript", async () => {
     const deferred = deferredResponse();
     const { result } = renderHook(() => useVoiceContext());
@@ -1033,7 +1033,7 @@ describe("useVoiceContext — stale responses", () => {
   });
 });
 
-describe("useVoiceContext — pending transcript editing", () => {
+describe("useVoiceContext, pending transcript editing", () => {
   test("the pending transcript can be edited before it is applied", async () => {
     transcribeResolves("tidy the desk");
     const { result } = renderHook(() => useVoiceContext());
@@ -1048,7 +1048,7 @@ describe("useVoiceContext — pending transcript editing", () => {
     expect(result.current.pendingTranscript).toBe("tidy the desk and the shelf");
   });
 
-  test("clearing the box while editing is NOT reported as silence — the panel stays a live edit", async () => {
+  test("clearing the box while editing is NOT reported as silence, the panel stays a live edit", async () => {
     transcribeResolves("tidy the desk");
     const { result } = renderHook(() => useVoiceContext());
 

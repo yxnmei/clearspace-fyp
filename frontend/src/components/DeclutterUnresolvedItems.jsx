@@ -27,7 +27,7 @@ export default function DeclutterUnresolvedItems({
       </h2>
       <p className="mb-3 mt-1.5 text-sm text-foreground">
         The AI could not produce a valid decision for these items. Confirmation is blocked until every item is
-        resolved — no decision can be fabricated for them here. If the detected label looks wrong, correcting it
+        resolved, no decision can be fabricated for them here. If the detected label looks wrong, correcting it
         lets ClearSpace retry its reasoning for just this one item.
       </p>
       <ul className="space-y-2">

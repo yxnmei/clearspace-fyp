@@ -49,8 +49,10 @@ export default {
         },
       },
       fontFamily: {
-        // Durable system sans-serif stack — no remote fonts.
+        // Manrope is the primary UI typeface, bundled via @fontsource/manrope
+        // (no remote fonts). The rest is a durable system fallback stack.
         sans: [
+          "Manrope",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",

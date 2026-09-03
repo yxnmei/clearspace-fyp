@@ -79,7 +79,7 @@ describe("DeclutterConfirmationPanel", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/decision confirmation failed/i);
-    expect(alert).toHaveTextContent(/your review decisions and exclusions are unchanged — you can try again/i);
+    expect(alert).toHaveTextContent(/your review decisions and exclusions are unchanged. you can try again/i);
   });
 
   test("no error alert while idle", () => {

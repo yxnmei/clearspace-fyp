@@ -15,11 +15,22 @@ describe("Brand", () => {
     expect(wordmark.className).toMatch(/sr-only/); // present for assistive tech, hidden visually
   });
 
-  test("the leaf glyph is decorative (hidden from the accessibility tree)", () => {
+  test("uses the bundled ClearSpace logo as a decorative brand mark", () => {
     const { container } = render(<Brand />);
-    const svg = container.querySelector("svg");
-    expect(svg).toBeTruthy();
-    expect(svg).toHaveAttribute("aria-hidden", "true");
+    const logo = container.querySelector("img");
+    expect(logo).toBeTruthy();
+    expect(logo.getAttribute("src")).toContain("clearspace-logo.svg");
+    expect(logo).toHaveAttribute("alt", "");
+    expect(logo).toHaveAttribute("aria-hidden", "true");
+    expect(logo).toHaveAttribute("width", "36");
+    expect(logo).toHaveAttribute("height", "36");
+  });
+
+  test("supports an explicit logo size", () => {
+    const { container } = render(<Brand iconSize={28} />);
+    const logo = container.querySelector("img");
+    expect(logo).toHaveAttribute("width", "28");
+    expect(logo).toHaveAttribute("height", "28");
   });
 
   test("merges a caller className onto the root", () => {

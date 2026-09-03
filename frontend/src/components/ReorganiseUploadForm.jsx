@@ -4,10 +4,10 @@ import VoiceContextInput from "./VoiceContextInput";
 import { Button } from "./ui/button";
 
 // Presentational + its own small local UI state (selected file, context
-// text, preview URL) — mirrors DeclutterUploadForm's own established
+// text, preview URL), mirrors DeclutterUploadForm's own established
 // structure, but is a SEPARATE component rather than a shared/prop-
 // branching one: the accepted file types differ (PNG/JPEG only, matching
-// R4's exact supported set — not "image/*"), and the copy differs. This
+// R4's exact supported set, not "image/*"), and the copy differs. This
 // keeps DeclutterUploadForm free of any Reorganise-specific knowledge,
 // per this project's stated preference for not forcing Declutter
 // components to understand Reorganise state.
@@ -43,7 +43,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
     if (selected && !ACCEPTED_TYPES.includes(selected.type)) {
       setFile(null);
       setPreviewUrl(null);
-      setTypeError(`"${selected.type || "unknown"}" is not supported — please choose a PNG or JPEG photo.`);
+      setTypeError(`"${selected.type || "unknown"}" is not supported. Please choose a PNG or JPEG photo.`);
       return;
     }
 
@@ -108,7 +108,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
             />
           </div>
 
-          {/* The same reusable voice UI DeclutterUploadForm mounts — it
+          {/* The same reusable voice UI DeclutterUploadForm mounts, it
               fills the context field above only when the user applies it. */}
           <VoiceContextInput
             idPrefix="reorganise"
@@ -135,7 +135,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
 
         {error && (
           <p role="alert" className="rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error">
-            {error} You can try again — your selected photo and context are still here.
+            {error} You can try again. Your selected photo and context are still here.
           </p>
         )}
       </div>

@@ -2,26 +2,26 @@ import { decisionBorderColor, itemNumberLabel } from "../utils/format";
 
 // Overlays the analysed room photo with one box per detection, positioned
 // as CSS percentages derived directly from each item's normalized [0,1]
-// box — never pixel math, so alignment survives the image resizing at any
+// box, never pixel math, so alignment survives the image resizing at any
 // breakpoint with no resize listener needed. Every box is keyed and
 // identified by item_id only; two same-labelled items (e.g. two "picture
 // frame" detections) render as two fully independent boxes purely because
 // they carry different item_ids, never merged or deduplicated by label.
 //
 // This panel is supplementary, not required: it renders zero decision
-// controls of its own (no radios/checkboxes on a box) — every review
+// controls of its own (no radios/checkboxes on a box), every review
 // action still happens in the item list. A box click only requests that
 // the corresponding list entry be focused/scrolled to, via onBoxClick;
 // DeclutterReview (the owner of activeItemId/showAllBoxes/the item ref
 // map) decides what that means.
 //
 // declutterBoxClassName is Declutter's own box-coloring rule (reads
-// is_unresolved/is_expected/ai_decision — fields only Declutter's
-// reviewItems carry) — kept as the DEFAULT for the optional
+// is_unresolved/is_expected/ai_decision, fields only Declutter's
+// reviewItems carry), kept as the DEFAULT for the optional
 // getBoxClassName prop below, so Declutter's existing usage (which never
 // passes that prop) keeps its box categories. Direct Reorganise's item
 // shape has none of those fields (only a boolean "selected" concept), so
-// it supplies its own classifier instead — see ReorganiseItemSelector.
+// it supplies its own classifier instead, see ReorganiseItemSelector.
 function declutterBoxClassName(item, isActive, isQuiet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = item.is_unresolved

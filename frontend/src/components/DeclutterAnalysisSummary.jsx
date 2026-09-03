@@ -2,11 +2,11 @@ import { Sofa, ScanSearch, Sparkles, Layers, TriangleAlert, Clock } from "lucide
 import { formatConfidence } from "../utils/format";
 import { cn } from "../lib/cn";
 
-// The "2. Analysis summary" section — presentational only: every value is
+// The "2. Analysis summary" section, presentational only: every value is
 // already computed by DeclutterReview and passed in. Compact stat cells,
 // each keeping its own <dt>/<dd> pair.
 //
-// The "Candidate detections" wording is deliberate — a count of returned
+// The "Candidate detections" wording is deliberate, a count of returned
 // boxes, never a claim of detection completeness.
 function Stat({ icon: Icon, label, value, tone = "default" }) {
   return (

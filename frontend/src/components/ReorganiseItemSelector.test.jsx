@@ -32,13 +32,13 @@ function baseProps(overrides = {}) {
 }
 
 // The detection overlay/checkboxes now live inside a collapsed-by-default
-// <details> disclosure — any test that needs to interact with them opens
+// <details> disclosure, any test that needs to interact with them opens
 // it first, exactly like a real user would.
 async function openReview() {
   await userEvent.click(screen.getByText(/review detected items \(optional\)/i));
 }
 
-describe("ReorganiseItemSelector — auto-inclusion, no mandatory selection step", () => {
+describe("ReorganiseItemSelector, auto-inclusion, no mandatory selection step", () => {
   test("states that all detected items are automatically included", () => {
     const items = [makeItem({ item_id: "item_001" }), makeItem({ item_id: "item_002" })];
     render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001", "item_002"] })} />);
@@ -69,7 +69,7 @@ describe("ReorganiseItemSelector — auto-inclusion, no mandatory selection step
   });
 });
 
-describe("ReorganiseItemSelector — the optional review disclosure", () => {
+describe("ReorganiseItemSelector, the optional review disclosure", () => {
   test("is collapsed by default", () => {
     render(<ReorganiseItemSelector {...baseProps()} />);
     const details = screen.getByText(/review detected items \(optional\)/i).closest("details");
@@ -96,7 +96,7 @@ describe("ReorganiseItemSelector — the optional review disclosure", () => {
   });
 });
 
-describe("ReorganiseItemSelector — explicit exclusion", () => {
+describe("ReorganiseItemSelector, explicit exclusion", () => {
   test("clicking an item's checkbox (inside the review) calls onToggleItem with its item_id", async () => {
     const onToggleItem = vi.fn();
     render(<ReorganiseItemSelector {...baseProps({ onToggleItem })} />);
@@ -147,7 +147,7 @@ describe("ReorganiseItemSelector — explicit exclusion", () => {
   });
 });
 
-describe("ReorganiseItemSelector — Generate button", () => {
+describe("ReorganiseItemSelector, Generate button", () => {
   test("is disabled when the selection is empty, with honest wording (not a generic 'select an item' prompt)", () => {
     render(<ReorganiseItemSelector {...baseProps({ selectedItemIds: [] })} />);
     expect(screen.getByRole("button", { name: /generate room plan/i })).toBeDisabled();

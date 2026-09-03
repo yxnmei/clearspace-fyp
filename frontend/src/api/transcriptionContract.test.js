@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { normaliseTranscriptionResponse } from "./transcriptionContract";
 
 // "whisper-base" is the shape resolve_model_name() actually produces
-// (backend + "-" + size — see app/models/whisper_stt.py); a bare "base"
+// (backend + "-" + size, see app/models/whisper_stt.py); a bare "base"
 // is not a value this endpoint can return.
 function makeResponse(overrides = {}) {
   return {
@@ -14,7 +14,7 @@ function makeResponse(overrides = {}) {
   };
 }
 
-describe("normaliseTranscriptionResponse — valid responses", () => {
+describe("normaliseTranscriptionResponse, valid responses", () => {
   test("a complete response normalises to the four validated fields", () => {
     const result = normaliseTranscriptionResponse(makeResponse());
 
@@ -26,7 +26,7 @@ describe("normaliseTranscriptionResponse — valid responses", () => {
     });
   });
 
-  test("an EXPLICITLY empty transcript is valid — a silent recording is not an error", () => {
+  test("an EXPLICITLY empty transcript is valid, a silent recording is not an error", () => {
     const result = normaliseTranscriptionResponse(makeResponse({ transcript: "" }));
 
     expect(result.transcript).toBe("");
@@ -68,7 +68,7 @@ describe("normaliseTranscriptionResponse — valid responses", () => {
   });
 });
 
-describe("normaliseTranscriptionResponse — the envelope itself", () => {
+describe("normaliseTranscriptionResponse, the envelope itself", () => {
   test.each([
     ["null", null],
     ["undefined", undefined],
@@ -80,12 +80,12 @@ describe("normaliseTranscriptionResponse — the envelope itself", () => {
     expect(() => normaliseTranscriptionResponse(value)).toThrow(/response must be an object/);
   });
 
-  test("an empty object is rejected — it describes no transcription at all", () => {
+  test("an empty object is rejected, it describes no transcription at all", () => {
     expect(() => normaliseTranscriptionResponse({})).toThrow(/transcript must be a string/);
   });
 });
 
-describe("normaliseTranscriptionResponse — transcript", () => {
+describe("normaliseTranscriptionResponse, transcript", () => {
   test("a MISSING transcript is malformed, never silence", () => {
     const { transcript, ...withoutTranscript } = makeResponse();
     expect(transcript).toBeDefined();
@@ -107,7 +107,7 @@ describe("normaliseTranscriptionResponse — transcript", () => {
   });
 });
 
-describe("normaliseTranscriptionResponse — model_name", () => {
+describe("normaliseTranscriptionResponse, model_name", () => {
   test("a missing model_name is rejected", () => {
     const { model_name, ...withoutModel } = makeResponse();
     expect(model_name).toBeDefined();
@@ -128,7 +128,7 @@ describe("normaliseTranscriptionResponse — model_name", () => {
   });
 });
 
-describe("normaliseTranscriptionResponse — timings", () => {
+describe("normaliseTranscriptionResponse, timings", () => {
   test.each(["transcription_ms", "audio_duration_s"])("a missing %s is rejected", (field) => {
     const response = makeResponse();
     delete response[field];
@@ -177,7 +177,7 @@ describe("normaliseTranscriptionResponse — timings", () => {
   });
 });
 
-describe("normaliseTranscriptionResponse — unexpected fields", () => {
+describe("normaliseTranscriptionResponse, unexpected fields", () => {
   test("an extra field is rejected, matching the route's own extra=forbid", () => {
     expect(() => normaliseTranscriptionResponse(makeResponse({ truncated: false }))).toThrow(
       /unexpected field\(s\): \["truncated"\]/,
@@ -206,7 +206,7 @@ describe("normaliseTranscriptionResponse — unexpected fields", () => {
   });
 });
 
-describe("normaliseTranscriptionResponse — no coercion", () => {
+describe("normaliseTranscriptionResponse, no coercion", () => {
   test("a numeric string is not turned into a number", () => {
     expect(() => normaliseTranscriptionResponse(makeResponse({ transcription_ms: "0" }))).toThrow();
   });

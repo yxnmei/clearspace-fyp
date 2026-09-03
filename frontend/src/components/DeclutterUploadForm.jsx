@@ -4,7 +4,7 @@ import VoiceContextInput from "./VoiceContextInput";
 import { Button } from "./ui/button";
 
 // Presentational + its own small local UI state (selected file, context
-// text, preview URL) — none of that is workflow state, so it stays out
+// text, preview URL), none of that is workflow state, so it stays out
 // of useDeclutterFlow (§4: components stay presentational, hooks own
 // real state). onSubmit is the only thing this component calls out to;
 // it never talks to the API directly.
@@ -27,7 +27,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   function handleFileChange(event) {
     const selected = event.target.files?.[0] ?? null;
 
-    // Revoke the previous object URL before creating a new one — object
+    // Revoke the previous object URL before creating a new one, object
     // URLs are only released by an explicit revoke, never automatically.
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);
@@ -95,7 +95,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
             />
           </div>
 
-          {/* Optional voice route into the SAME context field above — it
+          {/* Optional voice route into the SAME context field above, it
               hands back text for setContext, and never writes it itself. */}
           <VoiceContextInput
             idPrefix="declutter"
@@ -122,7 +122,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
 
         {status === "error" && error && (
           <p role="alert" className="rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error">
-            {error} You can try again — your selected photo and context are still here.
+            {error} You can try again. Your selected photo and context are still here.
           </p>
         )}
       </div>

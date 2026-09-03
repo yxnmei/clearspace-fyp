@@ -61,7 +61,7 @@ describe("ConfirmationSummary", () => {
       excludedCount: 0,
       response: {},
     };
-    // Both share a label — matching must go by item_id, not clean_label.
+    // Both share a label, matching must go by item_id, not clean_label.
     const reviewItems = [
       { item_id: "item_004", clean_label: "picture frame", position: "upper-left" },
       { item_id: "item_006", clean_label: "picture frame", position: "left" },
@@ -179,7 +179,7 @@ describe("ConfirmationSummary", () => {
     );
 
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent(/run run7 — 2 decisions confirmed/i);
+    expect(status).toHaveTextContent(/run run7, 2 decisions confirmed/i);
     expect(ddFor("Keep")).toBe("1");
     expect(ddFor("Discard")).toBe("1");
     expect(ddFor("Changed from AI")).toBe("1");

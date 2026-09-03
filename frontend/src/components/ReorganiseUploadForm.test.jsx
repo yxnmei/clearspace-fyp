@@ -5,7 +5,7 @@ import ReorganiseUploadForm from "./ReorganiseUploadForm";
 import { VOICE_MESSAGES } from "../hooks/useVoiceContext";
 import * as client from "../api/client";
 
-// Mocked only because the voice input this form now mounts calls it —
+// Mocked only because the voice input this form now mounts calls it,
 // the form itself still never talks to the API. No MediaRecorder fake
 // is installed here, so these tests run in the same non-recording
 // browser a fallback user has, exercising the audio-file route.
@@ -54,7 +54,7 @@ describe("ReorganiseUploadForm", () => {
     // Uses fireEvent directly, not userEvent.upload: user-event's own
     // upload() emulates the real browser file PICKER, which already
     // filters by the input's accept attribute before this component's
-    // code ever runs — that's a real browser behaviour, not this
+    // code ever runs, that's a real browser behaviour, not this
     // component's own validation. fireEvent bypasses that picker
     // emulation so this test exercises OUR defense-in-depth check
     // (relevant for drag-and-drop or a browser that doesn't enforce
@@ -100,7 +100,7 @@ describe("ReorganiseUploadForm", () => {
   });
 });
 
-describe("ReorganiseUploadForm — voice context", () => {
+describe("ReorganiseUploadForm, voice context", () => {
   test("the voice input is mounted beside the context textarea, not instead of it", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
 
@@ -216,13 +216,13 @@ describe("ReorganiseUploadForm — voice context", () => {
   });
 });
 
-describe("ReorganiseUploadForm — room photo presentation (redesign)", () => {
+describe("ReorganiseUploadForm, room photo presentation (redesign)", () => {
   test("the file input is restricted to PNG and JPEG", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
     expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
   });
 
-  test("the selected filename is shown from File.name — no path, no fake path", async () => {
+  test("the selected filename is shown from File.name, no path, no fake path", async () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
 
     await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("living_room.png"));

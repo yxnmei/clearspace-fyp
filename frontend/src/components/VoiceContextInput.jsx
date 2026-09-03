@@ -4,8 +4,8 @@ import { useVoiceContext } from "../hooks/useVoiceContext";
 import { Button, buttonVariants } from "./ui/button";
 import { cn } from "../lib/cn";
 
-// The reusable voice half of the context field, mounted beside — never
-// instead of — the ordinary textarea it can fill. It is deliberately
+// The reusable voice half of the context field, mounted beside, never
+// instead of, the ordinary textarea it can fill. It is deliberately
 // dumb about workflows: it knows the current context text and how to
 // hand back a new one, nothing about Declutter, Reorganise or Both.
 //
@@ -15,7 +15,7 @@ import { cn } from "../lib/cn";
 // "Use as context"/"Replace context" calls onApplyTranscript.
 //
 // `onBusyChange` is how the host form learns to disable its own submit
-// while the microphone or the transcription request is live — the
+// while the microphone or the transcription request is live, the
 // alternative, lifting the whole hook into both forms, would duplicate
 // this component's rules in two places.
 //
@@ -67,7 +67,7 @@ export default function VoiceContextInput({
 
   // The chosen file's NAME, kept here because the native input cannot:
   // handleFileChange clears input.value immediately (see below), which
-  // also wipes the browser's own filename label. Only File.name — never
+  // also wipes the browser's own filename label. Only File.name, never
   // a path, which the browser does not expose anyway.
   const [selectedFileName, setSelectedFileName] = useState(null);
 
@@ -115,7 +115,7 @@ export default function VoiceContextInput({
     <div className="rounded-card border border-border bg-surface-muted p-4">
       <p className="text-sm font-medium text-foreground">Or say it instead (optional)</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Record a short note or choose an audio file. You review the text before any of it becomes context —
+        Record a short note or choose an audio file. You review the text before any of it becomes context,
         nothing is added on your behalf.
       </p>
 
@@ -179,7 +179,7 @@ export default function VoiceContextInput({
       {!recordingSupported && (
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <MicOff aria-hidden="true" width={13} height={13} />
-          Recording is not available in this browser — choose an audio file above, or type your context below.
+          Recording is not available in this browser. Choose an audio file above, or type your context below.
         </p>
       )}
 

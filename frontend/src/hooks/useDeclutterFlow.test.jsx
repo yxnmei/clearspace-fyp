@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useDeclutterFlow } from "./useDeclutterFlow";
 import * as client from "../api/client";
 
-// Only the frontend API functions are mocked — normaliseDeclutterUploadResponse/
+// Only the frontend API functions are mocked, normaliseDeclutterUploadResponse/
 // normaliseConfirmationResponse (the pure contract adapters) run for real, so
 // these tests also prove the hook wires real, validating adapters correctly,
 // not just that it calls the right mocked functions.
@@ -275,7 +275,7 @@ describe("useDeclutterFlow", () => {
       await result.current.submit({ file: makeFile(), context: null });
     });
 
-    // Set item_002's override first, item_001's second — proves
+    // Set item_002's override first, item_001's second, proves
     // serialization order follows expected_item_ids, not call order.
     act(() => {
       result.current.setDecisionOverride("item_002", "donate");
@@ -383,7 +383,7 @@ describe("useDeclutterFlow", () => {
     });
     expect(result.current.confirmationStatus).toBe("confirming");
 
-    // Edit while the request is outstanding — must invalidate its generation.
+    // Edit while the request is outstanding, must invalidate its generation.
     act(() => {
       result.current.setDecisionOverride("item_001", "donate");
     });
@@ -435,7 +435,7 @@ describe("useDeclutterFlow", () => {
 
     expect(result.current.confirmation.confirmedDecisions[0].confirmed_decision).toBe("donate");
 
-    // Resolve the OLDER request now — it must not clobber the newer state.
+    // Resolve the OLDER request now, it must not clobber the newer state.
     await act(async () => {
       firstDeferred.resolve(makeConfirmResponse()); // the stale "keep" response
       await firstConfirmPromise;
@@ -672,7 +672,7 @@ describe("useDeclutterFlow correctLabel", () => {
     });
     expect(blockedResult).toBeNull();
     expect(client.confirmDecisions).toHaveBeenCalledTimes(1); // no second call while correcting
-    // The blocked call is state-neutral — it must not leave a fake
+    // The blocked call is state-neutral, it must not leave a fake
     // "confirming"/"error" status sitting around while the real
     // correction is still in flight.
     expect(result.current.confirmationStatus).toBe("idle");
@@ -735,7 +735,7 @@ describe("useDeclutterFlow correctLabel", () => {
     expect(result.current.confirmation).toBeNull(); // invalidated when the correction began
 
     // A decision edit while the correction is still in flight must NOT
-    // invalidate the correction itself — this is the regression this
+    // invalidate the correction itself, this is the regression this
     // task fixes: it used to make the correction's own response look
     // stale, leaving correctingItemId stuck non-null forever.
     act(() => {
@@ -747,7 +747,7 @@ describe("useDeclutterFlow correctLabel", () => {
       deferred.resolve(makeOverrideResponse({ decision: "sell" }));
     });
 
-    // The correction was NOT discarded as stale — it fully applied.
+    // The correction was NOT discarded as stale, it fully applied.
     expect(result.current.correctingItemId).toBeNull();
     expect(result.current.items[0].effective_label).toBe("hoodie");
     expect(result.current.declutter.ai_decisions[0].decision).toBe("sell");
@@ -755,7 +755,7 @@ describe("useDeclutterFlow correctLabel", () => {
     expect(result.current.overridesById.item_001.decision).toBe("donate");
     expect(result.current.reviewItems[0].review_decision).toBe("donate");
     // Confirmation remains invalidated (the edit also invalidated it,
-    // redundantly with the correction — either way it must stay cleared).
+    // redundantly with the correction, either way it must stay cleared).
     expect(result.current.confirmation).toBeNull();
     expect(result.current.confirmationStatus).toBe("idle");
   });
@@ -783,7 +783,7 @@ describe("useDeclutterFlow correctLabel", () => {
       deferred.resolve(makeOverrideResponse({ decision: "sell" }));
     });
 
-    expect(result.current.correctingItemId).toBeNull(); // not stuck — the correction was not discarded as stale
+    expect(result.current.correctingItemId).toBeNull(); // not stuck, the correction was not discarded as stale
     expect(result.current.items[0].effective_label).toBe("hoodie");
     expect(result.current.overridesById.item_001.excluded).toBe(true); // survives
     expect(result.current.reviewItems[0].review_excluded).toBe(true);
@@ -969,8 +969,8 @@ describe("useDeclutterFlow correctLabel", () => {
   });
 });
 
-describe("useDeclutterFlow — configurable uploadPath/normaliseUploadResponse (R6)", () => {
-  test("default parameters reproduce existing Declutter behavior exactly — no arguments needed", async () => {
+describe("useDeclutterFlow, configurable uploadPath/normaliseUploadResponse (R6)", () => {
+  test("default parameters reproduce existing Declutter behavior exactly, no arguments needed", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     const { result } = renderHook(() => useDeclutterFlow());
 
@@ -1016,7 +1016,7 @@ describe("useDeclutterFlow — configurable uploadPath/normaliseUploadResponse (
   });
 });
 
-describe("useDeclutterFlow — reset() (R6)", () => {
+describe("useDeclutterFlow, reset() (R6)", () => {
   test("reset() clears analysis, declutter, overrides, confirmation, and errors, returning to idle", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     client.confirmDecisions.mockResolvedValue(makeConfirmResponse());
@@ -1046,7 +1046,7 @@ describe("useDeclutterFlow — reset() (R6)", () => {
     expect(result.current.error).toBeNull();
   });
 
-  test("reset() invalidates an in-flight upload — a stale response never resurrects state", async () => {
+  test("reset() invalidates an in-flight upload, a stale response never resurrects state", async () => {
     const { result } = renderHook(() => useDeclutterFlow());
     const deferred = makeDeferred();
     client.uploadImage.mockReturnValueOnce(deferred.promise);
@@ -1071,7 +1071,7 @@ describe("useDeclutterFlow — reset() (R6)", () => {
     expect(result.current.analysis).toBeNull();
   });
 
-  test("reset() invalidates an in-flight confirmation — a stale response never resurrects state", async () => {
+  test("reset() invalidates an in-flight confirmation, a stale response never resurrects state", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     const { result } = renderHook(() => useDeclutterFlow());
     await act(async () => {

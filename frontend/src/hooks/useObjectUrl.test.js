@@ -10,7 +10,7 @@ let nextUrlSuffix = 0;
 
 beforeEach(() => {
   nextUrlSuffix = 0;
-  // jsdom does not implement object URLs — each call returns a distinct,
+  // jsdom does not implement object URLs, each call returns a distinct,
   // inspectable URL so tests can assert exactly which one was revoked.
   global.URL.createObjectURL = vi.fn(() => `blob:mock-${nextUrlSuffix++}`);
   global.URL.revokeObjectURL = vi.fn();

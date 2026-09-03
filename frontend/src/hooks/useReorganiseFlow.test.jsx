@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useReorganiseFlow } from "./useReorganiseFlow";
 import * as client from "../api/client";
 
-// Only the frontend API functions are mocked — the real, validating
+// Only the frontend API functions are mocked, the real, validating
 // reorganiseContract adapters run for real, so these tests also prove
 // the hook wires real contract validation correctly, matching
 // useDeclutterFlow.test.jsx's own established convention.
@@ -120,7 +120,7 @@ function deferred() {
 
 // ---------------------------------------------------------------------------
 
-describe("useReorganiseFlow — initial state", () => {
+describe("useReorganiseFlow, initial state", () => {
   test("starts in the upload phase with no data", () => {
     const { result } = renderHook(() => useReorganiseFlow());
     expect(result.current.phase).toBe("upload");
@@ -133,7 +133,7 @@ describe("useReorganiseFlow — initial state", () => {
   });
 });
 
-describe("useReorganiseFlow — upload lifecycle", () => {
+describe("useReorganiseFlow, upload lifecycle", () => {
   test("submit() moves to analysing, then selecting on success", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     const { result } = renderHook(() => useReorganiseFlow());
@@ -221,7 +221,7 @@ describe("useReorganiseFlow — upload lifecycle", () => {
   });
 });
 
-describe("useReorganiseFlow — selection", () => {
+describe("useReorganiseFlow, selection", () => {
   async function uploadedFlow(items) {
     client.uploadImage.mockResolvedValue(makeUploadResponse({ items }));
     const { result } = renderHook(() => useReorganiseFlow());
@@ -265,7 +265,7 @@ describe("useReorganiseFlow — selection", () => {
   });
 });
 
-describe("useReorganiseFlow — generate", () => {
+describe("useReorganiseFlow, generate", () => {
   async function uploadedFlow() {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     const { result } = renderHook(() => useReorganiseFlow());
@@ -275,7 +275,7 @@ describe("useReorganiseFlow — generate", () => {
     return result;
   }
 
-  test("empty selection blocks generation — no network call", async () => {
+  test("empty selection blocks generation, no network call", async () => {
     const result = await uploadedFlow();
     act(() => result.current.deselectAll());
 
@@ -368,7 +368,7 @@ describe("useReorganiseFlow — generate", () => {
     expect(result.current.generateResult.imageStatus).toBe("generated");
   });
 
-  test("double generation dispatch is prevented — exactly one network call", async () => {
+  test("double generation dispatch is prevented, exactly one network call", async () => {
     const result = await uploadedFlow();
     const slow = deferred();
     client.generateReorganisation.mockReturnValue(slow.promise);
@@ -402,7 +402,7 @@ describe("useReorganiseFlow — generate", () => {
   });
 });
 
-describe("useReorganiseFlow — staleness and reset", () => {
+describe("useReorganiseFlow, staleness and reset", () => {
   test("a stale upload response is discarded when a newer submit() has already succeeded", async () => {
     const slow = deferred();
     client.uploadImage.mockReturnValueOnce(slow.promise);
@@ -451,7 +451,7 @@ describe("useReorganiseFlow — staleness and reset", () => {
       await slow.promise.catch(() => {});
     });
 
-    // Reset must win — the stale generate() response must never resurrect state.
+    // Reset must win, the stale generate() response must never resurrect state.
     expect(result.current.phase).toBe("upload");
     expect(result.current.generateResult).toBeNull();
     expect(result.current.analysis).toBeNull();
@@ -542,7 +542,7 @@ describe("useReorganiseFlow — staleness and reset", () => {
   });
 });
 
-describe("useReorganiseFlow — generation ownership token (correction 1)", () => {
+describe("useReorganiseFlow, generation ownership token (correction 1)", () => {
   test("a new flow can generate without waiting for a stale, superseded generation to settle", async () => {
     // A -> reset() releases A's slot immediately -> B starts (must NOT be
     // blocked by A, which is still in flight) -> a third dispatch while B
@@ -562,7 +562,7 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
     });
     expect(result.current.phase).toBe("generating");
 
-    // reset() releases A's slot immediately — does not wait for A to settle.
+    // reset() releases A's slot immediately, does not wait for A to settle.
     act(() => {
       result.current.reset();
     });
@@ -577,12 +577,12 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
     client.generateReorganisation.mockReturnValueOnce(genB.promise);
     let outcomeB;
     act(() => {
-      outcomeB = result.current.generate(); // B must be allowed to start — A's slot was already released
+      outcomeB = result.current.generate(); // B must be allowed to start, A's slot was already released
     });
     expect(result.current.phase).toBe("generating");
     expect(client.generateReorganisation).toHaveBeenCalledTimes(2); // A's call + B's call
 
-    // A THIRD dispatch while B is active must be blocked — no third network call.
+    // A THIRD dispatch while B is active must be blocked, no third network call.
     let outcomeThird;
     act(() => {
       outcomeThird = result.current.generate();
@@ -590,7 +590,7 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
     expect(await outcomeThird).toBeNull();
     expect(client.generateReorganisation).toHaveBeenCalledTimes(2); // still just A + B, never a third
 
-    // A settles LATE, after B has already claimed the slot — must be
+    // A settles LATE, after B has already claimed the slot, must be
     // discarded silently and must NOT release B's ownership or touch
     // phase/generateResult.
     await act(async () => {
@@ -601,7 +601,7 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
     expect(result.current.phase).toBe("generating"); // still B, untouched by A's stale settlement
     expect(result.current.generateResult).toBeNull();
 
-    // A FOURTH dispatch must still be blocked — B's ownership survived A's stale settlement.
+    // A FOURTH dispatch must still be blocked, B's ownership survived A's stale settlement.
     let outcomeFourth;
     act(() => {
       outcomeFourth = result.current.generate();
@@ -609,7 +609,7 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
     expect(await outcomeFourth).toBeNull();
     expect(client.generateReorganisation).toHaveBeenCalledTimes(2);
 
-    // B settles successfully — the slot is released and the result applies.
+    // B settles successfully, the slot is released and the result applies.
     await act(async () => {
       genB.resolve(makeGeneratedResponse("runB", ["item_001", "item_002"]));
       await outcomeB;
@@ -619,7 +619,7 @@ describe("useReorganiseFlow — generation ownership token (correction 1)", () =
 
     // With the slot now free, a new generate() call is no longer blocked.
     client.generateReorganisation.mockResolvedValueOnce(makeGeneratedResponse("runB", ["item_001", "item_002"]));
-    // generate() only runs from "selecting" — reaching for it here just
+    // generate() only runs from "selecting", reaching for it here just
     // confirms the slot itself is free, not a full re-generate flow.
     expect(result.current.phase).toBe("result");
   });

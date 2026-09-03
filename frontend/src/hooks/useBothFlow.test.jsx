@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useBothFlow } from "./useBothFlow";
 import * as client from "../api/client";
 
-// Only the frontend API functions are mocked — the real, validating
+// Only the frontend API functions are mocked, the real, validating
 // declutterContract/confirmationContract/reorganiseContract adapters run
 // for real, so these tests also prove the hook wires real contract
 // validation correctly, matching useDeclutterFlow.test.jsx's and
@@ -141,8 +141,8 @@ function makeGeneratedImage(overrides = {}) {
 
 // Builds a /generate/confirmed response whose `confirmation` is the exact
 // ConfirmationResult a matching makeConfirmResponse() call would produce
-// — i.e. genuinely server-derived and internally consistent, not a
-// client echo — and whose planning exactly matches confirmedKeepIds.
+// i.e. genuinely server-derived and internally consistent, not a
+// client echo, and whose planning exactly matches confirmedKeepIds.
 function makeConfirmedGenerateResponse(runId, confirmed, { imageStatus = "generated", unavailableReason = null } = {}) {
   const confirmation = makeConfirmResponse(runId, confirmed);
   return {
@@ -183,7 +183,7 @@ async function confirmedFlow({ decisions = [{ itemId: "item_001", decision: "kee
 
 // ---------------------------------------------------------------------------
 
-describe("useBothFlow — upload", () => {
+describe("useBothFlow, upload", () => {
   test("submit() sends path=\"both\" and stores the normalised declutter result plus the hash", async () => {
     client.uploadImage.mockResolvedValue(makeBothUploadResponse());
     const { result } = renderHook(() => useBothFlow());
@@ -232,8 +232,8 @@ describe("useBothFlow — upload", () => {
   });
 });
 
-describe("useBothFlow — confirmation gates generation", () => {
-  test("generate() is a no-op before any confirmation exists — no network call", async () => {
+describe("useBothFlow, confirmation gates generation", () => {
+  test("generate() is a no-op before any confirmation exists, no network call", async () => {
     client.uploadImage.mockResolvedValue(makeBothUploadResponse());
     const { result } = renderHook(() => useBothFlow());
     await act(async () => {
@@ -257,8 +257,8 @@ describe("useBothFlow — confirmation gates generation", () => {
   });
 });
 
-describe("useBothFlow — empty confirmed Keep blocks generation", () => {
-  test("generate() is a client-side no-op when confirmedKeepIds is empty — no network call", async () => {
+describe("useBothFlow, empty confirmed Keep blocks generation", () => {
+  test("generate() is a client-side no-op when confirmedKeepIds is empty, no network call", async () => {
     const { result } = await confirmedFlow({ decisions: [{ itemId: "item_001", decision: "sell" }] });
     expect(result.current.confirmation.confirmedKeepIds).toEqual([]);
 
@@ -273,8 +273,8 @@ describe("useBothFlow — empty confirmed Keep blocks generation", () => {
   });
 });
 
-describe("useBothFlow — generate request shape", () => {
-  test("the exact declutter+overrides request reaches the client — never a selection list", async () => {
+describe("useBothFlow, generate request shape", () => {
+  test("the exact declutter+overrides request reaches the client, never a selection list", async () => {
     const { result } = await confirmedFlow();
     client.generateConfirmedReorganisation.mockResolvedValue(
       makeConfirmedGenerateResponse("run1", [{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
@@ -373,7 +373,7 @@ describe("useBothFlow — generate request shape", () => {
     expect(result.current.confirmation.confirmedKeepIds).toEqual(["item_001"]);
 
     // The server response now (wrongly) claims item_002 was ALSO
-    // confirmed Keep — never something the client's own /confirm reported.
+    // confirmed Keep, never something the client's own /confirm reported.
     const drifted = makeConfirmedGenerateResponse("run1", [
       { itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" },
       { itemId: "item_002", aiDecision: "sell", confirmedDecision: "keep" },
@@ -389,7 +389,7 @@ describe("useBothFlow — generate request shape", () => {
   });
 });
 
-describe("useBothFlow — generation-invalidating edits", () => {
+describe("useBothFlow, generation-invalidating edits", () => {
   async function confirmedAndGenerated() {
     const { result } = await confirmedFlow();
     client.generateConfirmedReorganisation.mockResolvedValue(
@@ -419,7 +419,7 @@ describe("useBothFlow — generation-invalidating edits", () => {
     });
     expect(result.current.generateResult).toBeNull();
     expect(result.current.generationStatus).toBe("idle");
-    // The composed hook's own behavior is untouched — confirmation is
+    // The composed hook's own behavior is untouched, confirmation is
     // ALSO invalidated (existing useDeclutterFlow behavior), reused here.
     expect(result.current.confirmation).toBeNull();
   });
@@ -504,7 +504,7 @@ describe("useBothFlow — generation-invalidating edits", () => {
   });
 });
 
-describe("useBothFlow — staleness", () => {
+describe("useBothFlow, staleness", () => {
   test("a stale generate() success is discarded after a newer edit invalidates it", async () => {
     const { result } = await confirmedFlow();
     const slow = deferred();
@@ -575,12 +575,12 @@ describe("useBothFlow — staleness", () => {
       await slow.promise;
     });
 
-    expect(result.current.confirmation).toBeNull(); // discarded — superseded by the edit
+    expect(result.current.confirmation).toBeNull(); // discarded, superseded by the edit
     expect(result.current.generationStatus).toBe("idle");
   });
 });
 
-describe("useBothFlow — ownership token concurrency", () => {
+describe("useBothFlow, ownership token concurrency", () => {
   test("a fast double-click dispatches exactly one network call", async () => {
     const { result } = await confirmedFlow();
     const slow = deferred();
@@ -604,7 +604,7 @@ describe("useBothFlow — ownership token concurrency", () => {
     expect(await second).toBeNull();
   });
 
-  test("reset() releases the slot immediately — a new generate() need not wait for a stale one to settle", async () => {
+  test("reset() releases the slot immediately, a new generate() need not wait for a stale one to settle", async () => {
     const { result } = await confirmedFlow();
     const slow = deferred();
     client.generateConfirmedReorganisation.mockReturnValueOnce(slow.promise);
@@ -618,7 +618,7 @@ describe("useBothFlow — ownership token concurrency", () => {
       result.current.reset();
     });
 
-    // Re-drive to a fresh confirmed state and generate again — must not
+    // Re-drive to a fresh confirmed state and generate again, must not
     // be blocked by the still-unsettled first call.
     client.uploadImage.mockResolvedValue(makeBothUploadResponse({ runId: "run2" }));
     await act(async () => {
@@ -652,7 +652,7 @@ describe("useBothFlow — ownership token concurrency", () => {
   });
 });
 
-describe("useBothFlow — recoverable generation errors", () => {
+describe("useBothFlow, recoverable generation errors", () => {
   test("a generate() failure preserves confirmation, file, context, and overrides", async () => {
     const { result } = await confirmedFlow();
     client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
@@ -690,7 +690,7 @@ describe("useBothFlow — recoverable generation errors", () => {
   });
 });
 
-describe("useBothFlow — reset()", () => {
+describe("useBothFlow, reset()", () => {
   test("reset() clears file, context, generation state, and the composed Declutter state", async () => {
     const { result } = await confirmedFlow();
     client.generateConfirmedReorganisation.mockResolvedValue(

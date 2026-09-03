@@ -1,25 +1,25 @@
-// Pure functions only — unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
 // utils/format.js for the same convention.
 //
 // Adapts the backend's nested POST /upload (path="declutter") and POST
-// /override responses — both shaped { run_id, analysis: {...
+// /override responses, both shaped { run_id, analysis: {...
 // AnalysisResult}, declutter: {...DeclutterResult} }, /upload alone also
-// carrying `path` — into a flat, item_id-joined shape the UI can render
+// carrying `path`, into a flat, item_id-joined shape the UI can render
 // directly, without ever joining by label text or inventing an `id`
 // alias (item_id is the only identity that exists on either side of the
-// join). `analysis` and `declutter` are returned intact — their
+// join). `analysis` and `declutter` are returned intact, their
 // warnings/timings/provenance/validity/completeness fields are never
 // stripped, only read from.
 //
-// Three responses share the exact same join/invariant logic —
-// normaliseAnalysisDeclutterEnvelope, below — since /override's response
+// Three responses share the exact same join/invariant logic,
+// normaliseAnalysisDeclutterEnvelope, below, since /override's response
 // and /upload's path="both" response are both full (analysis, declutter)
 // pairs, not deltas/patches (see app/api/routes.py's OverrideResponse/
 // BothUploadResponse docstrings): the only thing that differs between the
-// three public functions is which `path` value (if any) is required —
+// three public functions is which `path` value (if any) is required,
 // see normaliseAnalysisDeclutterEnvelope's own `expectedPath` parameter.
 // normaliseBothUploadResponse additionally carries input_image_sha256
-// (R6) — reorganiseContract.js's own SHA256_HEX_RE pattern, duplicated
+// (R6), reorganiseContract.js's own SHA256_HEX_RE pattern, duplicated
 // here rather than imported, matching that file's own stated convention
 // that each contract file owns its own small validation helpers.
 
@@ -67,7 +67,7 @@ function extractItemIds(entries, entryName) {
 
 // DetectedItem's label-correction provenance (app/core/schemas.py):
 // corrected_label is the only stored value; label_source/effective_label
-// are backend-computed and must agree with it structurally — this check
+// are backend-computed and must agree with it structurally, this check
 // re-verifies that agreement client-side too, rather than trusting a
 // response that claims label_source="user" with no corrected_label (or
 // any other contradiction) at face value.
@@ -93,7 +93,7 @@ function requireLabelProvenanceConsistent(detection, name) {
 }
 
 // Shared by normaliseDeclutterUploadResponse, normaliseOverrideResponse,
-// and normaliseBothUploadResponse — every invariant below applies
+// and normaliseBothUploadResponse, every invariant below applies
 // identically to all three. `expectedPath` is the one dimension that
 // differs: "declutter" | "both" requires an exact match, null (/override,
 // which never carries a `path` field at all) skips the check entirely.
@@ -138,7 +138,7 @@ function normaliseAnalysisDeclutterEnvelope(response, { expectedPath }) {
   const expectedIdSet = new Set(expectedIds);
   const unresolvedIdSet = new Set(unresolvedIds);
 
-  // A future contextual detection may legitimately have no decision — so
+  // A future contextual detection may legitimately have no decision, so
   // detections are NOT required to all be expected. The reverse must
   // always hold: every expected item and every decision must resolve to
   // a real detection/expected item, never silently dropped or guessed.
@@ -154,7 +154,7 @@ function normaliseAnalysisDeclutterEnvelope(response, { expectedPath }) {
 
   const decisionsById = new Map(decisions.map((decision) => [decision.item_id, decision]));
 
-  // item_validity keys must exactly equal expected_item_ids — no missing
+  // item_validity keys must exactly equal expected_item_ids, no missing
   // entry, no unexpected extra key.
   for (const id of expectedIds) {
     if (!(id in validity)) fail(`expected item_id ${JSON.stringify(id)} has no item_validity entry`);
@@ -169,9 +169,9 @@ function normaliseAnalysisDeclutterEnvelope(response, { expectedPath }) {
   // resolved (one AiDecision, non-"still_invalid" validity) or unresolved
   // (no AiDecision, "still_invalid" validity). Duplicate decision item_ids
   // are already rejected above, so "exactly one AiDecision" only needs a
-  // presence check here. A contradictory response — e.g. an unresolved
+  // presence check here. A contradictory response, e.g. an unresolved
   // item that also has a decision, or a "still_invalid" item missing from
-  // unresolved_item_ids — is rejected outright, never silently resolved
+  // unresolved_item_ids, is rejected outright, never silently resolved
   // toward one side.
   for (const id of expectedIds) {
     const isUnresolved = unresolvedIdSet.has(id);
@@ -202,10 +202,10 @@ function normaliseAnalysisDeclutterEnvelope(response, { expectedPath }) {
   }
 
   // Join order follows analysis.items (the backend's own documented
-  // deterministic spatial ordering) — never decision-array order, and
+  // deterministic spatial ordering), never decision-array order, and
   // never label text. `{...detection}` copies every original detection
   // field through unchanged (including corrected_label/label_source/
-  // effective_label) — no `id` alias is ever introduced.
+  // effective_label), no `id` alias is ever introduced.
   const items = detections.map((detection) => {
     const itemId = detection.item_id;
     const isExpected = expectedIdSet.has(itemId);
@@ -229,25 +229,25 @@ export function normaliseDeclutterUploadResponse(response) {
   return normaliseAnalysisDeclutterEnvelope(response, { expectedPath: "declutter" });
 }
 
-// POST /override's response — see app/api/routes.py's OverrideResponse:
+// POST /override's response, see app/api/routes.py's OverrideResponse:
 // { run_id, analysis, declutter }, no `path` field at all (it isn't one
 // of the three declutter/reorganise/both upload paths, it's a
 // correction to an existing run). Same shape and same invariants as
 // /upload's response otherwise, since it's a full (analysis, declutter)
-// pair, not a patch — reuses the identical join/validation logic above.
+// pair, not a patch, reuses the identical join/validation logic above.
 export function normaliseOverrideResponse(response) {
   return normaliseAnalysisDeclutterEnvelope(response, { expectedPath: null });
 }
 
-// POST /upload's path="both" response (R6) — see app/api/routes.py's
+// POST /upload's path="both" response (R6), see app/api/routes.py's
 // BothUploadResponse: the exact same (analysis, declutter) envelope as
-// path="declutter" (full triage pipeline, reused verbatim server-side —
+// path="declutter" (full triage pipeline, reused verbatim server-side,
 // see that module's own docstring), PLUS input_image_sha256, reused
 // verbatim from path="reorganise"'s own hash mechanism. A later
 // generateConfirmedReorganisation() call resubmits both this declutter
 // result (plus any decision overrides) and the same image; the backend
 // checks the image against this hash the same way run_reorganise_pipeline()
-// already does for Direct Reorganise — see reorganiseContract.js's own
+// already does for Direct Reorganise, see reorganiseContract.js's own
 // normaliseReorganiseUploadResponse for the identical hash-field
 // convention this mirrors.
 export function normaliseBothUploadResponse(response) {

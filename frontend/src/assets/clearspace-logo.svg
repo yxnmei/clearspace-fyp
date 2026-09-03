@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">ClearSpace logo</title>
+  <g fill="none" stroke="#2F7D4A" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M27 54V102H101V54"/>
+    <path d="M20 56L64 18L108 56"/>
+    <path d="M64 96V55"/>
+    <path d="M64 67C52 67 45 60 45 49C56 49 64 56 64 67Z"/>
+    <path d="M64 79C77 79 85 71 85 59C73 59 64 66 64 79Z"/>
+    <path d="M64 91C54 91 48 85 48 76C57 76 64 82 64 91Z"/>
+  </g>
+  <g fill="#4F9D69">
+    <path d="M18 23l2.6 6.4L27 32l-6.4 2.6L18 41l-2.6-6.4L9 32l6.4-2.6L18 23Z"/>
+    <circle cx="31" cy="18" r="3"/>
+  </g>
+</svg>

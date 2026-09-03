@@ -20,10 +20,10 @@ describe("ImageGenStatusBanner", () => {
     expect(screen.getByText(/you can still generate a room plan/i)).toBeInTheDocument();
   });
 
-  test("never disables anything outside itself — it is advisory only", () => {
+  test("never disables anything outside itself, it is advisory only", () => {
     render(<ImageGenStatusBanner status="unavailable" recheck={vi.fn()} />);
     // The only interactive control this component renders is its own
-    // "Check again" button — it has no way to disable Generate or
+    // "Check again" button, it has no way to disable Generate or
     // anything else on the page.
     expect(screen.getAllByRole("button")).toHaveLength(1);
     const checkAgain = screen.getByRole("button", { name: /check again/i });
@@ -55,10 +55,10 @@ describe("ImageGenStatusBanner", () => {
     expect(recheck).toHaveBeenCalledTimes(1);
   });
 
-  test("never calls useImageGenHealth itself — receives status/recheck purely as props", () => {
+  test("never calls useImageGenHealth itself, receives status/recheck purely as props", () => {
     // Structural proof: this component takes no hooks of its own. Passing
     // plain, non-hook values in and getting correct rendering out is
-    // itself the evidence — if this component called useImageGenHealth()
+    // itself the evidence, if this component called useImageGenHealth()
     // internally, this render would trigger a real (mocked-away-only-by-
     // module-mocking) fetch, which no test in this file sets up at all.
     expect(() => render(<ImageGenStatusBanner status="checking" recheck={vi.fn()} />)).not.toThrow();

@@ -38,7 +38,7 @@ describe("DeclutterAnalysisSummary", () => {
     expect(ddFor("Analysis time")).toBe("4.5s");
   });
 
-  test("keeps the careful 'Candidate detections' wording — not a completeness claim", () => {
+  test("keeps the careful 'Candidate detections' wording, not a completeness claim", () => {
     render(
       <DeclutterAnalysisSummary analysis={makeAnalysis()} declutter={makeDeclutter()} contextualCount={0} totalDurationMs={0} />
     );

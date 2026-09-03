@@ -18,7 +18,7 @@ function setup(props = {}) {
   return { onChange, ...utils };
 }
 
-describe("RoomPhotoField — the native input stays accessible", () => {
+describe("RoomPhotoField, the native input stays accessible", () => {
   test("a real <input type=file> is reachable by its 'Room photo' label", () => {
     setup();
     const input = screen.getByLabelText(/room photo/i);
@@ -66,7 +66,7 @@ describe("RoomPhotoField — the native input stays accessible", () => {
   });
 });
 
-describe("RoomPhotoField — empty state", () => {
+describe("RoomPhotoField, empty state", () => {
   test("says no photo is selected and shows a quiet placeholder, not an image", () => {
     setup();
     expect(screen.getByText("No photo selected")).toBeInTheDocument();
@@ -80,8 +80,8 @@ describe("RoomPhotoField — empty state", () => {
   });
 });
 
-describe("RoomPhotoField — with a selected file", () => {
-  test("shows File.name only — never a path or a fake path", () => {
+describe("RoomPhotoField, with a selected file", () => {
+  test("shows File.name only, never a path or a fake path", () => {
     setup({ fileName: "living_room.png" });
     const shown = screen.getByText("living_room.png");
     expect(shown.textContent).toBe("living_room.png");
@@ -104,7 +104,7 @@ describe("RoomPhotoField — with a selected file", () => {
   });
 });
 
-describe("RoomPhotoField — help and error text", () => {
+describe("RoomPhotoField, help and error text", () => {
   test("help text is rendered and wired to the input via aria-describedby", () => {
     setup({ helpText: "JPG or PNG of one room." });
     const input = screen.getByLabelText(/room photo/i);
@@ -122,7 +122,7 @@ describe("RoomPhotoField — help and error text", () => {
         accept="image/*"
         onChange={vi.fn()}
         previewAlt="x"
-        error='"image/webp" is not supported — please choose a PNG or JPEG photo.'
+        error='"image/webp" is not supported. Please choose a PNG or JPEG photo.'
       />
     );
     const alert = screen.getByRole("alert");

@@ -17,7 +17,7 @@ describe("Button", () => {
     expect(ref.current).toBe(button);
   });
 
-  test("does not force a type — native behaviour is preserved", () => {
+  test("does not force a type, native behaviour is preserved", () => {
     render(<Button>No type</Button>);
     // React leaves `type` unset unless the caller provides it.
     expect(screen.getByRole("button", { name: "No type" })).not.toHaveAttribute("type");

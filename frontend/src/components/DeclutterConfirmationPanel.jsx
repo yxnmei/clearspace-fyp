@@ -73,7 +73,7 @@ export default function DeclutterConfirmationPanel({
           role="alert"
           className="mt-3 rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error"
         >
-          {confirmationError} Your review decisions and exclusions are unchanged — you can try again.
+          {confirmationError} Your review decisions and exclusions are unchanged. You can try again.
         </p>
       )}
     </section>

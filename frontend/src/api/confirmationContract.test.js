@@ -203,7 +203,7 @@ describe("normaliseConfirmationResponse", () => {
     expect(() => normaliseConfirmationResponse(response, source)).toThrow(/complete/);
   });
 
-  test("never uses label text for identity — two identical ai_decision/reason pairs stay independent by item_id", () => {
+  test("never uses label text for identity, two identical ai_decision/reason pairs stay independent by item_id", () => {
     const source = makeSourceDeclutter({
       expected_item_ids: ["item_004", "item_006"],
       ai_decisions: [
@@ -350,7 +350,7 @@ describe("override-state helpers", () => {
       { item_id: "item_003", is_expected: true, is_unresolved: true, ai_decision: null, item_validity: "still_invalid" },
     ];
     // A stray override entry that should never have been created for an
-    // unresolved item (the hook's own guard rejects this in practice) —
+    // unresolved item (the hook's own guard rejects this in practice),
     // buildReviewItems must not trust it either, defensively.
     const strayOverrides = setDecisionOverride({}, "item_003", "donate", "just in case");
 

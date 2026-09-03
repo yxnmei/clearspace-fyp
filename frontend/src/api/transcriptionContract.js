@@ -1,9 +1,9 @@
-// Pure functions only — unit-tested (§4), no React/DOM/fetch here. Same
+// Pure functions only, unit-tested (§4), no React/DOM/fetch here. Same
 // convention as declutterContract.js / confirmationContract.js /
 // reorganiseContract.js, including the deliberate duplication of the
 // small local helpers below rather than sharing a helpers module.
 //
-// One job: normaliseTranscriptionResponse() — validates POST
+// One job: normaliseTranscriptionResponse(), validates POST
 // /transcribe's response (see app/api/routes.py's TranscribeResponse)
 // before anything reads a transcript out of it.
 //
@@ -12,7 +12,7 @@
 // but only when the server actually said so by returning
 // `transcript: ""` inside an otherwise complete, well-formed response. A
 // response missing the field, carrying the wrong type, or carrying
-// fields the contract does not define is MALFORMED — it is not evidence
+// fields the contract does not define is MALFORMED, it is not evidence
 // of silence, and treating it as such would tell the user "no speech
 // detected" about a response that never described any speech at all.
 //
@@ -21,7 +21,7 @@
 // contract, which is a defect to surface, not a field to ignore.
 //
 // Nothing here coerces. A numeric string is not a number, `1` is not
-// `true`, and no value is trimmed, rounded or defaulted — the caller
+// `true`, and no value is trimmed, rounded or defaulted, the caller
 // gets exactly what the server sent, or an error.
 
 const EXPECTED_FIELDS = ["transcript", "model_name", "transcription_ms", "audio_duration_s"];
@@ -48,7 +48,7 @@ function requireNonEmptyString(value, name) {
 }
 
 // typeof rejects booleans before Number.isFinite ever runs (typeof true
-// is "boolean"), so `true` cannot slip through as 1 — the same trap
+// is "boolean"), so `true` cannot slip through as 1, the same trap
 // TranscribeResponse's own validator calls out on the server side.
 function requireNonNegativeNumber(value, name) {
   if (typeof value !== "number" || !Number.isFinite(value)) fail(`${name} must be a finite number`);
@@ -73,7 +73,7 @@ export function normaliseTranscriptionResponse(response) {
 
   const transcript = requireString(response.transcript, "transcript");
   const modelName = requireNonEmptyString(response.model_name, "model_name");
-  // Inference wall-clock and decoded audio length respectively — kept
+  // Inference wall-clock and decoded audio length respectively, kept
   // apart on the server precisely so the V3 comparison can read them
   // separately, so neither is allowed to stand in for the other here.
   const transcriptionMs = requireNonNegativeNumber(response.transcription_ms, "transcription_ms");

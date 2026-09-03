@@ -1,60 +1,60 @@
-// Pure functions only — unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
 // utils/format.js and api/declutterContract.js/confirmationContract.js
 // for the same convention. Small LOCAL validation helpers (fail/
 // isPlainObject/requireArray/etc. below) are duplicated here rather than
 // imported from those files, matching the existing convention that each
 // contract file owns its own copies rather than sharing a helpers
 // module. normaliseConfirmationResponse (a higher-level normalizer, not
-// a small helper) is the one deliberate exception — see job 3 below.
+// a small helper) is the one deliberate exception, see job 3 below.
 //
 // Three jobs live here:
-//   1. normaliseReorganiseUploadResponse() — validates POST /upload's
+//   1. normaliseReorganiseUploadResponse(), validates POST /upload's
 //      path="reorganise" response (see app/api/routes.py's
 //      ReorganiseUploadResponse). Deliberately NOT built on top of
 //      declutterContract.js's normaliseAnalysisDeclutterEnvelope: that
 //      function hard-requires a `declutter` object which the Reorganise
-//      response never carries at all — this is a genuinely different
+//      response never carries at all, this is a genuinely different
 //      envelope, not a variant of the Declutter one.
-//   2. normaliseGenerateResponse() — validates POST /generate's response
+//   2. normaliseGenerateResponse(), validates POST /generate's response
 //      (GenerateResponse) against the exact selected_item_ids that were
-//      requested and the input_image_sha256 the upload step reported —
+//      requested and the input_image_sha256 the upload step reported,
 //      both passed in by the caller, exactly like
 //      normaliseConfirmationResponse() takes sourceDeclutter to
 //      cross-check against.
-//   3. normaliseConfirmedGenerateResponse() — validates POST
+//   3. normaliseConfirmedGenerateResponse(), validates POST
 //      /generate/confirmed's response (ConfirmedGenerateResponse, R6,
 //      Both). Reuses validatePlanning()/validateGeneratedImage() below
 //      VERBATIM (they're already standalone module-level functions, not
 //      inlined into normaliseGenerateResponse) and reuses
 //      confirmationContract.js's own normaliseConfirmationResponse()
-//      verbatim too — genuine reuse of existing normalizers, not a
+//      verbatim too, genuine reuse of existing normalizers, not a
 //      parallel reimplementation, per this module's own job.
 //
-// Never merges/joins by label text anywhere in this file — item_id is
+// Never merges/joins by label text anywhere in this file, item_id is
 // the only identity. Duplicate labels are explicitly legal and remain
 // fully independent (see requireNoDuplicates, which only ever runs
 // against item_id lists).
 //
 // A plan-preserving image_status="unavailable" response is a SUCCESSFUL,
-// fully validated result here — never thrown as an error. Only a
+// fully validated result here, never thrown as an error. Only a
 // genuinely malformed/contract-violating response throws.
 
 import { normaliseConfirmationResponse } from "./confirmationContract";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
-// Structural base64 — not just "valid characters": a correct base64
+// Structural base64, not just "valid characters": a correct base64
 // string is a sequence of complete 4-character groups, with padding
 // ('=') allowed ONLY in the final group (1 or 2 trailing '=' chars,
 // never in the middle, never on its own). The earlier
 // `^[A-Za-z0-9+/]*={0,2}$` pattern accepted wrong-length strings (e.g.
-// length not a multiple of 4) and misplaced padding — this pattern
+// length not a multiple of 4) and misplaced padding, this pattern
 // rejects both.
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
 const ITEM_ID_RE = /^item_\d{3,}$/;
 // "deterministic_direct" is the PRODUCTION value: no LLM planner is
 // called at all, so the plan is built deterministically from the start.
 // Distinct from "deterministic_fallback", which means two planner
-// attempts were made and both were rejected — see the per-provenance
+// attempts were made and both were rejected, see the per-provenance
 // attempt rules enforced below.
 const VALID_PROVENANCE = new Set([
   "raw_valid",
@@ -75,7 +75,7 @@ const VALID_MEDIA_TYPES = new Set(["image/png", "image/jpeg"]);
 const VALID_ITEM_ROLES = new Set(["actionable", "contextual"]);
 const VALID_ISSUE_ATTEMPTS = new Set(["initial", "recovery"]);
 const VALID_ISSUE_KINDS = new Set(["call_failed", "invalid_json", "semantic_invalid"]);
-// Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION (R3) — the
+// Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION (R3), the
 // generated image's api_version must equal this EXACT value, not merely
 // be some non-empty string.
 const EXPECTED_IMAGE_API_VERSION = "v1";
@@ -195,7 +195,7 @@ export function normaliseReorganiseUploadResponse(response) {
     );
     return item.item_id;
   });
-  // Duplicate LABELS are explicitly legal and never checked here — only
+  // Duplicate LABELS are explicitly legal and never checked here, only
   // item_id (the one real identity) must be unique.
   requireNoDuplicates(itemIds, "analysis.items item_id");
 
@@ -232,9 +232,9 @@ function validatePlanning(planning, runId, selectedItemIds) {
   });
   requireNoDuplicates(plannedIds, "planned item_id (across zones)");
 
-  // Exact partition against the requested selection — no missing, no
+  // Exact partition against the requested selection, no missing, no
   // unexpected, no duplicate. Re-verified client-side even though R1
-  // (parse_and_validate_plan) already guarantees this server-side — the
+  // (parse_and_validate_plan) already guarantees this server-side, the
   // same "never trust a server-side invariant at face value" discipline
   // confirmationContract.js's keepSetMatches check already established.
   const plannedIdSet = new Set(plannedIds);
@@ -246,7 +246,7 @@ function validatePlanning(planning, runId, selectedItemIds) {
 
   requireNonEmptyString(planning.plan.image_prompt, "planning.plan.image_prompt");
   // null or NON-EMPTY (an empty/whitespace-only string is not a
-  // meaningful "no negative prompt" representation — that's what null
+  // meaningful "no negative prompt" representation, that's what null
   // itself already means).
   if (planning.plan.negative_prompt !== null) {
     requireNonEmptyString(planning.plan.negative_prompt, "planning.plan.negative_prompt");
@@ -286,8 +286,8 @@ function validatePlanning(planning, runId, selectedItemIds) {
     requireArray(issue.conversion_errors, `planning.issues[${i}].conversion_errors`);
   });
 
-  // Exactly one stage timing, for the "reorganise_plan" stage — matches
-  // ReorganisePlanningResult's own enforced invariant (R2) — re-verified
+  // Exactly one stage timing, for the "reorganise_plan" stage, matches
+  // ReorganisePlanningResult's own enforced invariant (R2), re-verified
   // here since this UI (ReorganiseResult) renders it directly.
   const stageTimings = requireArray(planning.stage_timings, "planning.stage_timings");
   if (stageTimings.length !== 1) {
@@ -315,13 +315,13 @@ function validatePlanning(planning, runId, selectedItemIds) {
 
   // deterministic_direct means NO model ran. A response naming a model or
   // reporting a failed attempt alongside it would be claiming evidence of
-  // an LLM call that never happened — rejected rather than displayed.
+  // an LLM call that never happened, rejected rather than displayed.
   if (planning.provenance === "deterministic_direct") {
     if (!bothNull) {
-      fail("deterministic_direct requires planning.model_name and planning.prompt_version to both be null — no model was called");
+      fail("deterministic_direct requires planning.model_name and planning.prompt_version to both be null, no model was called");
     }
     if (issues.length !== 0) {
-      fail(`deterministic_direct requires planning.issues to be empty — no attempt was made to fail, got ${issues.length}`);
+      fail(`deterministic_direct requires planning.issues to be empty, no attempt was made to fail, got ${issues.length}`);
     }
   }
 }
@@ -367,7 +367,7 @@ function validateGeneratedImage(image, expectedInputImageSha256) {
 export function normaliseGenerateResponse(response, { runId, selectedItemIds, inputImageSha256 }) {
   if (!isPlainObject(response)) fail("response must be an object");
 
-  // Caller-supplied input, not response data — validated with the same
+  // Caller-supplied input, not response data, validated with the same
   // rigor as everything else: non-empty, every entry a genuine item_id,
   // no duplicates. A malformed caller-supplied selection should fail
   // loudly here rather than produce a confusing partition mismatch below.
@@ -411,7 +411,7 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 // ---------------------------------------------------------------------------
 
 // POST /generate/confirmed's response (ConfirmedGenerateResponse, R6,
-// Both) — see app/api/routes.py: EXTENDS GenerateResponse's shape
+// Both), see app/api/routes.py: EXTENDS GenerateResponse's shape
 // (run_id/planning/image_status/image/image_unavailable_reason) with
 // `confirmation`, never reshaping it. This adapter mirrors that
 // composition: it validates the shared generation portion with the
@@ -424,15 +424,15 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 //
 // `sourceDeclutter` is the exact DeclutterResult the /generate/confirmed
 // request was built from (i.e. useBothFlow's own declutter.declutter at
-// generate() time) — normaliseConfirmationResponse cross-checks the
+// generate() time), normaliseConfirmationResponse cross-checks the
 // returned confirmation against it exactly like /confirm's own response
 // already is elsewhere.
 //
 // `priorConfirmedKeepIds` is the confirmed_keep_ids the client's own
 // earlier POST /confirm call already returned for this same
 // sourceDeclutter+overrides pair. The server independently re-derives
-// confirmed_keep_ids from declutter+overrides (see both_service.py) —
-// never trusting anything the client sends — so this cross-check catches
+// confirmed_keep_ids from declutter+overrides (see both_service.py),
+// never trusting anything the client sends, so this cross-check catches
 // any drift between the two confirm() calls (e.g. a race, or a bug that
 // let generate() fire against a stale confirmation) rather than silently
 // trusting the fresh server response at face value.
@@ -455,13 +455,13 @@ export function normaliseConfirmedGenerateResponse(
     confirmation.confirmedKeepIds.every((id, i) => id === priorConfirmedKeepIds[i]);
   if (!keepIdsMatchPrior) {
     fail(
-      "response confirmation.confirmed_keep_ids does not match the prior /confirm result, in order — " +
+      "response confirmation.confirmed_keep_ids does not match the prior /confirm result, in order, " +
         "the server-derived selection has drifted from what was confirmed"
     );
   }
 
   // The plan must exactly partition the server-derived confirmed Keep
-  // set — never a client-supplied selection (there is none here at all;
+  // set, never a client-supplied selection (there is none here at all;
   // see generateConfirmedReorganisation in api/client.js).
   validatePlanning(response.planning, runId, confirmation.confirmedKeepIds);
 

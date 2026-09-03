@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { ArrowRight, Check, PackageOpen, LayoutGrid, Sparkles, ShieldCheck, Star } from "lucide-react";
+import { ArrowRight, Check, ShieldCheck, Star } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/cn";
+import declutterIcon from "../assets/declutter.svg";
+import reorganiseIcon from "../assets/reorganise.svg";
+import bothIcon from "../assets/both.svg";
 
 // Top-level workflow entry point. Presentational apart from a single piece of
 // local UI state: which card is currently selected in the radio group.
-// App.jsx still owns the real `mode` state — this component only calls
+// App.jsx still owns the real `mode` state, this component only calls
 // onChoose("declutter" | "reorganise" | "both") once, when Continue is
 // pressed.
 //
@@ -18,7 +21,7 @@ const WORKFLOWS = [
   {
     value: "declutter",
     title: "Declutter",
-    Icon: PackageOpen,
+    iconSrc: declutterIcon,
     description:
       "Get AI Keep, Sell, Donate and Discard suggestions for what's in your room, then review, change and confirm every decision yourself.",
     footnote: "Best for quick item decisions",
@@ -26,7 +29,7 @@ const WORKFLOWS = [
   {
     value: "reorganise",
     title: "Reorganise",
-    Icon: LayoutGrid,
+    iconSrc: reorganiseIcon,
     description:
       "Actionable items are included automatically. Optionally review the list to exclude items before generating a structured room plan and an AI visual preview.",
     footnote: "Best for space planning",
@@ -34,7 +37,8 @@ const WORKFLOWS = [
   {
     value: "both",
     title: "Both",
-    Icon: Sparkles,
+    iconSrc: bothIcon,
+    wideIcon: true,
     recommended: true,
     description:
       "Confirm your Declutter decisions first, then reorganise using only the items you confirmed as Keep.",
@@ -62,7 +66,7 @@ export default function PathSelector({ onChoose }) {
         </legend>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          {WORKFLOWS.map(({ value, title, Icon, description, footnote, recommended }) => {
+          {WORKFLOWS.map(({ value, title, iconSrc, wideIcon, description, footnote, recommended }) => {
             const isSelected = selected === value;
             return (
               <label
@@ -94,16 +98,16 @@ export default function PathSelector({ onChoose }) {
                     </Badge>
                   ) : null}
 
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "inline-flex h-11 w-11 items-center justify-center rounded-control",
-                      isSelected
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-accent text-accent-foreground"
-                    )}
-                  >
-                    <Icon width={22} height={22} />
+                  <span aria-hidden="true" className="flex h-28 w-full items-center justify-center">
+                    <img
+                      src={iconSrc}
+                      alt=""
+                      aria-hidden="true"
+                      className={cn(
+                        "block max-h-24 object-contain",
+                        wideIcon ? "w-40 max-w-full" : "w-24"
+                      )}
+                    />
                   </span>
 
                   <span className="mt-4 flex items-center gap-2 text-lg font-semibold text-foreground">
@@ -144,7 +148,7 @@ export default function PathSelector({ onChoose }) {
 
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <ShieldCheck aria-hidden="true" width={16} height={16} className="text-primary" />
-          You're in control — every AI suggestion is yours to review and change before anything is finalised.
+          You're in control. Every AI suggestion is yours to review and change before anything is finalised.
         </p>
       </div>
     </section>

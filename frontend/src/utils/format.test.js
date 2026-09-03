@@ -7,8 +7,8 @@ describe("formatConfidence", () => {
   });
 
   it("handles missing confidence gracefully", () => {
-    expect(formatConfidence(null)).toBe("—");
-    expect(formatConfidence(undefined)).toBe("—");
+    expect(formatConfidence(null)).toBe("n/a");
+    expect(formatConfidence(undefined)).toBe("n/a");
   });
 });
 
@@ -46,7 +46,7 @@ describe("itemNumberLabel", () => {
     expect(itemNumberLabel("item_100")).toBe("100");
   });
 
-  it("stays stable across re-sorts — derived from the id only", () => {
+  it("stays stable across re-sorts, derived from the id only", () => {
     expect(itemNumberLabel("item_004")).toBe("4");
     expect(itemNumberLabel("item_004")).toBe("4");
   });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
@@ -20,14 +20,14 @@ beforeEach(() => {
   client.getImageGenHealth.mockResolvedValue({ available: true });
 });
 
-// Select a workflow card then press Continue — the app's select-then-continue
+// Select a workflow card then press Continue, the app's select-then-continue
 // interaction. App mounts the chosen workflow only after Continue.
 async function chooseWorkflow(user, name) {
   await user.click(screen.getByRole("radio", { name }));
   await user.click(screen.getByRole("button", { name: /continue/i }));
 }
 
-describe("App — path selection", () => {
+describe("App, path selection", () => {
   test("starts at path selection with no workflow mounted", () => {
     render(<App />);
     expect(screen.getByRole("radio", { name: /declutter/i })).toBeInTheDocument();
@@ -65,15 +65,59 @@ describe("App — path selection", () => {
     const user = userEvent.setup();
     render(<App />);
     const continueButton = screen.getByRole("button", { name: /continue/i });
-    await user.click(continueButton); // disabled — nothing should happen
+    await user.click(continueButton); // disabled, nothing should happen
     expect(screen.queryByText(/1\. upload a room photo/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: /declutter/i }));
     expect(continueButton).toBeEnabled();
   });
+
+  test("the workflow selector renders no progress stepper", () => {
+    render(<App />);
+    expect(screen.queryByRole("navigation", { name: /workflow progress/i })).not.toBeInTheDocument();
+  });
 });
 
-describe("App — Back to workflows unmounts the active workflow", () => {
+describe("App, each workflow page shows its own progress stepper", () => {
+  test.each([
+    [/declutter/i, /declutter workflow progress/i, ["Upload", "Analyse", "Review", "Confirm"]],
+    [/reorganise/i, /reorganise workflow progress/i, ["Upload", "Analyse", "Review", "Generate"]],
+    [/^both$/i, /both workflow progress/i, ["Upload", "Analyse", "Review", "Confirm", "Reorganise"]],
+  ])("mounting %s renders its stepper with its exact step sequence", async (card, navName, steps) => {
+    const user = userEvent.setup();
+    render(<App />);
+    await chooseWorkflow(user, card);
+
+    const nav = await screen.findByRole("navigation", { name: navName });
+    const labels = within(nav)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent.replace(/\d+/g, "").trim());
+    expect(labels).toEqual(steps);
+  });
+
+  test("the stepper starts on Upload for a freshly mounted workflow, with no step complete", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await chooseWorkflow(user, /declutter/i);
+
+    const nav = screen.getByRole("navigation", { name: /declutter workflow progress/i });
+    const items = within(nav).getAllByRole("listitem");
+    expect(items[0]).toHaveAttribute("aria-current", "step"); // Upload
+    expect(items.filter((li) => li.getAttribute("aria-current") === "step")).toHaveLength(1);
+  });
+
+  test("switching back to the selector removes the stepper again", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await chooseWorkflow(user, /declutter/i);
+    expect(screen.getByRole("navigation", { name: /workflow progress/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    expect(screen.queryByRole("navigation", { name: /workflow progress/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("App, Back to workflows unmounts the active workflow", () => {
   test("from Both", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -126,7 +170,7 @@ describe("App — Back to workflows unmounts the active workflow", () => {
   });
 });
 
-describe("App — shell has no fake account or notification chrome", () => {
+describe("App, shell has no fake account or notification chrome", () => {
   test("no account, profile, notification or settings controls exist", () => {
     render(<App />);
     expect(screen.queryByRole("button", { name: /account|profile|sign in|log in|notification|settings/i })).not.toBeInTheDocument();

@@ -3,14 +3,14 @@ import { buttonVariants } from "./ui/button";
 import { cn } from "../lib/cn";
 
 // Stateless, presentational room-photo field shared by the Declutter and
-// Reorganise upload forms. It owns NO state and NO validation — the host
+// Reorganise upload forms. It owns NO state and NO validation, the host
 // form keeps file state, the object-URL lifecycle, type checking and the
 // workflow-specific copy, and passes the results down here.
 //
 // The native <input type="file"> stays in the DOM, keeps its label
 // association (via aria-label so a single name resolves), stays keyboard
 // focusable and is disabled with the rest of the form. Only its default
-// visual rendering is replaced — a styled trigger plus a filename drawn
+// visual rendering is replaced, a styled trigger plus a filename drawn
 // from File.name alone (never a path).
 export default function RoomPhotoField({
   id,

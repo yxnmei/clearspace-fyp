@@ -364,7 +364,7 @@ describe("DeclutterReview", () => {
     const reviewItems = [makeResolvedReviewItem({ item_id: "item_001" })];
     render(<DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001"] }), reviewItems })} />);
 
-    // No JS media-query branching hides either side — layout is CSS-only
+    // No JS media-query branching hides either side, layout is CSS-only
     // (flex-col on mobile, lg:flex-row on desktop), so both the image and
     // the item list exist in the DOM regardless of viewport.
     expect(screen.getByRole("img", { name: /detected item outlines/i })).toBeInTheDocument();
@@ -529,7 +529,7 @@ describe("DeclutterReview", () => {
   });
 });
 
-describe("DeclutterReview — confirmation handoff copy", () => {
+describe("DeclutterReview, confirmation handoff copy", () => {
   function makeConfirmation() {
     return {
       runId: "run1",
@@ -568,7 +568,7 @@ describe("DeclutterReview — confirmation handoff copy", () => {
   });
 });
 
-describe("DeclutterReview — review page layout and presentation", () => {
+describe("DeclutterReview, review page layout and presentation", () => {
   test("shows a results header, a change-before-confirm explainer and a restrained You're in control notice", () => {
     render(<DeclutterReview {...baseProps()} />);
     expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
@@ -589,7 +589,7 @@ describe("DeclutterReview — review page layout and presentation", () => {
     );
     expect(screen.getByRole("img", { name: /detected item outlines/i })).toBeInTheDocument();
     expect(screen.getByText("lamp")).toBeInTheDocument();
-    // CSS-only responsive split — column on mobile, row from lg up.
+    // CSS-only responsive split, column on mobile, row from lg up.
     const split = container.querySelector(".lg\\:flex-row");
     expect(split).toBeTruthy();
     expect(split.className).toMatch(/(^|\s)flex-col(\s|$)/);
@@ -603,7 +603,7 @@ describe("DeclutterReview — review page layout and presentation", () => {
     expect(btn.className).toMatch(/focus-visible:ring/);
   });
 
-  test("no per-item thumbnails or crops are introduced (backend provides none)", () => {
+  test("only one full-size analysed-room image is rendered; per-item crops are decorative", () => {
     const reviewItems = [
       makeResolvedReviewItem({ item_id: "item_001", clean_label: "lamp" }),
       makeResolvedReviewItem({ item_id: "item_002", clean_label: "chair" }),
@@ -611,7 +611,9 @@ describe("DeclutterReview — review page layout and presentation", () => {
     render(
       <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
     );
-    // The only image on the page is the single analysed-room photo.
+    // The only element with an image role is the single analysed-room photo.
     expect(screen.getAllByRole("img")).toHaveLength(1);
+    // The compact rows still carry decorative CSS crops derived from it.
+    expect(screen.getAllByTestId("item-crop-thumbnail").length).toBe(2);
   });
 });

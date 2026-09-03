@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Declutter icon</title>
+  <circle cx="64" cy="64" r="56" fill="#EEF7F0"/>
+  <g stroke="#46525C" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <!-- vase -->
+    <path d="M30 26h12" fill="none"/>
+    <path d="M33 26v8c0 3-5 7-5 14 0 6 4 10 10 10s10-4 10-10c0-7-5-11-5-14v-8" fill="#BFE0C6"/>
+    <path d="M32 34h12" fill="none"/>
+    <!-- frame -->
+    <g transform="rotate(18 76 45)">
+      <rect x="61" y="26" width="32" height="35" rx="2" fill="#FFF"/>
+      <rect x="66" y="31" width="22" height="25" rx="1" fill="#F8F4E5"/>
+      <circle cx="76" cy="40" r="4" fill="#A8CFB0"/>
+      <path d="M67 53l7-7 5 4 5-6 4 9" fill="none"/>
+    </g>
+    <!-- box -->
+    <path d="M29 58l35 10 35-10-8 19-27 9-27-9-8-19Z" fill="#F4E7BD"/>
+    <path d="M37 77v24l27 10V86" fill="#F4E7BD"/>
+    <path d="M91 77v24l-27 10" fill="#F4E7BD"/>
+    <path d="M64 68v18" fill="none"/>
+    <!-- heart tag -->
+    <circle cx="88" cy="72" r="12" fill="#F6D6BE"/>
+    <path d="M88 78s-8-4.8-8-10c0-4 5-5 8-1.5 3-3.5 8-2.5 8 1.5 0 5.2-8 10-8 10Z" fill="#4F9D69" stroke="none"/>
+  </g>
+</svg>

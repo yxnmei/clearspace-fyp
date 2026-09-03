@@ -5,7 +5,7 @@ import DeclutterUploadForm from "./DeclutterUploadForm";
 import { VOICE_MESSAGES } from "../hooks/useVoiceContext";
 import * as client from "../api/client";
 
-// The form itself still never talks to the API — this mock exists only
+// The form itself still never talks to the API, this mock exists only
 // because the voice input it now mounts does. No MediaRecorder fake is
 // installed in this file: these tests exercise the audio-file route,
 // which is exactly the fallback a browser without recording gets.
@@ -79,7 +79,7 @@ describe("DeclutterUploadForm", () => {
     render(<DeclutterUploadForm status="error" error="Declutter upload failed" onSubmit={vi.fn()} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(/declutter upload failed/i);
-    // The form itself is still present and usable — nothing was discarded.
+    // The form itself is still present and usable, nothing was discarded.
     await user.upload(screen.getByLabelText(/room photo/i), file);
     expect(screen.getByRole("button", { name: /analyse room/i })).toBeEnabled();
   });
@@ -100,7 +100,7 @@ describe("DeclutterUploadForm", () => {
   });
 });
 
-describe("DeclutterUploadForm — voice context", () => {
+describe("DeclutterUploadForm, voice context", () => {
   test("the voice input is mounted beside the context textarea, not instead of it", () => {
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
 
@@ -151,7 +151,7 @@ describe("DeclutterUploadForm — voice context", () => {
     await screen.findByLabelText(/transcript to review/i);
     await user.click(screen.getByRole("button", { name: /analyse room/i }));
 
-    // Transcription has finished, so submitting is allowed — but the
+    // Transcription has finished, so submitting is allowed, but the
     // unapplied transcript contributes nothing.
     expect(onSubmit).toHaveBeenCalledWith({ file: expect.any(File), context: null });
   });
@@ -219,13 +219,13 @@ describe("DeclutterUploadForm — voice context", () => {
   });
 });
 
-describe("DeclutterUploadForm — room photo presentation (redesign)", () => {
+describe("DeclutterUploadForm, room photo presentation (redesign)", () => {
   test("the file input still accepts any image type", () => {
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
     expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/*");
   });
 
-  test("the selected filename is shown from File.name — no path, no fake path", async () => {
+  test("the selected filename is shown from File.name, no path, no fake path", async () => {
     const user = userEvent.setup();
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
 

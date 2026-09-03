@@ -152,7 +152,7 @@ describe("AnalysedRoomPanel", () => {
     expect(screen.getByRole("button", { name: /detection 1: lamp/i })).toBeInTheDocument();
   });
 
-  // getBoxClassName generalisation (R5) — Declutter never passes this
+  // getBoxClassName generalisation (R5), Declutter never passes this
   // prop (every test above renders without it and stays green
   // unmodified), proving the default preserves the exact original
   // Declutter coloring behaviour. This test proves a CALLER-supplied
@@ -168,7 +168,7 @@ describe("AnalysedRoomPanel", () => {
   });
 
   describe("analysed-room presentation and controls", () => {
-    test("the only controls are the detection boxes and the Show all boxes checkbox — no zoom or retake", () => {
+    test("the only controls are the detection boxes and the Show all boxes checkbox, no zoom or retake", () => {
       render(<AnalysedRoomPanel {...baseProps()} />);
       expect(screen.getByRole("checkbox", { name: /show all boxes/i })).toBeInTheDocument();
       expect(screen.getAllByRole("button")).toHaveLength(1); // one box, nothing else

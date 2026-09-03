@@ -3,7 +3,7 @@ import { cn } from "../lib/cn";
 
 // Renders the normalized ConfirmationResult from useDeclutterFlow's
 // confirmation state. Confirmed Keep item_ids are matched back to
-// reviewItems strictly by item_id — never by label — so this component
+// reviewItems strictly by item_id, never by label, so this component
 // can show a clean_label/position next to each confirmed Keep item.
 //
 // nextStepNote: optional. Defaults to the standalone-Declutter wording
@@ -47,7 +47,7 @@ export default function ConfirmationSummary({
         Decisions confirmed
       </h2>
       <p role="status" className="mb-4 mt-1 text-sm text-foreground">
-        Run {confirmation.runId} — {decisionCount} decision
+        Run {confirmation.runId}, {decisionCount} decision
         {decisionCount === 1 ? "" : "s"} confirmed.
       </p>
 
@@ -76,7 +76,7 @@ export default function ConfirmationSummary({
               <code>{item_id}</code>
               {matched && (
                 <>
-                  {" — "}
+                  {", "}
                   {matched.effective_label ?? matched.clean_label}
                   {matched.position && <span className="text-muted-foreground"> ({matched.position})</span>}
                 </>

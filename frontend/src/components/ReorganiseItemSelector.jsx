@@ -2,15 +2,15 @@ import { useRef, useState } from "react";
 import { formatConfidence, itemNumberLabel } from "../utils/format";
 import AnalysedRoomPanel from "./AnalysedRoomPanel";
 
-// Direct Reorganise's post-analysis screen — analogous to DeclutterReview
+// Direct Reorganise's post-analysis screen, analogous to DeclutterReview
 // in file role only, genuinely different in UX: this is NOT a "choose
 // what to keep" step. useReorganiseFlow.submit() already auto-selects
 // every actionable item, so Generate is available immediately after
 // analysis with no required interaction here. Reviewing/excluding
 // individual detections is an OPTIONAL correction, tucked behind a
-// collapsed-by-default <details> disclosure — not a second Declutter-
+// collapsed-by-default <details> disclosure, not a second Declutter-
 // style mandatory decision screen. Selection itself is still a plain
-// boolean (selected/not), keyed only by item_id — duplicate labels
+// boolean (selected/not), keyed only by item_id, duplicate labels
 // render as fully independent rows/boxes, exactly like Declutter's own
 // established precedent.
 //
@@ -77,14 +77,14 @@ export default function ReorganiseItemSelector({
         <h2 className="mb-3 text-lg font-medium text-stone-900">2. Generate room plan</h2>
         <p className="mb-4 text-sm text-stone-600">
           All {actionableItems.length} detected item{actionableItems.length === 1 ? "" : "s"} are automatically
-          included in your plan and requested in the visual preview — the generated image is an AI impression, not
+          included in your plan and requested in the visual preview, the generated image is an AI impression, not
           a guarantee every object appears exactly as shown.
         </p>
 
         {healthStatus === "unavailable" && (
           // Deliberately distinct wording from ImageGenStatusBanner's own
           // message (mounted once, above this screen, in ReorganisePage)
-          // — this is a short, button-adjacent reminder, not a repeat of
+          // this is a short, button-adjacent reminder, not a repeat of
           // the same sentence twice on one page.
           <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
             Note: the image service is offline right now, so this run will produce a plan without a visual preview.
@@ -109,13 +109,13 @@ export default function ReorganiseItemSelector({
 
         {selectedItemIds.length === 0 && !isGenerating && (
           <p className="mt-2 text-xs text-stone-500">
-            At least one detected item must be included to generate a plan — reopen the review below to include one.
+            At least one detected item must be included to generate a plan. Reopen the review below to include one.
           </p>
         )}
 
         {generateError && (
           <p role="alert" className="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-            {generateError} Your selection is unchanged — you can try again.
+            {generateError} Your selection is unchanged. You can try again.
           </p>
         )}
 

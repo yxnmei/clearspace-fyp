@@ -9,7 +9,7 @@ function renderSelector() {
   return { onChoose };
 }
 
-describe("PathSelector — radio group", () => {
+describe("PathSelector, radio group", () => {
   test("exposes exactly three workflow radios in one named group", () => {
     renderSelector();
     const radios = screen.getAllByRole("radio");
@@ -30,9 +30,23 @@ describe("PathSelector — radio group", () => {
     renderSelector();
     screen.getAllByRole("radio").forEach((r) => expect(r).not.toBeChecked());
   });
+
+  test.each([
+    ["Declutter", "declutter.svg"],
+    ["Reorganise", "reorganise.svg"],
+    ["Both", "both.svg"],
+  ])("uses the bundled %s workflow illustration", (label, filename) => {
+    renderSelector();
+    const card = screen.getByRole("radio", { name: label }).closest("label");
+    const icon = card.querySelector("img");
+    expect(icon).toBeTruthy();
+    expect(icon.getAttribute("src")).toContain(filename);
+    expect(icon).toHaveAttribute("alt", "");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+  });
 });
 
-describe("PathSelector — select then continue", () => {
+describe("PathSelector, select then continue", () => {
   test("Continue is disabled until a workflow is selected", async () => {
     const user = userEvent.setup();
     renderSelector();
@@ -98,7 +112,7 @@ describe("PathSelector — select then continue", () => {
   });
 });
 
-describe("PathSelector — keyboard operation (native radio behaviour)", () => {
+describe("PathSelector, keyboard operation (native radio behaviour)", () => {
   test("Tab reaches the group and arrow keys select within it, then Continue is keyboard-activated", async () => {
     const user = userEvent.setup();
     const { onChoose } = renderSelector();
@@ -119,7 +133,7 @@ describe("PathSelector — keyboard operation (native radio behaviour)", () => {
   });
 });
 
-describe("PathSelector — honest copy", () => {
+describe("PathSelector, honest copy", () => {
   test("Declutter copy is review-and-confirm, not automatic", () => {
     renderSelector();
     const card = screen.getByRole("radio", { name: "Declutter" }).closest("label");
@@ -148,7 +162,7 @@ describe("PathSelector — honest copy", () => {
   });
 });
 
-describe("PathSelector — Recommended badge", () => {
+describe("PathSelector, Recommended badge", () => {
   test("only the Both card carries a Recommended badge", () => {
     renderSelector();
     const badges = screen.getAllByText(/recommended/i);
@@ -158,7 +172,7 @@ describe("PathSelector — Recommended badge", () => {
   });
 });
 
-describe("PathSelector — responsive layout", () => {
+describe("PathSelector, responsive layout", () => {
   test("the selector fills its container up to the max-w-5xl content width", () => {
     const { container } = render(<PathSelector onChoose={vi.fn()} />);
     const section = container.querySelector("section");

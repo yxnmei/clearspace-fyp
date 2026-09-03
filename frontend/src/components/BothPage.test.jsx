@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import BothPage from "./BothPage";
@@ -138,7 +138,7 @@ function makeConfirmedGenerateResponse(confirmed, { imageStatus = "generated", u
   };
 }
 
-describe("BothPage — health ownership", () => {
+describe("BothPage, health ownership", () => {
   test("mounting the page issues exactly one health request", async () => {
     render(<BothPage />);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
@@ -151,8 +151,8 @@ describe("BothPage — health ownership", () => {
   });
 });
 
-describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> result", () => {
-  test("no second item-selection screen — DeclutterReview alone drives what's kept", async () => {
+describe("BothPage, end-to-end: upload -> review -> confirm -> continue -> result", () => {
+  test("no second item-selection screen, DeclutterReview alone drives what's kept", async () => {
     client.uploadImage.mockResolvedValue(makeBothUploadResponse());
     render(<BothPage />);
 
@@ -161,13 +161,13 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
 
     await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
     // The Reorganise-only item-selector (ReorganiseItemSelector, a
-    // SEPARATE selection screen) never renders here at all — Both
+    // SEPARATE selection screen) never renders here at all, Both
     // answers "what to keep" entirely through Declutter's own review.
     expect(screen.queryByText(/choose what to keep/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /generate room plan/i })).not.toBeInTheDocument();
   });
 
-  test("Continue only appears after explicit confirmation — never auto-generates", async () => {
+  test("Continue only appears after explicit confirmation, never auto-generates", async () => {
     client.uploadImage.mockResolvedValue(makeBothUploadResponse());
     client.confirmDecisions.mockResolvedValue(
       makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
@@ -208,7 +208,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
 
     await waitFor(() => expect(screen.getByRole("heading", { name: /your room plan/i })).toBeInTheDocument());
     expect(screen.getByText("Keep in place")).toBeInTheDocument();
-    // Upload/review screen is gone — Result is the terminal screen.
+    // Upload/review screen is gone, Result is the terminal screen.
     expect(screen.queryByLabelText(/room photo/i)).not.toBeInTheDocument();
   });
 
@@ -271,7 +271,7 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
     expect(screen.getByRole("button", { name: /retry reorganisation/i })).toBeInTheDocument();
-    // Confirmation/review are still visible — nothing was thrown away.
+    // Confirmation/review are still visible, nothing was thrown away.
     expect(screen.getByText(/decisions confirmed/i)).toBeInTheDocument();
 
     client.generateConfirmedReorganisation.mockResolvedValueOnce(
@@ -310,4 +310,137 @@ describe("BothPage — end-to-end: upload -> review -> confirm -> continue -> re
 
   // The "Back to workflows" control moved to AppShell; App.test.jsx covers
   // that returning from Both unmounts the workflow.
+});
+
+describe("BothPage, workflow progress stepper", () => {
+  function stepper() {
+    return screen.getByRole("navigation", { name: /both workflow progress/i });
+  }
+  function currentStep() {
+    return within(stepper())
+      .getAllByRole("listitem")
+      .find((li) => li.getAttribute("aria-current") === "step")
+      ?.textContent.replace(/\d+/g, "")
+      .trim();
+  }
+  function circle(index) {
+    return within(stepper()).getAllByRole("listitem")[index].querySelector(".rounded-full");
+  }
+
+  test("maps upload, analysis, review, confirmation and generation across the five steps", async () => {
+    let resolveUpload;
+    let resolveConfirm;
+    let resolveGenerate;
+    client.uploadImage.mockImplementationOnce(
+      () => new Promise((r) => { resolveUpload = () => r(makeBothUploadResponse()); })
+    );
+    client.confirmDecisions.mockImplementationOnce(
+      () => new Promise((r) => { resolveConfirm = () => r(makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])); })
+    );
+    client.generateConfirmedReorganisation.mockImplementationOnce(
+      () => new Promise((r) => { resolveGenerate = () => r(makeConfirmedGenerateResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])); })
+    );
+    render(<BothPage />);
+
+    expect(within(stepper()).getAllByRole("listitem").map((li) => li.textContent.replace(/\d+/g, "").trim())).toEqual([
+      "Upload",
+      "Analyse",
+      "Review",
+      "Confirm",
+      "Reorganise",
+    ]);
+    expect(currentStep()).toBe("Upload");
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(currentStep()).toBe("Analyse"));
+
+    resolveUpload();
+    await waitFor(() => expect(currentStep()).toBe("Review"));
+
+    await userEvent.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(currentStep()).toBe("Confirm"));
+
+    resolveConfirm();
+    await waitFor(() => expect(currentStep()).toBe("Reorganise"));
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+    await waitFor(() => expect(within(stepper()).getByText(/planning the room/i)).toBeInTheDocument());
+
+    resolveGenerate();
+    await waitFor(() =>
+      expect(within(stepper()).getAllByRole("listitem").every((li) => li.getAttribute("aria-current") !== "step")).toBe(true)
+    );
+    expect(circle(4).className).toMatch(/border-success/); // Reorganise completed
+  });
+
+  test("confirmation with zero confirmed Keep items keeps the stepper on Confirm", async () => {
+    client.uploadImage.mockResolvedValue(
+      makeBothUploadResponse({ decisions: [{ itemId: "item_001", decision: "sell" }] })
+    );
+    client.confirmDecisions.mockResolvedValue(
+      makeConfirmResponse([{ itemId: "item_001", aiDecision: "sell", confirmedDecision: "sell" }])
+    );
+    render(<BothPage />);
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /confirm decisions/i }));
+
+    await waitFor(() => expect(within(stepper()).getByText(/nothing is set to keep/i)).toBeInTheDocument());
+    expect(currentStep()).toBe("Confirm");
+    // Reorganise is neither active nor complete
+    expect(circle(4).className).toMatch(/border-border/);
+    expect(circle(4).className).not.toMatch(/border-success|border-primary/);
+    expect(within(stepper()).getByText(/at least one item to keep/i)).toBeInTheDocument();
+  });
+
+  test("a generation failure keeps the stepper on Reorganise with retry guidance", async () => {
+    client.uploadImage.mockResolvedValue(makeBothUploadResponse());
+    client.confirmDecisions.mockResolvedValue(
+      makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
+    );
+    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
+    render(<BothPage />);
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /continue to reorganisation/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+
+    await waitFor(() => expect(within(stepper()).getByText(/didn't finish/i)).toBeInTheDocument());
+    expect(currentStep()).toBe("Reorganise");
+    expect(circle(4).className).not.toMatch(/border-success/); // retryable, not complete
+    expect(within(stepper()).getByText(/retry/i)).toBeInTheDocument();
+  });
+
+  test("a successful unavailable-preview result still completes the Reorganise step", async () => {
+    client.uploadImage.mockResolvedValue(makeBothUploadResponse());
+    client.confirmDecisions.mockResolvedValue(
+      makeConfirmResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
+    );
+    client.generateConfirmedReorganisation.mockResolvedValue(
+      makeConfirmedGenerateResponse([{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }], {
+        imageStatus: "unavailable",
+        unavailableReason: "service_unreachable",
+      })
+    );
+    render(<BothPage />);
+
+    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /continue to reorganisation/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+
+    await waitFor(() =>
+      expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument()
+    );
+    expect(circle(4).className).toMatch(/border-success/);
+    expect(within(stepper()).getAllByRole("listitem").every((li) => li.getAttribute("aria-current") !== "step")).toBe(true);
+  });
 });

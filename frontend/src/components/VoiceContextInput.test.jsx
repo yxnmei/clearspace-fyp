@@ -34,7 +34,7 @@ afterEach(() => {
 // A miniature stand-in for the real upload forms: a context textarea
 // the component can fill only by calling back, plus a busy flag. This
 // is what makes "the transcript never writes context by itself"
-// assertable — the state lives outside the component under test.
+// assertable, the state lives outside the component under test.
 function Host({ initialContext = "", onBusy = () => {} }) {
   const [context, setContext] = useState(initialContext);
   return (
@@ -73,7 +73,7 @@ async function uploadAudio(user, file = audioFile()) {
   await user.upload(screen.getByLabelText(/audio file/i), file);
 }
 
-describe("VoiceContextInput — layout and fallbacks", () => {
+describe("VoiceContextInput, layout and fallbacks", () => {
   test("sits beside the context field without replacing it", () => {
     render(<Host />);
     expect(contextBox()).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe("VoiceContextInput — layout and fallbacks", () => {
   });
 });
 
-describe("VoiceContextInput — recording", () => {
+describe("VoiceContextInput, recording", () => {
   test("recording shows a live status and swaps in a stop button", async () => {
     const user = userEvent.setup();
     track(installRecordingSupport());
@@ -154,7 +154,7 @@ describe("VoiceContextInput — recording", () => {
   });
 });
 
-describe("VoiceContextInput — the transcript is never applied automatically", () => {
+describe("VoiceContextInput, the transcript is never applied automatically", () => {
   test("an arriving transcript leaves an empty context empty", async () => {
     const user = userEvent.setup();
     transcribeResolves("tidy the shelf");
@@ -203,7 +203,7 @@ describe("VoiceContextInput — the transcript is never applied automatically", 
   });
 });
 
-describe("VoiceContextInput — applying a transcript", () => {
+describe("VoiceContextInput, applying a transcript", () => {
   test("with empty context the action reads Use as context", async () => {
     const user = userEvent.setup();
     transcribeResolves("tidy the shelf");
@@ -252,7 +252,7 @@ describe("VoiceContextInput — applying a transcript", () => {
     expect(contextBox()).toHaveValue("spoken replacement");
   });
 
-  test("the edited text — not the raw transcript — is what reaches context", async () => {
+  test("the edited text, not the raw transcript, is what reaches context", async () => {
     const user = userEvent.setup();
     transcribeResolves("tidy the shelf");
     render(<Host />);
@@ -305,7 +305,7 @@ describe("VoiceContextInput — applying a transcript", () => {
   });
 });
 
-describe("VoiceContextInput — blank transcript", () => {
+describe("VoiceContextInput, blank transcript", () => {
   test("silence is reported honestly and cannot be applied", async () => {
     const user = userEvent.setup();
     transcribeResolves("");
@@ -331,7 +331,7 @@ describe("VoiceContextInput — blank transcript", () => {
   });
 });
 
-describe("VoiceContextInput — errors", () => {
+describe("VoiceContextInput, errors", () => {
   test.each([
     ['POST /transcribe failed: 503 {"detail":"transcription is busy"}', VOICE_MESSAGES.busy],
     ['POST /transcribe failed: 503 {"detail":"transcription is unavailable"}', VOICE_MESSAGES.unavailable],
@@ -367,7 +367,7 @@ describe("VoiceContextInput — errors", () => {
   });
 });
 
-describe("VoiceContextInput — busy reporting", () => {
+describe("VoiceContextInput, busy reporting", () => {
   test("busy is reported true while transcribing and false once it finishes", async () => {
     const user = userEvent.setup();
     let settle;
@@ -431,7 +431,7 @@ describe("VoiceContextInput — busy reporting", () => {
   });
 });
 
-describe("VoiceContextInput — a malformed 200 is not silence", () => {
+describe("VoiceContextInput, a malformed 200 is not silence", () => {
   test.each([
     ["a missing transcript", { model_name: "whisper-base", transcription_ms: 1, audio_duration_s: 1 }],
     ["a non-string transcript", { transcript: 7, model_name: "whisper-base", transcription_ms: 1, audio_duration_s: 1 }],
@@ -462,7 +462,7 @@ describe("VoiceContextInput — a malformed 200 is not silence", () => {
   });
 });
 
-describe("VoiceContextInput — a failed recorder", () => {
+describe("VoiceContextInput, a failed recorder", () => {
   test("keeps its message and opens no review panel when the trailing events arrive", async () => {
     const user = userEvent.setup();
     client.transcribeAudio.mockResolvedValue({
@@ -502,10 +502,10 @@ describe("VoiceContextInput — a failed recorder", () => {
   });
 });
 
-describe("VoiceContextInput — the selected filename stays visible", () => {
+describe("VoiceContextInput, the selected filename stays visible", () => {
   // handleFileChange clears input.value straight away so the same file
   // can be re-picked after a failure, which also wipes the browser's own
-  // filename label — hence the name is kept in component state.
+  // filename label, hence the name is kept in component state.
 
   function fileNamed(name, type = "audio/m4a") {
     return new File(["fake audio bytes"], name, { type });
@@ -711,7 +711,7 @@ describe("VoiceContextInput — the selected filename stays visible", () => {
     expect(screen.queryByText("clip_001.m4a")).not.toBeInTheDocument();
   });
 
-  test("only File.name is shown — never a path", async () => {
+  test("only File.name is shown, never a path", async () => {
     const user = userEvent.setup();
     transcribeResolves("ok");
     render(<Host />);
@@ -725,7 +725,7 @@ describe("VoiceContextInput — the selected filename stays visible", () => {
   });
 });
 
-describe("VoiceContextInput — the file control stays accessible", () => {
+describe("VoiceContextInput, the file control stays accessible", () => {
   test("the real file input is still present and reachable by its label", () => {
     render(<Host />);
     const input = screen.getByLabelText(/audio file/i);
@@ -777,7 +777,7 @@ describe("VoiceContextInput — the file control stays accessible", () => {
   });
 });
 
-describe("VoiceContextInput — controls keep native button semantics (redesign)", () => {
+describe("VoiceContextInput, controls keep native button semantics (redesign)", () => {
   test("the record button is a type=button control", () => {
     track(installRecordingSupport());
     render(<Host />);

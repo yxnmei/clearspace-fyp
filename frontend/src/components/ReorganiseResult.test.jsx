@@ -62,7 +62,7 @@ function makeUnavailableResult(reason = "service_unreachable") {
 
 const items = [makeItem("item_001", "lamp"), makeItem("item_002", "desk")];
 
-describe("ReorganiseResult — plan (always shown)", () => {
+describe("ReorganiseResult, plan (always shown)", () => {
   test("renders zone name, instruction, and items joined back by item_id", () => {
     render(<ReorganiseResult generateResult={makeGeneratedResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
     expect(screen.getByText("Keep in place")).toBeInTheDocument();
@@ -72,7 +72,7 @@ describe("ReorganiseResult — plan (always shown)", () => {
   });
 
   test("stable item numbers are shown for zone items", () => {
-    // Scoped to the zone list's own badge spans — a bare getByText("1")
+    // Scoped to the zone list's own badge spans, a bare getByText("1")
     // would also match unrelated numeric text inside the (present-but-
     // collapsed, still-in-the-DOM-in-jsdom) planning-details disclosure.
     const { container } = render(
@@ -108,7 +108,7 @@ describe("ReorganiseResult — plan (always shown)", () => {
   });
 });
 
-describe("ReorganiseResult — generated image", () => {
+describe("ReorganiseResult, generated image", () => {
   test("shows both Before and Reorganised images with clear labels", () => {
     render(
       <ReorganiseResult generateResult={makeGeneratedResult()} items={items} originalImageUrl="blob:mock-original" onStartOver={vi.fn()} />
@@ -134,7 +134,7 @@ describe("ReorganiseResult — generated image", () => {
 
   test("generation details include API version, depth-map use, prompt hash, and input-image hash", () => {
     render(<ReorganiseResult generateResult={makeGeneratedResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
-    // Scoped to the Generation details <details> — planning's own
+    // Scoped to the Generation details <details>, planning's own
     // prompt_version fixture is also literally "v1" and would otherwise
     // match ambiguously via a bare getByText("v1").
     const details = screen.getByText("Generation details").closest("details");
@@ -147,7 +147,7 @@ describe("ReorganiseResult — generated image", () => {
   });
 });
 
-describe("ReorganiseResult — unavailable image", () => {
+describe("ReorganiseResult, unavailable image", () => {
   test("shows the plan, no broken-image placeholder, and an explanatory message", () => {
     render(<ReorganiseResult generateResult={makeUnavailableResult("timeout")} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
     expect(screen.getByText("Keep in place")).toBeInTheDocument(); // plan still shown
@@ -177,7 +177,7 @@ describe("ReorganiseResult — unavailable image", () => {
   });
 });
 
-describe("ReorganiseResult — start over", () => {
+describe("ReorganiseResult, start over", () => {
   test("Start over calls onStartOver", async () => {
     const onStartOver = vi.fn();
     render(<ReorganiseResult generateResult={makeGeneratedResult()} items={items} originalImageUrl={null} onStartOver={onStartOver} />);
@@ -194,14 +194,14 @@ describe("ReorganiseResult — start over", () => {
 });
 
 // ---------------------------------------------------------------------------
-// deterministic_direct — what the user actually sees in production
+// deterministic_direct, what the user actually sees in production
 //
 // Production calls no LLM planner, so the technical disclosure must show
 // that honestly: zero attempts, no model named, and no issue list implying
 // a failed attempt that never happened.
 // ---------------------------------------------------------------------------
 
-describe("ReorganiseResult — deterministic_direct planning", () => {
+describe("ReorganiseResult, deterministic_direct planning", () => {
   function directResult(overrides = {}) {
     return makeGeneratedResult({
       planning: makePlanning({
@@ -224,8 +224,8 @@ describe("ReorganiseResult — deterministic_direct planning", () => {
 
   test("shows no model or prompt version, rather than inventing one", () => {
     render(<ReorganiseResult generateResult={directResult()} items={items} originalImageUrl={null} onStartOver={vi.fn()} />);
-    expect(screen.getByText("Model").closest("div")).toHaveTextContent("—");
-    expect(screen.getByText("Prompt version").closest("div")).toHaveTextContent("—");
+    expect(screen.getByText("Model").closest("div")).toHaveTextContent("n/a");
+    expect(screen.getByText("Prompt version").closest("div")).toHaveTextContent("n/a");
     expect(screen.queryByText("phi4-mini")).not.toBeInTheDocument();
   });
 

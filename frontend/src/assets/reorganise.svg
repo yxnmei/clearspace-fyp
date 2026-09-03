@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Reorganise icon</title>
+  <circle cx="64" cy="64" r="56" fill="#EEF5FB"/>
+  <g stroke="#46525C" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <!-- wall art -->
+    <rect x="52" y="23" width="31" height="24" rx="2" fill="#FFF"/>
+    <path d="M57 41l7-7 6 6 5-5 4 6" fill="#DCE8B8"/>
+    <!-- sofa -->
+    <rect x="37" y="65" width="55" height="26" rx="7" fill="#8BB9DF"/>
+    <path d="M43 65v-7c0-5 4-8 9-8h25c5 0 9 3 9 8v7" fill="#A8CBE7"/>
+    <path d="M37 76H27v15h75V76H92" fill="#8BB9DF"/>
+    <path d="M42 91v8M87 91v8" fill="none"/>
+    <!-- lamp -->
+    <path d="M20 48h16l-3-14H23l-3 14Z" fill="#FFF"/>
+    <path d="M28 48v43M22 91h12" fill="none"/>
+    <!-- plant -->
+    <path d="M103 65v22" fill="none"/>
+    <path d="M103 72c-7 0-11-4-11-10 6 0 11 4 11 10Z" fill="#9CCDA8"/>
+    <path d="M103 79c7 0 11-4 11-10-6 0-11 4-11 10Z" fill="#9CCDA8"/>
+    <path d="M96 86h15l-2 13H98l-2-13Z" fill="#F5E7BD"/>
+  </g>
+</svg>

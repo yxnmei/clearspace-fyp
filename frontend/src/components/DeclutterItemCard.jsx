@@ -3,6 +3,7 @@ import { Pencil } from "lucide-react";
 import { decisionColor, formatConfidence, itemNumberLabel } from "../utils/format";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import ItemCropThumbnail from "./ItemCropThumbnail";
 import { cn } from "../lib/cn";
 
 const DECISIONS = [
@@ -14,7 +15,7 @@ const DECISIONS = [
 
 // Keep / Sell / Donate / Discard reuse the green / blue / amber / red
 // category mapping already used by the detection-overlay boxes
-// (decisionColor / decisionBorderColor). Colour is only a secondary cue —
+// (decisionColor / decisionBorderColor). Colour is only a secondary cue,
 // every control keeps its visible text label and its native checked
 // radio. Class strings are written out in full so Tailwind's scanner
 // keeps them; nothing here is built by interpolation.
@@ -42,16 +43,15 @@ const DECISION_STYLES = {
 };
 
 // Shared by DeclutterItemCard (resolved items) and DeclutterReview's
-// unresolved-items list — a label correction is available for both (see
-// each call site for why), so the form itself lives here once rather
-// than being duplicated. Collapsed to a single "Wrong label?" toggle
+// unresolved-items list, a label correction is available for both, so
+// the form lives here once. Collapsed to a single "Wrong label?" toggle
 // until opened, so it doesn't visually compete with the primary decision
-// controls on every card by default.
+// controls.
 //
 // isCorrecting/correctionDisabled/correctionError are the UI's local
-// reflection of useDeclutterFlow's correctingItemId/correctionError —
+// reflection of useDeclutterFlow's correctingItemId/correctionError,
 // this component never calls the API itself (onCorrectLabel is the only
-// way out), matching every other control in this file.
+// way out).
 export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled, correctionError, onCorrectLabel }) {
   const [isOpen, setIsOpen] = useState(false);
   const [labelInput, setLabelInput] = useState("");
@@ -64,7 +64,7 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   function handleSubmit(event) {
     event.preventDefault();
     const trimmed = labelInput.trim();
-    if (!trimmed) return; // blank labels are never submitted — button is also disabled below
+    if (!trimmed) return; // blank labels are never submitted, button is also disabled below
     onCorrectLabel(item.item_id, trimmed);
   }
 
@@ -85,7 +85,7 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-1">
+    <form onSubmit={handleSubmit} className="mt-1 w-full">
       <label
         htmlFor={`correct-label-${item.item_id}`}
         className="mb-1 block text-xs font-medium text-foreground"
@@ -122,22 +122,27 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   );
 }
 
-// One card per resolved, expected item — decision controls call back to
-// useDeclutterFlow's setDecisionOverride/setItemExcluded, keyed only by
-// item.item_id (never clean_label — two items sharing a label render as
-// two independent cards with independent state, purely by item_id).
+// One compact row per resolved, expected item. Decision controls call
+// back to useDeclutterFlow's setDecisionOverride/setItemExcluded, keyed
+// only by item.item_id (never clean_label, two items sharing a label
+// render as two independent rows with independent state, purely by
+// item_id).
 //
-// isActive/onActivate/onDeactivate/registerRef connect this card to its
-// box in AnalysedRoomPanel (owned by the parent DeclutterReview, not this
-// component): hovering or focusing the card marks it active, which is
-// what makes the overlay highlight the matching box, and a box click
-// scrolls/focuses back to this card via the ref registered here. All four
-// are optional/no-op by default so this component still works completely
-// standalone (e.g. in isolation in a test) without the overlay wired up.
+// isActive/onActivate/onDeactivate/registerRef link this row to its box
+// in AnalysedRoomPanel (owned by the parent, not this component):
+// hovering/focusing the row marks it active, which highlights the
+// matching box, and a box click scrolls/focuses back here via the
+// registered ref. All four are optional/no-op by default so the row
+// still works standalone in a test without the overlay wired up.
+//
+// imageUrl is the single analysed-room source image; ItemCropThumbnail
+// derives a small decorative crop from it and the item's normalized box.
+// No per-item image or object URL is created.
 export default function DeclutterItemCard({
   item,
   onDecisionChange,
   onExcludedChange,
+  imageUrl = null,
   isActive = false,
   onActivate = () => {},
   onDeactivate = () => {},
@@ -160,88 +165,93 @@ export default function DeclutterItemCard({
       onFocus={onActivate}
       onBlur={onDeactivate}
       className={cn(
-        "rounded-card border bg-surface p-4 shadow-card transition-colors",
+        "rounded-card border bg-surface p-3 shadow-card transition-colors",
         isActive ? "border-primary ring-1 ring-primary" : "border-border"
       )}
     >
-      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="flex items-center gap-2 font-medium text-foreground">
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-              {itemNumberLabel(item.item_id)}
-            </span>
-            {displayLabel}
-          </p>
+      <div className="flex gap-3">
+        <ItemCropThumbnail imageUrl={imageUrl} box={item.box} className="mt-0.5" />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+            <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+                {itemNumberLabel(item.item_id)}
+              </span>
+              {displayLabel}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {item.label_source === "user" && <Badge variant="primary">Corrected by you</Badge>}
+              {item.decision_changed && <Badge variant="warning">Changed</Badge>}
+              {item.review_excluded && <Badge variant="outline">Excluded</Badge>}
+            </div>
+          </div>
+
           <p className="mt-0.5 text-xs text-muted-foreground">
             item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
             {formatConfidence(item.confidence)} detection confidence
           </p>
+
+          <p className="mt-1 text-xs">
+            <span className={cn("font-medium", decisionColor(item.ai_decision))}>
+              AI suggests: {item.ai_decision}
+            </span>
+            {item.ai_reason && <span className="text-muted-foreground">, {item.ai_reason}</span>}
+            <span className="ml-1.5 text-[11px] text-muted-foreground/70">({item.item_validity})</span>
+          </p>
+
+          <fieldset className="mt-2">
+            <legend className="mb-1 text-xs font-medium text-foreground">Your decision</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {DECISIONS.map(({ value, label }) => {
+                const selected = item.review_decision === value;
+                const style = DECISION_STYLES[value];
+                return (
+                  <label
+                    key={value}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-1.5 rounded-control border px-2.5 py-1 text-sm font-medium transition-colors",
+                      selected ? style.selected : style.unselected
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={groupName}
+                      value={value}
+                      checked={selected}
+                      onChange={() => onDecisionChange(item.item_id, value)}
+                      className={cn(
+                        "h-3.5 w-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                        style.accent
+                      )}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={item.review_excluded}
+                onChange={(event) => onExcludedChange(item.item_id, event.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              Exclude this item, it will not be sent for confirmation or reach later stages
+            </label>
+
+            <LabelCorrectionControl
+              item={item}
+              isCorrecting={isCorrecting}
+              correctionDisabled={correctionDisabled}
+              correctionError={correctionError}
+              onCorrectLabel={onCorrectLabel}
+            />
+          </div>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {item.label_source === "user" && <Badge variant="primary">Corrected by you</Badge>}
-          {item.decision_changed && <Badge variant="warning">Changed</Badge>}
-          {item.review_excluded && <Badge variant="outline">Excluded</Badge>}
-        </div>
-      </div>
-
-      <p className="mb-3 text-sm">
-        <span className={cn("font-medium", decisionColor(item.ai_decision))}>
-          AI suggests: {item.ai_decision}
-        </span>
-        {item.ai_reason && <span className="text-muted-foreground"> — {item.ai_reason}</span>}
-        <span className="ml-2 text-xs text-muted-foreground/70">({item.item_validity})</span>
-      </p>
-
-      <fieldset className="mb-3">
-        <legend className="mb-1.5 text-sm font-medium text-foreground">Your decision</legend>
-        <div className="flex flex-wrap gap-2">
-          {DECISIONS.map(({ value, label }) => {
-            const selected = item.review_decision === value;
-            const style = DECISION_STYLES[value];
-            return (
-              <label
-                key={value}
-                className={cn(
-                  "flex cursor-pointer items-center gap-2 rounded-control border px-3 py-1.5 text-sm font-medium transition-colors",
-                  selected ? style.selected : style.unselected
-                )}
-              >
-                <input
-                  type="radio"
-                  name={groupName}
-                  value={value}
-                  checked={selected}
-                  onChange={() => onDecisionChange(item.item_id, value)}
-                  className={cn(
-                    "h-3.5 w-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
-                    style.accent
-                  )}
-                />
-                {label}
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <label className="flex items-start gap-2 text-sm text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={item.review_excluded}
-          onChange={(event) => onExcludedChange(item.item_id, event.target.checked)}
-          className="mt-0.5 h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        Exclude this item — it will not be sent for confirmation or reach later stages
-      </label>
-
-      <div className="mt-3 border-t border-border pt-3">
-        <LabelCorrectionControl
-          item={item}
-          isCorrecting={isCorrecting}
-          correctionDisabled={correctionDisabled}
-          correctionError={correctionError}
-          onCorrectLabel={onCorrectLabel}
-        />
       </div>
     </li>
   );

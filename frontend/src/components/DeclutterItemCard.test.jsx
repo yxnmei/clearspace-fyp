@@ -77,7 +77,7 @@ describe("DeclutterItemCard", () => {
   test("decision controls are keyboard-focusable native radio inputs", async () => {
     // Native <input type="radio"> groups only put the CHECKED member in
     // the tab sequence (the others are reachable by arrow keys once the
-    // group has focus) — this is real browser/jsdom radio semantics, not
+    // group has focus), this is real browser/jsdom radio semantics, not
     // a limitation of the component. review_decision is "discard" here,
     // so that's the one Tab lands on first.
     const user = userEvent.setup();
@@ -281,7 +281,7 @@ describe("DeclutterItemCard", () => {
       Discard: { on: /border-red-600/, off: /border-red-200/, accent: /accent-red-600/ },
     };
 
-    test("stay native radios inside the fieldset — not tabs or div buttons", () => {
+    test("stay native radios inside the fieldset, not tabs or div buttons", () => {
       render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
       const radios = screen.getAllByRole("radio");
       expect(radios).toHaveLength(4);
@@ -311,7 +311,7 @@ describe("DeclutterItemCard", () => {
       expect(segment).toMatch(CATEGORY[label].off);
       expect(segment).toMatch(new RegExp(`text-${colour}-800`));
       expect(segment).toMatch(new RegExp(`hover:bg-${colour}-50`));
-      // colour is not the only cue — the visible label text is still there
+      // colour is not the only cue, the visible label text is still there
       expect(radio.closest("label")).toHaveTextContent(label);
       // the native radio accent carries the same category colour
       expect(radio.className).toMatch(CATEGORY[label].accent);
@@ -383,12 +383,12 @@ describe("DeclutterItemCard", () => {
       expect(screen.getByRole("radio", { name: "Keep" })).toHaveAttribute("name", "decision-item_006");
     });
 
-    test("exactly one checkbox (exclusion) — no extra toggles were introduced", () => {
+    test("exactly one checkbox (exclusion), no extra toggles were introduced", () => {
       render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
       expect(screen.getAllByRole("checkbox")).toHaveLength(1);
     });
 
-    test("status badges use real state, not invented metadata, and there is no item thumbnail", () => {
+    test("status badges use real state, not invented metadata", () => {
       render(
         <DeclutterItemCard
           item={makeReviewItem({ decision_changed: true, review_excluded: true, label_source: "user", effective_label: "hoodie" })}
@@ -400,7 +400,45 @@ describe("DeclutterItemCard", () => {
       expect(screen.getByText("Changed")).toBeInTheDocument();
       expect(screen.getByText("Excluded")).toBeInTheDocument();
       expect(screen.getByText(/AI suggests:/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("compact row thumbnail (Phase 5A)", () => {
+    test("a decorative crop thumbnail is derived from the shared image + item box, not an <img>, not a control", () => {
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ box: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 } })}
+          imageUrl="blob:room-abc"
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      const thumb = screen.getByTestId("item-crop-thumbnail");
+      expect(thumb).toHaveAttribute("aria-hidden", "true"); // row already names the item
+      expect(thumb.style.backgroundImage).toBe('url("blob:room-abc")');
+      // no per-item <img> and no image role that would rival the one room photo
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
+      expect(thumb.querySelector("img")).toBeNull();
+    });
+
+    test("falls back to a neutral placeholder when no source image is available", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      expect(screen.getByTestId("item-crop-fallback")).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    test("the thumbnail does not push a focusable element ahead of the decision radios", async () => {
+      const user = userEvent.setup();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem()}
+          imageUrl="blob:room"
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      await user.tab();
+      expect(screen.getByRole("radio", { name: "Discard" })).toHaveFocus();
     });
   });
 });

@@ -3,7 +3,7 @@
 // Deliberately NOT installed globally in src/test/setup.js. jsdom
 // implements neither `MediaRecorder` nor `navigator.mediaDevices`, and
 // that absence is exactly what useVoiceContext's feature detection has
-// to react to — a global stub would make the unsupported-browser
+// to react to, a global stub would make the unsupported-browser
 // fallback permanently untestable. So every install() here returns its
 // own restore(), and each test installs only what it needs and tears it
 // down again afterwards, leaving the next test back in a browser that
@@ -43,7 +43,7 @@ export class FakeMediaStream {
  * construction with an optional mimeType, start(), stop(), state, and
  * the ondataavailable/onstop/onerror handler properties.
  *
- * `stop()` does NOT synchronously fire onstop — the real API dispatches
+ * `stop()` does NOT synchronously fire onstop, the real API dispatches
  * `dataavailable` then `stop` asynchronously, and pretending otherwise
  * would hide ordering bugs. Tests call finish() to complete the cycle.
  */
@@ -97,7 +97,7 @@ export function createRecorderClass({ supportedTypes = [], constructorError = nu
      * Models the sequence the MediaRecorder specification actually
      * permits: `error`, THEN a final `dataavailable` carrying whatever
      * was buffered, THEN `stop`. Firing only `error` would hide the
-     * exact ordering bug this models — a failed take whose trailing
+     * exact ordering bug this models, a failed take whose trailing
      * stop event still starts a transcription.
      */
     fail({ chunks = [["partial"]], type = this.mimeType, error = new Error("recorder failed") } = {}) {
@@ -167,7 +167,7 @@ export function installGetUserMedia({
     const next = stream ?? new FakeMediaStream(trackCount);
     streams.push(next);
     // `deferred` models a permission prompt the user has not answered
-    // yet — the test decides when (and whether) it is ever granted.
+    // yet, the test decides when (and whether) it is ever granted.
     if (deferred) {
       return new Promise((resolve) => {
         pending.push(() => resolve(next));

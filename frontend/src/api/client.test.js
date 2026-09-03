@@ -60,7 +60,7 @@ describe("confirmDecisions", () => {
     expect(JSON.parse(options.body)).toEqual({ run_id: "run1", declutter, overrides });
   });
 
-  test("preserves the original declutter object's fields — warnings, provenance, validity, timings", async () => {
+  test("preserves the original declutter object's fields, warnings, provenance, validity, timings", async () => {
     const fetchMock = mockFetchOnce({ run_id: "run1" });
     const declutter = {
       run_id: "run1",
@@ -233,7 +233,7 @@ function makeFile(name = "room.png", type = "image/png", bytes = [137, 80, 78, 7
 }
 
 describe("uploadImage", () => {
-  test("path is path-agnostic — path=\"reorganise\" is sent exactly as given", async () => {
+  test("path is path-agnostic, path=\"reorganise\" is sent exactly as given", async () => {
     const fetchMock = mockFetchOnce({ run_id: "run1", path: "reorganise" });
 
     await uploadImage({ file: makeFile(), path: "reorganise", context: null });
@@ -322,7 +322,7 @@ describe("generateReorganisation", () => {
     expect(Array.from(decoded)).toEqual([1, 2, 3, 4]);
   });
 
-  test("sends file.type exactly as image_media_type — png", async () => {
+  test("sends file.type exactly as image_media_type, png", async () => {
     const fetchMock = mockFetchOnce({ run_id: "run1" });
     await generateReorganisation({
       runId: "run1",
@@ -334,7 +334,7 @@ describe("generateReorganisation", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).image_media_type).toBe("image/png");
   });
 
-  test("sends file.type exactly as image_media_type — jpeg", async () => {
+  test("sends file.type exactly as image_media_type, jpeg", async () => {
     const fetchMock = mockFetchOnce({ run_id: "run1" });
     await generateReorganisation({
       runId: "run1",
@@ -408,7 +408,7 @@ describe("generateConfirmedReorganisation", () => {
     expect(options.headers["Content-Type"]).toBe("application/json");
   });
 
-  test("sends the exact R6 JSON body shape — declutter+overrides, never a selection list", async () => {
+  test("sends the exact R6 JSON body shape, declutter+overrides, never a selection list", async () => {
     const fetchMock = mockFetchOnce({ run_id: "run1" });
     const analysis = { run_id: "run1", items: [{ item_id: "item_001" }] };
     const declutter = { run_id: "run1", expected_item_ids: ["item_001"] };
@@ -581,7 +581,7 @@ describe("transcribeAudio", () => {
 
     const [, options] = fetchMock.mock.calls[0];
     expect(options.body).toBeInstanceOf(FormData);
-    // The backend route is `audio: UploadFile = File(...)` — any other
+    // The backend route is `audio: UploadFile = File(...)`, any other
     // field name is a 422 there, so this name is the contract.
     expect([...options.body.keys()]).toEqual(["audio"]);
     const sent = options.body.get("audio");
@@ -598,7 +598,7 @@ describe("transcribeAudio", () => {
     expect(options.body.get("audio").type).toBe("audio/ogg");
   });
 
-  test("sets no Content-Type header — the browser must add the multipart boundary", async () => {
+  test("sets no Content-Type header, the browser must add the multipart boundary", async () => {
     const fetchMock = mockFetchOnce({ transcript: "tidy the desk" });
 
     await transcribeAudio({ audioBlob: audioBlob() });
