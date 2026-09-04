@@ -169,3 +169,46 @@ export async function generateConfirmedReorganisation({
     }),
   });
 }
+
+// POST /listings (marketplace listing draft generation, Stage 2 frontend),
+// JSON body, matching app/api/routes.py's ListingRequest exactly
+// (extra="forbid" there, so an unrecognised field is a 422, never
+// silently ignored). Sends ONLY run_id + the whole round-tripped
+// analysis + the whole round-tripped declutter + serialised overrides,
+// same round-trip-whole discipline as confirmDecisions()/overrideItem():
+// the backend derives the eligible Sell set and the authoritative
+// confirmation server-side from (declutter, overrides).
+//
+// Deliberately has NO eligibleItemIds/sellItemIds parameter at all, and
+// never sends a confirmation, effective labels, generated draft text,
+// image data, user context, or model configuration, so there is no way
+// to accidentally send one.
+export function generateListings({ runId, analysis, declutter, overrides = [] }) {
+  return request("/listings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides }),
+  });
+}
+
+// POST /listings/{item_id}/regenerate (true single-item regeneration).
+// The body is EXACTLY the same shape generateListings() sends (run_id +
+// whole analysis + whole declutter + overrides); the one item to
+// regenerate is identified ONLY by the path segment, encodeURIComponent-
+// encoded, and item_id is never repeated in the body.
+//
+// itemId is validated as a non-blank string here, before fetch, so a
+// missing/blank id fails fast client-side rather than as a sanitized
+// network error. Eligibility is NOT checked here, the backend is
+// authoritative and rejects a non-eligible target itself.
+export async function regenerateListing({ runId, analysis, declutter, overrides = [], itemId }) {
+  if (typeof itemId !== "string" || itemId.trim() === "") {
+    throw new Error(`regenerateListing: itemId must be a non-blank string, got ${JSON.stringify(itemId)}`);
+  }
+
+  return request(`/listings/${encodeURIComponent(itemId)}/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides }),
+  });
+}

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   confirmDecisions,
   generateConfirmedReorganisation,
+  generateListings,
   generateReorganisation,
   overrideItem,
+  regenerateListing,
   transcribeAudio,
   uploadImage,
 } from "./client";
@@ -641,5 +643,264 @@ describe("transcribeAudio", () => {
     mockFetchReject(new TypeError("Failed to fetch"));
 
     await expect(transcribeAudio({ audioBlob: audioBlob() })).rejects.toThrow(/Failed to fetch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateListings - POST /listings (whole set)
+// ---------------------------------------------------------------------------
+
+const LISTING_ANALYSIS = { run_id: "run1", items: [{ item_id: "item_001", effective_label: "lamp" }] };
+const LISTING_DECLUTTER = {
+  run_id: "run1",
+  expected_item_ids: ["item_001"],
+  ai_decisions: [{ item_id: "item_001", decision: "sell", reason: "x" }],
+  unresolved_item_ids: [],
+  item_validity: { item_001: "raw_valid" },
+};
+
+describe("generateListings", () => {
+  test("POSTs to /listings with a JSON content type", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+
+    await generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, overrides: [] });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/listings$/);
+    expect(options.method).toBe("POST");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("sends exactly {run_id, analysis, declutter, overrides} and nothing else", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+    const overrides = [{ item_id: "item_001", decision: "sell" }];
+
+    await generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, overrides });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({
+      run_id: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      overrides,
+    });
+    expect(Object.keys(body).sort()).toEqual(["analysis", "declutter", "overrides", "run_id"]);
+  });
+
+  test("round-trips analysis and declutter whole (fields, validity, timings preserved)", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+
+    await generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.analysis).toEqual(LISTING_ANALYSIS);
+    expect(body.declutter).toEqual(LISTING_DECLUTTER);
+  });
+
+  test("defaults overrides to an empty array when omitted", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+
+    await generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).overrides).toEqual([]);
+  });
+
+  test("never sends a confirmation, eligible/Sell ids, labels, drafts, image data, user context or model config", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+
+    await generateListings({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      // extras a caller might mistakenly pass - the function must ignore them
+      confirmation: { anything: true },
+      eligibleItemIds: ["item_001"],
+      sellItemIds: ["item_001"],
+      drafts: [{ item_id: "item_001" }],
+      effectiveLabels: { item_001: "lamp" },
+      image: "data",
+      userContext: "make it sparkle",
+      modelName: "gpt-4",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    for (const forbidden of [
+      "confirmation",
+      "eligible_item_ids",
+      "eligibleItemIds",
+      "sell_item_ids",
+      "sellItemIds",
+      "drafts",
+      "effective_labels",
+      "effectiveLabels",
+      "image",
+      "user_context",
+      "userContext",
+      "model_name",
+      "modelName",
+    ]) {
+      expect(body).not.toHaveProperty(forbidden);
+    }
+  });
+
+  test("a non-ok response rejects with the status", async () => {
+    mockFetchOnce({ detail: "invalid listing request" }, { ok: false, status: 422 });
+
+    await expect(
+      generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER })
+    ).rejects.toThrow(/422/);
+  });
+
+  test("a network failure propagates", async () => {
+    mockFetchReject(new TypeError("Failed to fetch"));
+
+    await expect(
+      generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER })
+    ).rejects.toThrow(/Failed to fetch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// regenerateListing - POST /listings/{item_id}/regenerate (one item)
+// ---------------------------------------------------------------------------
+
+describe("regenerateListing", () => {
+  test("POSTs to the encoded /listings/{item_id}/regenerate path with a JSON content type", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await regenerateListing({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      overrides: [],
+      itemId: "item_001",
+    });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/listings\/item_001\/regenerate$/);
+    expect(options.method).toBe("POST");
+    expect(options.headers["Content-Type"]).toBe("application/json");
+  });
+
+  test("encodeURIComponent-encodes the path item id", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await regenerateListing({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      itemId: "weird id/with slash",
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toContain(`/listings/${encodeURIComponent("weird id/with slash")}/regenerate`);
+    expect(fetchMock.mock.calls[0][0]).not.toContain("weird id/with slash");
+  });
+
+  test("the body is exactly {run_id, analysis, declutter, overrides} - item id appears ONLY in the path", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+    const overrides = [{ item_id: "item_001", decision: "sell" }];
+
+    await regenerateListing({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      overrides,
+      itemId: "item_001",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ run_id: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, overrides });
+    expect(body).not.toHaveProperty("item_id");
+    expect(body).not.toHaveProperty("itemId");
+  });
+
+  test("defaults overrides to an empty array when omitted", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "item_001" });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).overrides).toEqual([]);
+  });
+
+  test("never sends a confirmation, eligible ids, labels, drafts, image data, user context or model config", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await regenerateListing({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      itemId: "item_001",
+      confirmation: { anything: true },
+      eligibleItemIds: ["item_001"],
+      draft: { item_id: "item_001" },
+      image: "data",
+      userContext: "x",
+      modelName: "gpt-4",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    for (const forbidden of ["confirmation", "eligible_item_ids", "draft", "drafts", "image", "user_context", "model_name"]) {
+      expect(body).not.toHaveProperty(forbidden);
+    }
+  });
+
+  test("a blank itemId rejects before ever calling fetch", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await expect(
+      regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "   " })
+    ).rejects.toThrow(/non-blank string/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a non-string itemId rejects before ever calling fetch", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await expect(
+      regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: 123 })
+    ).rejects.toThrow(/non-blank string/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a missing itemId rejects before ever calling fetch", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+
+    await expect(
+      regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER })
+    ).rejects.toThrow(/non-blank string/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a non-ok response rejects with the status", async () => {
+    mockFetchOnce({ detail: "item is not eligible" }, { ok: false, status: 422 });
+
+    await expect(
+      regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "item_001" })
+    ).rejects.toThrow(/422/);
+  });
+
+  test("a network failure propagates", async () => {
+    mockFetchReject(new TypeError("Failed to fetch"));
+
+    await expect(
+      regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "item_001" })
+    ).rejects.toThrow(/Failed to fetch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// batch vs single: distinct endpoints
+// ---------------------------------------------------------------------------
+
+describe("listing endpoints are distinct", () => {
+  test("generateListings hits /listings, regenerateListing hits /listings/{id}/regenerate", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+
+    await generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER });
+    await regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "item_007" });
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/listings$/);
+    expect(fetchMock.mock.calls[1][0]).toMatch(/\/listings\/item_007\/regenerate$/);
+    expect(fetchMock.mock.calls[0][0]).not.toMatch(/regenerate/);
   });
 });
