@@ -100,7 +100,7 @@ import hashlib
 import math
 from typing import Callable, Literal, Protocol
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.config import get_settings
@@ -146,8 +146,11 @@ from app.services.declutter_service import (
 from app.services.listing_service import (
     ListingEligibilityInputError,
     ListingGenerationResult,
+    ListingItemNotEligibleError,
     LLMListingGenerator,
+    SingleListingDraftResult,
     generate_listing_drafts,
+    regenerate_one_listing_draft,
 )
 from app.services.reorganise_pipeline_service import (
     ImageGenerator,
@@ -1254,4 +1257,51 @@ def create_listings(
     # Any other exception (a genuine programming error, or an unexpected
     # exception a listing model call raised that the service deliberately
     # does not catch) is left uncaught — FastAPI's default 500, not a
+    # disguised success, matching every other handler in this module.
+
+
+@router.post("/listings/{item_id}/regenerate", response_model=SingleListingDraftResult)
+def regenerate_listing(
+    request: ListingRequest,
+    item_id: str = Path(..., min_length=1),
+    listing_generator_provider: LLMListingGeneratorLoader = Depends(get_listing_generator_provider),
+) -> SingleListingDraftResult:
+    """
+    Regenerate EXACTLY ONE eligible Sell item's listing draft, without
+    regenerating any other item. Same request body as POST /listings
+    (ListingRequest, extra="forbid"): run_id, analysis, declutter,
+    overrides — no confirmation, labels, generated text, or eligible-id
+    collection. The one item to regenerate is named ONLY by the
+    {item_id} path segment.
+
+    regenerate_one_listing_draft() derives the complete eligible set
+    server-side (reusing derive_listing_eligibility) and rejects a target
+    that is not a confirmed non-excluded Sell item BEFORE any model call.
+    Per-item unavailability is a normal 200. POST /listings is unchanged.
+    """
+    listing_generator = listing_generator_provider()
+
+    try:
+        return regenerate_one_listing_draft(
+            run_id=request.run_id,
+            analysis=request.analysis,
+            declutter=request.declutter,
+            overrides=request.overrides,
+            item_id=item_id,
+            listing_generator=listing_generator,
+        )
+    except IncompleteDeclutterError as exc:
+        raise HTTPException(
+            status_code=409, detail="all Declutter items must be resolved before listing"
+        ) from exc
+    except ConfirmationInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid decision overrides") from exc
+    except ListingItemNotEligibleError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="item is not a confirmed Sell item eligible for a listing draft",
+        ) from exc
+    except ListingEligibilityInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid listing request") from exc
+    # Any other exception is left uncaught — FastAPI's default 500, not a
     # disguised success, matching every other handler in this module.

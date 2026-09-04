@@ -547,3 +547,130 @@ def generate_listing_drafts(
         prompt_version=LISTING_PROMPT_VERSION,
         max_attempts=max_attempts,
     )
+
+
+# ===========================================================================
+# Phase 3 — true single-item regeneration
+# ===========================================================================
+
+
+class ListingItemNotEligibleError(ValueError):
+    """The target item_id handed to regenerate_one_listing_draft() is not
+    a member of the complete, server-derived eligible Sell set for this
+    (run_id, analysis, declutter, overrides): it is unknown, a
+    Keep/Donate/Discard item, an excluded item, malformed, or a stale id
+    from a different run.
+
+    Raised BEFORE any model call. A ValueError subclass (this codebase's
+    malformed-input convention), deliberately DISTINCT from
+    ListingEligibilityInputError — that means the analysis/declutter/run
+    bundle itself is inconsistent; this means the bundle is fine but the
+    caller asked to regenerate something that is not a listing-eligible
+    Sell item. Neither is a subclass of the other, so a route maps them
+    to their own responses with no clause-order hazard."""
+
+
+class SingleListingDraftResult(BaseModel):
+    """The output of regenerate_one_listing_draft() — exactly ONE
+    ListingDraft for one confirmed non-excluded Sell item, plus the same
+    authoritative run / confirmation / model / prompt / attempt
+    provenance a full ListingGenerationResult carries. Frozen,
+    extra="forbid", self-validating against contradictory direct
+    construction.
+
+    There is no empty case: a single-item regeneration always targets one
+    eligible item and always makes at least one model call, so
+    model_name / prompt_version / max_attempts are always present (a
+    fully-unavailable draft still records the model and budget it was
+    attempted with)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: NonEmptyStr
+    confirmation: ConfirmationResult
+    draft: ListingDraft
+    model_name: NonEmptyStr
+    prompt_version: NonEmptyStr
+    max_attempts: StrictInt
+
+    @model_validator(mode="after")
+    def _check_internal_consistency(self) -> "SingleListingDraftResult":
+        if self.run_id != self.confirmation.run_id:
+            raise ValueError("run_id must match confirmation.run_id")
+
+        eligible_ids = {
+            c.item_id
+            for c in self.confirmation.confirmed_decisions
+            if c.confirmed_decision == Decision.SELL and not c.excluded
+        }
+        if self.draft.item_id not in eligible_ids:
+            raise ValueError(
+                "draft.item_id must be a confirmed non-excluded Sell item in this confirmation"
+            )
+
+        if not (1 <= self.max_attempts <= LISTING_MAX_ATTEMPTS_CEILING):
+            raise ValueError(
+                f"max_attempts must be between 1 and {LISTING_MAX_ATTEMPTS_CEILING} inclusive"
+            )
+        if self.draft.attempts > self.max_attempts:
+            raise ValueError(
+                f"draft reports {self.draft.attempts} attempts, more than max_attempts={self.max_attempts}"
+            )
+        return self
+
+
+def regenerate_one_listing_draft(
+    run_id: str,
+    analysis: AnalysisResult,
+    declutter: DeclutterResult,
+    overrides: list[DecisionOverride] | None,
+    item_id: str,
+    listing_generator: LLMListingGenerator,
+    model_name: str | None = None,
+) -> SingleListingDraftResult:
+    """
+    Regenerate the listing draft for EXACTLY ONE eligible Sell item,
+    without generating or touching any other item's draft.
+
+      1. derive_listing_eligibility(run_id, analysis, declutter, overrides)
+         — reused verbatim; its errors propagate unchanged
+         (ListingEligibilityInputError / IncompleteDeclutterError /
+         ConfirmationInputError). No eligibility or confirmation logic is
+         reimplemented here.
+      2. `item_id` must be a member of the complete server-derived
+         eligible Sell set, else ListingItemNotEligibleError — raised
+         BEFORE the generator is invoked. An unknown, non-Sell, excluded,
+         malformed, or stale id never reaches a model call, and no other
+         eligible item is ever generated.
+      3. Exactly ONE eligible item — the target — is passed to
+         _generate_one_draft() with the same bounded retry behaviour the
+         batch path uses.
+
+    An expected model failure yields that one draft as `unavailable`; an
+    unexpected exception type propagates (through _generate_one_draft).
+    The result carries the authoritative confirmation, run id, resolved
+    model, prompt version and attempt budget. POST /listings and
+    generate_listing_drafts() are untouched.
+    """
+    eligibility = derive_listing_eligibility(run_id, analysis, declutter, overrides)
+
+    target = next((item for item in eligibility.eligible_items if item.item_id == item_id), None)
+    if target is None:
+        raise ListingItemNotEligibleError(
+            f"item_id {item_id!r} is not in the confirmed non-excluded Sell set for this run"
+        )
+
+    settings = get_settings()
+    max_attempts = settings.listing_llm_max_attempts
+    resolved_model = model_name or settings.listing_llm_model_name
+
+    draft = _generate_one_draft(target, listing_generator, resolved_model, max_attempts)
+
+    return SingleListingDraftResult(
+        run_id=run_id,
+        confirmation=eligibility.confirmation,
+        draft=draft,
+        model_name=resolved_model,
+        prompt_version=LISTING_PROMPT_VERSION,
+        max_attempts=max_attempts,
+    )

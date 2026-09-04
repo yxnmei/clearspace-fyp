@@ -47,8 +47,11 @@ from app.services.listing_service import (
     ListingEligibilityInputError,
     ListingEligibilityResult,
     ListingGenerationResult,
+    ListingItemNotEligibleError,
+    SingleListingDraftResult,
     derive_listing_eligibility,
     generate_listing_drafts,
+    regenerate_one_listing_draft,
 )
 
 
@@ -1172,3 +1175,269 @@ def test_direct_construction_run_id_mismatch_is_rejected():
             prompt_version="v1",
             max_attempts=3,
         )
+
+
+# ===========================================================================
+# Phase 3 - regenerate_one_listing_draft(): true single-item regeneration
+# ===========================================================================
+
+
+def _labelled_pair(specs, run_id="run1"):
+    """specs: [(item_id, ai_decision, label), ...] all actionable."""
+    return _make_pair(
+        [{"item_id": i, "ai_decision": d, "label": lbl} for i, d, lbl in specs], run_id=run_id
+    )
+
+
+def test_regenerate_targets_only_the_requested_item_of_many():
+    analysis, declutter = _labelled_pair(
+        [("item_001", "sell", "lamp"), ("item_002", "sell", "desk"), ("item_003", "sell", "shelf")]
+    )
+    gen = ScriptedGenerator(_ok_result(title="Desk", description="A used desk in ordinary condition."))
+
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_002", gen)
+
+    assert isinstance(result, SingleListingDraftResult)
+    assert result.draft.item_id == "item_002"
+    assert result.draft.status == "generated"
+    assert result.draft.effective_label == "desk"
+    # exactly ONE model call, and it is for the target's label only
+    assert gen.calls == [{"item_label": "desk", "model_name": "phi4-mini"}]
+
+
+def test_regenerate_never_generates_another_eligible_item():
+    analysis, declutter = _labelled_pair(
+        [("item_001", "sell", "lamp"), ("item_002", "sell", "desk"), ("item_003", "sell", "shelf")]
+    )
+    gen = ScriptedGenerator(_ok_result())
+    regenerate_one_listing_draft("run1", analysis, declutter, [], "item_003", gen)
+    assert [c["item_label"] for c in gen.calls] == ["shelf"]
+
+
+def test_regenerate_result_carries_authoritative_confirmation_and_provenance():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    result = regenerate_one_listing_draft(
+        "run1", analysis, declutter, [], "item_001", ScriptedGenerator(_ok_result())
+    )
+
+    assert result.run_id == "run1"
+    assert result.confirmation.run_id == "run1"
+    assert result.model_name == "phi4-mini"
+    assert result.prompt_version == "v1"
+    assert result.max_attempts == 3
+
+
+def test_regenerate_unknown_item_raises_before_any_model_call():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft("run1", analysis, declutter, [], "item_999", _ExplodingGenerator())
+
+
+def test_regenerate_malformed_item_id_raises_before_any_model_call():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft("run1", analysis, declutter, [], "not-an-item", _ExplodingGenerator())
+
+
+def test_regenerate_non_sell_item_raises_before_any_model_call():
+    analysis, declutter = _labelled_pair([("item_001", "keep", "lamp"), ("item_002", "sell", "desk")])
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_excluded_sell_item_raises_before_any_model_call():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    overrides = [DecisionOverride(item_id="item_001", excluded=True)]
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft("run1", analysis, declutter, overrides, "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_changed_away_from_sell_raises():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    overrides = [DecisionOverride(item_id="item_001", decision=Decision.DONATE)]
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft("run1", analysis, declutter, overrides, "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_changed_to_sell_is_a_valid_target():
+    analysis, declutter = _labelled_pair([("item_001", "keep", "lamp")])
+    overrides = [DecisionOverride(item_id="item_001", decision=Decision.SELL)]
+    result = regenerate_one_listing_draft(
+        "run1", analysis, declutter, overrides, "item_001", ScriptedGenerator(_ok_result())
+    )
+    assert result.draft.item_id == "item_001"
+    assert result.draft.status == "generated"
+
+
+def test_regenerate_run_source_mismatch_raises_eligibility_input_error():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")], run_id="run1")
+    declutter = declutter.model_copy(update={"run_id": "run-other"})
+    with pytest.raises(ListingEligibilityInputError):
+        regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_incomplete_declutter_raises():
+    analysis, _ = _labelled_pair([("item_001", "sell", "lamp")])
+    incomplete = _declutter_result(
+        run_id="run1",
+        expected_item_ids=["item_001"],
+        ai_decisions=[],
+        unresolved_item_ids=["item_001"],
+        item_validity={"item_001": ItemValidity.STILL_INVALID},
+    )
+    with pytest.raises(IncompleteDeclutterError):
+        regenerate_one_listing_draft("run1", analysis, incomplete, [], "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_unknown_override_raises_confirmation_input_error():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    overrides = [DecisionOverride(item_id="item_999", decision=Decision.KEEP)]
+    with pytest.raises(ConfirmationInputError):
+        regenerate_one_listing_draft("run1", analysis, declutter, overrides, "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_duplicate_override_raises_confirmation_input_error():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    overrides = [
+        DecisionOverride(item_id="item_001", decision=Decision.SELL),
+        DecisionOverride(item_id="item_001", excluded=False),
+    ]
+    with pytest.raises(ConfirmationInputError):
+        regenerate_one_listing_draft("run1", analysis, declutter, overrides, "item_001", _ExplodingGenerator())
+
+
+def test_regenerate_expected_model_failure_returns_that_one_draft_unavailable():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp"), ("item_002", "sell", "desk")])
+    gen = ScriptedGenerator({"desk": [ListingModelResponseError("boom")]})
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_002", gen)
+
+    assert result.draft.item_id == "item_002"
+    assert result.draft.status == "unavailable"
+    assert result.draft.unavailable_reason == "generation_failed"
+    assert result.draft.attempts == 3  # bounded retry budget
+    assert result.model_name == "phi4-mini"  # provenance still recorded
+    assert len(gen.calls) == 3
+
+
+def test_regenerate_timeout_maps_to_timeout_reason():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    gen = ScriptedGenerator({"lamp": [ListingModelTimeoutError("t")]})
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", gen)
+    assert result.draft.unavailable_reason == "timeout"
+
+
+def test_regenerate_retries_then_succeeds():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    gen = ScriptedGenerator(
+        {"lamp": [ListingModelResponseError("1"), ListingModelResponseError("2"), _ok_result()]}
+    )
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", gen)
+    assert result.draft.status == "generated"
+    assert result.draft.attempts == 3
+    assert len(gen.calls) == 3
+
+
+def test_regenerate_unexpected_exception_propagates():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+
+    class _Boom(RuntimeError):
+        pass
+
+    gen = ScriptedGenerator({"lamp": [_Boom("programming error")]})
+    with pytest.raises(_Boom):
+        regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", gen)
+
+
+def test_regenerate_provenance_mismatch_becomes_unavailable():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    gen = ScriptedGenerator({"lamp": [_ok_result(model_name="some-other-model")]})
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", gen)
+    assert result.draft.status == "unavailable"
+    assert result.draft.unavailable_reason == "invalid_output"
+
+
+def test_regenerate_uses_the_corrected_effective_label():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "jewelry")])
+    analysis = analysis.model_copy(
+        update={"items": [analysis.items[0].model_copy(update={"corrected_label": "necklace"})]}
+    )
+    gen = ScriptedGenerator(_ok_result())
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_001", gen)
+    assert gen.calls[0]["item_label"] == "necklace"
+    assert result.draft.effective_label == "necklace"
+
+
+def test_regenerate_targets_duplicate_label_item_strictly_by_id():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "book"), ("item_002", "sell", "book")])
+    gen = ScriptedGenerator(_ok_result())
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_002", gen)
+    assert result.draft.item_id == "item_002"
+    assert len(gen.calls) == 1
+
+
+# --- direct SingleListingDraftResult construction -------------------------
+
+
+def _single_result(confirmation, draft, *, model_name="phi4-mini", prompt_version="v1", max_attempts=3, **extra):
+    return SingleListingDraftResult(
+        run_id="run1",
+        confirmation=confirmation,
+        draft=draft,
+        model_name=model_name,
+        prompt_version=prompt_version,
+        max_attempts=max_attempts,
+        **extra,
+    )
+
+
+def test_single_result_valid_is_accepted():
+    confirmation = _sell_pair_confirmation(["item_001", "item_002"])
+    result = _single_result(confirmation, _draft("item_002"))
+    assert result.draft.item_id == "item_002"
+
+
+def test_single_result_rejects_draft_not_in_eligible_set():
+    _, declutter = _make_pair([{"item_id": "item_001", "ai_decision": "keep"}])
+    confirmation = confirm_declutter_result(declutter)
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001"))
+
+
+def test_single_result_rejects_run_id_mismatch():
+    confirmation = _sell_pair_confirmation(["item_001"])
+    with pytest.raises(ValidationError):
+        SingleListingDraftResult(
+            run_id="run-other",
+            confirmation=confirmation,
+            draft=_draft("item_001"),
+            model_name="phi4-mini",
+            prompt_version="v1",
+            max_attempts=3,
+        )
+
+
+def test_single_result_rejects_attempts_over_max():
+    confirmation = _sell_pair_confirmation(["item_001"])
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001", attempts=4), max_attempts=3)
+
+
+def test_single_result_rejects_blank_model_or_prompt_provenance():
+    confirmation = _sell_pair_confirmation(["item_001"])
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001"), model_name="")
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001"), prompt_version="   ")
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.0, "1", "3"])
+def test_single_result_rejects_non_strict_max_attempts(bad):
+    confirmation = _sell_pair_confirmation(["item_001"])
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001"), max_attempts=bad)
+
+
+def test_single_result_rejects_extra_field():
+    confirmation = _sell_pair_confirmation(["item_001"])
+    with pytest.raises(ValidationError):
+        _single_result(confirmation, _draft("item_001"), drafts=[])

@@ -361,6 +361,207 @@ def test_duplicate_override_ids_return_422():
 
 
 # ---------------------------------------------------------------------------
+# POST /listings/{item_id}/regenerate  — true single-item regeneration
+# ---------------------------------------------------------------------------
+
+
+def test_regenerate_one_item_returns_200_with_a_single_draft():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "desk", "sell"), _dec(3, "book", "sell")])
+    gen = FakeListingGenerator(default=_ok(title="Desk", description="A used desk in ordinary condition."))
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/item_002/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["run_id"] == upload["run_id"]
+    assert "confirmed_decisions" in body["confirmation"]
+    assert "drafts" not in body  # single-draft shape, not the batch shape
+    assert body["draft"]["item_id"] == "item_002"
+    assert body["draft"]["status"] == "generated"
+    assert body["model_name"] == "phi4-mini"
+    assert body["prompt_version"] == "v1"
+    assert body["max_attempts"] == 3
+    # exactly one model call, for the target only
+    assert gen.calls == [{"item_label": "desk", "model_name": "phi4-mini"}]
+
+
+def test_regenerate_does_not_call_the_model_for_any_other_item():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "desk", "sell"), _dec(3, "book", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    client.post("/listings/item_003/regenerate", json=_listings_body(upload))
+
+    assert [c["item_label"] for c in gen.calls] == ["book"]
+
+
+def test_regenerate_unknown_item_id_is_422_before_any_model_call():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/item_999/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 422
+    assert gen.calls == []
+
+
+def test_regenerate_malformed_item_id_is_rejected_before_any_model_call():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/not-an-item/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 422
+    assert gen.calls == []
+
+
+def test_regenerate_keep_item_target_is_422():
+    upload = _do_declutter_upload([_dec(1, "lamp", "keep"), _dec(2, "desk", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/item_001/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 422
+    assert gen.calls == []
+
+
+def test_regenerate_excluded_sell_target_is_422():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post(
+        "/listings/item_001/regenerate",
+        json=_listings_body(upload, overrides=[{"item_id": "item_001", "excluded": True}]),
+    )
+
+    assert response.status_code == 422
+    assert gen.calls == []
+
+
+def test_regenerate_override_to_sell_makes_a_valid_target():
+    upload = _do_declutter_upload([_dec(1, "lamp", "keep")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post(
+        "/listings/item_001/regenerate",
+        json=_listings_body(upload, overrides=[{"item_id": "item_001", "decision": "sell"}]),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["draft"]["item_id"] == "item_001"
+
+
+def test_regenerate_incomplete_declutter_is_409():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    _override_listing_generator(FakeListingGenerator(default=_ok()))
+
+    body = _listings_body(upload)
+    body["declutter"]["unresolved_item_ids"] = ["item_001"]
+    body["declutter"]["ai_decisions"] = []
+    body["declutter"]["item_validity"] = {"item_001": "still_invalid"}
+
+    response = client.post("/listings/item_001/regenerate", json=body)
+    assert response.status_code == 409
+
+
+def test_regenerate_unknown_override_id_is_422():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    _override_listing_generator(FakeListingGenerator(default=_ok()))
+
+    response = client.post(
+        "/listings/item_001/regenerate",
+        json=_listings_body(upload, overrides=[{"item_id": "item_999", "decision": "keep"}]),
+    )
+    assert response.status_code == 422
+
+
+def test_regenerate_run_id_mismatch_is_422():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    _override_listing_generator(FakeListingGenerator(default=_ok()))
+
+    body = _listings_body(upload)
+    body["run_id"] = "some-other-run"
+    response = client.post("/listings/item_001/regenerate", json=body)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"confirmation": {"run_id": "run1", "confirmed_decisions": [], "confirmed_keep_ids": []}},
+        {"eligible_item_ids": ["item_001"]},
+        {"title": "nope"},
+        {"user_context": "make it sing"},
+        {"model_name": "gpt-4"},
+        {"draft": {}},
+        {"drafts": []},
+    ],
+)
+def test_regenerate_forbidden_request_field_is_422(extra):
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    _override_listing_generator(FakeListingGenerator(default=_ok()))
+
+    response = client.post("/listings/item_001/regenerate", json=_listings_body(upload, **extra))
+    assert response.status_code == 422
+
+
+def test_regenerate_expected_model_failure_returns_200_unavailable_no_raw_leak():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "desk", "sell")])
+    gen = FakeListingGenerator(
+        default=_ok(),
+        by_label={"desk": ListingModelUnavailableError("[Errno 111] Connection refused to http://localhost:11434")},
+    )
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/item_002/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["draft"]["item_id"] == "item_002"
+    assert body["draft"]["status"] == "unavailable"
+    assert body["draft"]["unavailable_reason"] == "service_unavailable"
+    assert body["model_name"] == "phi4-mini"
+    assert "Errno" not in response.text
+    assert "11434" not in response.text
+    assert "Traceback" not in response.text
+
+
+def test_regenerate_timeout_is_bounded_and_sanitised():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=ListingModelTimeoutError("timed out after 60s to 127.0.0.1:11434"))
+    _override_listing_generator(gen)
+
+    response = client.post("/listings/item_001/regenerate", json=_listings_body(upload))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["draft"]["unavailable_reason"] == "timeout"
+    assert body["draft"]["attempts"] == 3  # bounded to the configured budget
+    assert len(gen.calls) == 3
+    assert "11434" not in response.text
+
+
+def test_batch_listings_endpoint_still_generates_the_whole_set():
+    """Regression: POST /listings is unchanged by the single-item route."""
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "desk", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings", json=_listings_body(upload))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [d["item_id"] for d in body["drafts"]] == ["item_001", "item_002"]
+    assert [c["item_label"] for c in gen.calls] == ["lamp", "desk"]
+
+
+# ---------------------------------------------------------------------------
 # import boundary
 # ---------------------------------------------------------------------------
 
