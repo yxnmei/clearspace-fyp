@@ -42,10 +42,22 @@ import { useDeclutterFlow } from "./useDeclutterFlow";
 // correctLabel/setDecisionOverride still throw synchronously for an
 // invalid item_id, before this wrapper's own invalidateGeneration() ever
 // runs), then invalidates generation as a second, separate step.
-export function useBothFlow() {
+export function useBothFlow({ listingApi } = {}) {
+  // The marketplace listing domain (Stage 3) lives ENTIRELY in the
+  // composed useDeclutterFlow -- its state, actions and concurrency slot
+  // all flow out through the `...declutter` spread below, unwrapped.
+  // useBothFlow only passes the `listingApi` injection seam straight
+  // through (when omitted, useDeclutterFlow uses its own default), and
+  // adds nothing: listing operations must NOT touch Reorganise state,
+  // and the wrappers below that DO invalidate Reorganise
+  // (setDecisionOverride/setItemExcluded/clearDecisionOverride/
+  // correctLabel/confirm/submit/reset) already invalidate listing too,
+  // because the composed hook's own versions of those chain through
+  // invalidateConfirmation -> invalidateListing.
   const declutter = useDeclutterFlow({
     uploadPath: "both",
     normaliseUploadResponse: normaliseBothUploadResponse,
+    listingApi,
   });
 
   // file/context are retained here (unlike useDeclutterFlow, which never

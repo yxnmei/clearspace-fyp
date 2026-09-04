@@ -2,6 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useDeclutterFlow } from "./useDeclutterFlow";
 import * as client from "../api/client";
+// listingContract is NOT mocked: the real normalisers run inside the
+// injected listingApi seam, so these tests exercise the genuine
+// hook <-> contract integration, not just mocked call wiring.
+import { normaliseListingResponse, normaliseSingleListingResponse } from "../api/listingContract";
 
 // Only the frontend API functions are mocked, normaliseDeclutterUploadResponse/
 // normaliseConfirmationResponse (the pure contract adapters) run for real, so
@@ -11,6 +15,11 @@ vi.mock("../api/client", () => ({
   uploadImage: vi.fn(),
   confirmDecisions: vi.fn(),
   overrideItem: vi.fn(),
+  // Present so the hook's `import { generateListings, regenerateListing }`
+  // resolves; listing tests inject their own `listingApi` seam and never
+  // rely on these module-level mocks.
+  generateListings: vi.fn(),
+  regenerateListing: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -1097,5 +1106,793 @@ describe("useDeclutterFlow, reset() (R6)", () => {
 
     expect(result.current.confirmation).toBeNull();
     expect(result.current.confirmationStatus).toBe("idle");
+  });
+});
+
+// ===========================================================================
+// Marketplace listing domain (Stage 3)
+// ===========================================================================
+
+// specs: [{ id, ai, decision?, excluded?, label }]
+function listUpload(specs, runId = "run1") {
+  const items = specs.map((s, i) => ({
+    item_id: s.id,
+    source_detection_index: i,
+    raw_phrase: s.label,
+    clean_label: s.label,
+    box: { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.3 },
+    confidence: 0.8,
+    position: "upper-left",
+    relative_size: "small",
+    item_role: "actionable",
+    item_role_source: "default",
+    corrected_label: null,
+    label_source: "detector",
+    effective_label: s.label,
+  }));
+  return {
+    run_id: runId,
+    path: "declutter",
+    analysis: {
+      run_id: runId,
+      scene: { label: "bedroom", confidence: 0.9, all_scores: { bedroom: 0.9 } },
+      items,
+      warnings: [],
+      stage_timings: [],
+    },
+    declutter: {
+      run_id: runId,
+      expected_item_ids: specs.map((s) => s.id),
+      ai_decisions: specs.map((s) => ({ item_id: s.id, decision: s.ai, reason: `reason for ${s.id}` })),
+      unresolved_item_ids: [],
+      item_validity: Object.fromEntries(specs.map((s) => [s.id, "raw_valid"])),
+      mapping_warnings: [],
+      semantic_errors: [],
+      recovery_failures: [],
+      provenance_warnings: [],
+      is_complete: true,
+      is_strictly_valid: true,
+      model_name: "phi4-mini",
+      prompt_version: "v2",
+      stage_timings: [],
+    },
+  };
+}
+
+function listConfirmResponse(specs, runId = "run1") {
+  const cds = specs.map((s) => ({
+    item_id: s.id,
+    ai_decision: s.ai,
+    confirmed_decision: s.decision ?? s.ai,
+    ai_reason: `reason for ${s.id}`,
+    user_reason: null,
+    excluded: s.excluded ?? false,
+    decision_changed: (s.decision ?? s.ai) !== s.ai,
+  }));
+  return {
+    run_id: runId,
+    confirmed_decisions: cds,
+    confirmed_keep_ids: cds.filter((c) => c.confirmed_decision === "keep" && !c.excluded).map((c) => c.item_id),
+    decision_changed_count: cds.filter((c) => c.decision_changed).length,
+    excluded_count: cds.filter((c) => c.excluded).length,
+  };
+}
+
+function genDraft(id, label, over = {}) {
+  return {
+    item_id: id,
+    effective_label: label,
+    status: "generated",
+    title: "Wooden chair",
+    description: "A used wooden chair in ordinary condition.",
+    unavailable_reason: null,
+    was_repaired: false,
+    attempts: 1,
+    ...over,
+  };
+}
+
+function unavailDraft(id, label, over = {}) {
+  return {
+    item_id: id,
+    effective_label: label,
+    status: "unavailable",
+    title: null,
+    description: null,
+    unavailable_reason: "generation_failed",
+    was_repaired: null,
+    attempts: 3,
+    ...over,
+  };
+}
+
+function batchResp(confirmResponse, drafts, runId = "run1") {
+  const nonEmpty = drafts.length > 0;
+  return {
+    run_id: runId,
+    confirmation: JSON.parse(JSON.stringify(confirmResponse)),
+    drafts,
+    model_name: nonEmpty ? "phi4-mini" : null,
+    prompt_version: nonEmpty ? "v1" : null,
+    max_attempts: nonEmpty ? 3 : null,
+  };
+}
+
+function singleResp(confirmResponse, draft, over = {}) {
+  return {
+    run_id: "run1",
+    confirmation: JSON.parse(JSON.stringify(confirmResponse)),
+    draft,
+    model_name: "phi4-mini",
+    prompt_version: "v1",
+    max_attempts: 3,
+    ...over,
+  };
+}
+
+function makeListingApi(over = {}) {
+  return {
+    generateListings: vi.fn(),
+    regenerateListing: vi.fn(),
+    normaliseListingResponse,
+    normaliseSingleListingResponse,
+    ...over,
+  };
+}
+
+// upload -> confirm, listingApi injected, returns { result, listingApi, confirmResponse }
+async function primeConfirmed(specs, { listingApi = makeListingApi(), beforeConfirm } = {}) {
+  client.uploadImage.mockResolvedValue(listUpload(specs));
+  const confirmResponse = listConfirmResponse(specs);
+  client.confirmDecisions.mockResolvedValue(confirmResponse);
+  const { result } = renderHook(() => useDeclutterFlow({ listingApi }));
+  await act(async () => {
+    await result.current.submit({ file: makeFile(), context: null });
+  });
+  if (beforeConfirm) {
+    await act(async () => {
+      beforeConfirm(result);
+    });
+  }
+  await act(async () => {
+    await result.current.confirm();
+  });
+  return { result, listingApi, confirmResponse };
+}
+
+// ...and then generateListingDrafts() to a ready result.
+async function primeReady(specs, opts = {}) {
+  const ctx = await primeConfirmed(specs, opts);
+  const drafts =
+    opts.drafts ??
+    specs
+      .filter((s) => (s.decision ?? s.ai) === "sell" && !s.excluded)
+      .map((s) => genDraft(s.id, s.label));
+  ctx.listingApi.generateListings.mockResolvedValue(batchResp(ctx.confirmResponse, drafts));
+  await act(async () => {
+    await ctx.result.current.generateListingDrafts();
+  });
+  return { ...ctx, drafts };
+}
+
+const TWO_SELL = [
+  { id: "item_001", ai: "sell", label: "lamp" },
+  { id: "item_002", ai: "keep", label: "chair" },
+  { id: "item_003", ai: "sell", label: "book" },
+];
+
+describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
+  test("confirmation success never auto-generates listing drafts", async () => {
+    const { result, listingApi } = await primeConfirmed(TWO_SELL);
+    expect(result.current.confirmationStatus).toBe("confirmed");
+    expect(listingApi.generateListings).not.toHaveBeenCalled();
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.listingDrafts).toEqual([]);
+  });
+
+  test("generateListingDrafts is a no-op with no request before a successful confirmation", async () => {
+    client.uploadImage.mockResolvedValue(listUpload(TWO_SELL));
+    const listingApi = makeListingApi();
+    const { result } = renderHook(() => useDeclutterFlow({ listingApi }));
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    let out;
+    await act(async () => {
+      out = await result.current.generateListingDrafts();
+    });
+    expect(out).toBeNull();
+    expect(listingApi.generateListings).not.toHaveBeenCalled();
+    expect(result.current.listingStatus).toBe("idle");
+  });
+
+  test("generateListingDrafts sends the exact { runId, analysis, declutter, overrides } payload", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
+    listingApi.generateListings.mockResolvedValue(
+      batchResp(confirmResponse, [genDraft("item_001", "lamp"), genDraft("item_003", "book")])
+    );
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1);
+    expect(listingApi.generateListings).toHaveBeenCalledWith({
+      runId: "run1",
+      analysis: result.current.analysis,
+      declutter: result.current.declutter,
+      overrides: [],
+    });
+  });
+
+  test("generateListingDrafts validates through normaliseListingResponse with current snapshots", async () => {
+    const spy = vi.fn((response) => ({
+      runId: "run1",
+      confirmation: { runId: "run1" },
+      eligibleItemIds: ["item_001", "item_003"],
+      drafts: [],
+      modelName: "phi4-mini",
+      promptVersion: "v1",
+      maxAttempts: 3,
+    }));
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL, {
+      listingApi: makeListingApi({ normaliseListingResponse: spy }),
+    });
+    listingApi.generateListings.mockResolvedValue(batchResp(confirmResponse, [genDraft("item_001", "lamp")]));
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [, ctxArg] = spy.mock.calls[0];
+    expect(ctxArg.runId).toBe("run1");
+    expect(ctxArg.sourceDeclutter).toBe(result.current.declutter);
+    expect(ctxArg.currentConfirmed).toBe(result.current.confirmation);
+    expect(ctxArg.currentReviewItems.map((i) => i.item_id)).toEqual(["item_001", "item_002", "item_003"]);
+  });
+
+  test("successful batch: ready status, ordered drafts, provenance", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.listingResult.modelName).toBe("phi4-mini");
+    expect(result.current.listingResult.maxAttempts).toBe(3);
+    expect(result.current.listingDrafts.map((d) => d.item_id)).toEqual(["item_001", "item_003"]);
+    expect(result.current.listingDrafts[0].edited_title).toBe("Wooden chair");
+    expect(result.current.listingDrafts[0].is_edited).toBe(false);
+    expect(result.current.listingDrafts[0].is_discarded).toBe(false);
+  });
+
+  test("zero eligible Sell items: a valid ready empty result with no request and null provenance", async () => {
+    const KEEP_ONLY = [
+      { id: "item_001", ai: "keep", label: "lamp" },
+      { id: "item_002", ai: "donate", label: "chair" },
+    ];
+    const { result, listingApi } = await primeConfirmed(KEEP_ONLY);
+
+    let out;
+    await act(async () => {
+      out = await result.current.generateListingDrafts();
+    });
+
+    expect(listingApi.generateListings).not.toHaveBeenCalled();
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.listingResult.drafts).toEqual([]);
+    expect(result.current.listingDrafts).toEqual([]);
+    expect(result.current.listingResult.modelName).toBeNull();
+    expect(result.current.listingResult.promptVersion).toBeNull();
+    expect(result.current.listingResult.maxAttempts).toBeNull();
+    expect(out).toBe(result.current.listingResult);
+  });
+
+  test("batch failure: error status, but confirmation and Declutter data are preserved", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
+    listingApi.generateListings.mockRejectedValue(new Error("listing service unavailable"));
+    const confirmationBefore = result.current.confirmation;
+    const declutterBefore = result.current.declutter;
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(result.current.listingStatus).toBe("error");
+    expect(result.current.listingError).toMatch(/unavailable/);
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.confirmation).toBe(confirmationBefore);
+    expect(result.current.confirmationStatus).toBe("confirmed");
+    expect(result.current.declutter).toBe(declutterBefore);
+    expect(result.current.status).toBe("ready");
+  });
+
+  test("duplicate batch click while a batch owns the slot is a no-op with no second request", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.generateListings.mockReturnValueOnce(d.promise);
+
+    let first;
+    act(() => {
+      first = result.current.generateListingDrafts();
+    });
+    let second;
+    await act(async () => {
+      second = await result.current.generateListingDrafts();
+    });
+    expect(second).toBeNull();
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      d.resolve(batchResp(confirmResponse, [genDraft("item_001", "lamp"), genDraft("item_003", "book")]));
+      await first;
+    });
+    expect(result.current.listingStatus).toBe("ready");
+  });
+
+  test("regenerateListingDraft calls only the single-item endpoint and replaces only its target", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    const draftsBefore = result.current.listingResult.drafts;
+    const item001Before = draftsBefore.find((d) => d.item_id === "item_001");
+
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(confirmResponse, genDraft("item_003", "book", { title: "Regenerated book", attempts: 2 }))
+    );
+
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_003");
+    });
+
+    expect(listingApi.regenerateListing).toHaveBeenCalledTimes(1);
+    expect(listingApi.regenerateListing).toHaveBeenCalledWith({
+      runId: "run1",
+      analysis: result.current.analysis,
+      declutter: result.current.declutter,
+      overrides: [],
+      itemId: "item_003",
+    });
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1); // not called again
+    const after = result.current.listingResult.drafts;
+    expect(after.find((d) => d.item_id === "item_001")).toBe(item001Before); // same object identity
+    expect(after.find((d) => d.item_id === "item_003").title).toBe("Regenerated book");
+    expect(result.current.regeneratingItemId).toBeNull();
+    expect(result.current.regenerationError).toBeNull();
+  });
+
+  test("an initially unavailable draft is regenerable", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL, {
+      drafts: [unavailDraft("item_001", "lamp"), genDraft("item_003", "book")],
+    });
+    expect(result.current.listingDrafts[0].status).toBe("unavailable");
+
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(confirmResponse, genDraft("item_001", "lamp", { title: "Now available" }))
+    );
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_001");
+    });
+
+    expect(result.current.listingDrafts[0].status).toBe("generated");
+    expect(result.current.listingDrafts[0].edited_title).toBe("Now available");
+  });
+
+  test("a successful regeneration clears only the target's local edit; other edits are preserved", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "My edited lamp title" });
+      result.current.editListingDraft("item_003", { title: "My edited book title" });
+    });
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").is_edited).toBe(true);
+
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(confirmResponse, genDraft("item_003", "book", { title: "Fresh book" }))
+    );
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_003");
+    });
+
+    const d1 = result.current.listingDrafts.find((d) => d.item_id === "item_001");
+    const d3 = result.current.listingDrafts.find((d) => d.item_id === "item_003");
+    expect(d1.is_edited).toBe(true);
+    expect(d1.edited_title).toBe("My edited lamp title");
+    expect(d3.is_edited).toBe(false); // edit cleared by the regeneration
+    expect(d3.edited_title).toBe("Fresh book");
+  });
+
+  test("a failed regeneration keeps the prior draft and edit, and exposes an item-specific error", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_003", { description: "Edited description that is long enough." });
+    });
+    const draftsBefore = result.current.listingResult.drafts;
+
+    listingApi.regenerateListing.mockRejectedValue(new Error("regen boom"));
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_003");
+    });
+
+    expect(result.current.listingResult.drafts).toBe(draftsBefore); // untouched
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_003").edited_description).toBe(
+      "Edited description that is long enough."
+    );
+    expect(result.current.regeneratingItemId).toBeNull();
+    expect(result.current.regenerationError).toEqual({ itemId: "item_003", message: "regen boom" });
+    expect(result.current.listingStatus).toBe("ready");
+  });
+
+  test.each([
+    ["modelName", { model_name: "different-model" }],
+    ["promptVersion", { prompt_version: "v2" }],
+    ["maxAttempts", { max_attempts: 5 }],
+  ])(
+    "a single-response %s that disagrees with the batch provenance is rejected as contract drift",
+    async (_field, over) => {
+      const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+      act(() => {
+        result.current.editListingDraft("item_001", { title: "My edited lamp" });
+      });
+      const resultBefore = result.current.listingResult;
+      const draftsBefore = result.current.listingResult.drafts;
+      const item003Before = draftsBefore.find((d) => d.item_id === "item_003");
+
+      listingApi.regenerateListing.mockResolvedValue(
+        singleResp(confirmResponse, genDraft("item_003", "book", { title: "Should not land" }), over)
+      );
+      let out;
+      await act(async () => {
+        out = await result.current.regenerateListingDraft("item_003");
+      });
+
+      expect(out).toBeNull();
+      // batch result, drafts, and every provenance field are the originals
+      expect(result.current.listingResult).toBe(resultBefore);
+      expect(result.current.listingResult.drafts).toBe(draftsBefore);
+      expect(result.current.listingResult.drafts.find((d) => d.item_id === "item_003")).toBe(item003Before);
+      expect(result.current.listingResult.modelName).toBe("phi4-mini");
+      expect(result.current.listingResult.promptVersion).toBe("v1");
+      expect(result.current.listingResult.maxAttempts).toBe(3);
+      // local state untouched
+      expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").edited_title).toBe("My edited lamp");
+      expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").is_edited).toBe(true);
+      // item-specific error surfaced, nothing left regenerating
+      expect(result.current.regeneratingItemId).toBeNull();
+      expect(result.current.regenerationError).toEqual({
+        itemId: "item_003",
+        message: "Listing draft regeneration returned inconsistent provenance",
+      });
+      expect(result.current.listingStatus).toBe("ready");
+    }
+  );
+
+  test("provenance-drift rejection prevents the maxAttempts/attempts inconsistency a naive merge would produce", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    expect(result.current.listingResult.maxAttempts).toBe(3);
+
+    // The single response is self-consistent (attempts 4 <= its own
+    // max_attempts 5) but its max_attempts differs from the batch's 3.
+    // Merging its draft while keeping the batch max_attempts=3 would
+    // leave a draft claiming attempts=4 under a recorded ceiling of 3.
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(confirmResponse, genDraft("item_003", "book", { attempts: 4 }), { max_attempts: 5 })
+    );
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_003");
+    });
+
+    // Rejected: no draft merged, ceiling still 3, and no draft exceeds it.
+    expect(result.current.listingResult.maxAttempts).toBe(3);
+    const merged = result.current.listingResult.drafts.find((d) => d.item_id === "item_003");
+    expect(merged.attempts).toBe(1); // still the original batch draft
+    expect(result.current.listingResult.drafts.every((d) => d.attempts <= result.current.listingResult.maxAttempts)).toBe(
+      true
+    );
+    expect(result.current.regenerationError.itemId).toBe("item_003");
+  });
+
+  test("duplicate regeneration click is a no-op with no second request", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(d.promise);
+
+    let first;
+    act(() => {
+      first = result.current.regenerateListingDraft("item_003");
+    });
+    let second;
+    act(() => {
+      second = result.current.regenerateListingDraft("item_003");
+    });
+    expect(listingApi.regenerateListing).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      d.resolve(singleResp(confirmResponse, genDraft("item_003", "book")));
+      await Promise.all([first, second]);
+    });
+    expect(result.current.regeneratingItemId).toBeNull();
+  });
+
+  test("regenerateListingDraft throws synchronously for a non-eligible / unknown / pre-batch target, without a request", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    expect(() => result.current.regenerateListingDraft("item_999")).toThrow(/not a currently eligible/);
+    expect(() => result.current.regenerateListingDraft("item_002")).toThrow(/not a currently eligible/); // Keep item
+    expect(listingApi.regenerateListing).not.toHaveBeenCalled();
+
+    const { result: r2 } = await primeConfirmed(TWO_SELL); // ready never reached
+    expect(() => r2.current.regenerateListingDraft("item_001")).toThrow(/no current listing result/);
+  });
+
+  test("editing is local, tracks the server baseline, is never trimmed, and never calls the backend", async () => {
+    const { result } = await primeReady(TWO_SELL);
+
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "Brand new title" });
+    });
+    let d1 = result.current.listingDrafts.find((d) => d.item_id === "item_001");
+    expect(d1.title).toBe("Wooden chair"); // server value untouched
+    expect(d1.edited_title).toBe("Brand new title");
+    expect(d1.is_edited).toBe(true);
+
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "Wooden chair" }); // back to baseline
+    });
+    d1 = result.current.listingDrafts.find((d) => d.item_id === "item_001");
+    expect(d1.is_edited).toBe(false);
+
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "   spaced   " });
+    });
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").edited_title).toBe("   spaced   ");
+
+    expect(client.uploadImage).toHaveBeenCalledTimes(1);
+    expect(client.confirmDecisions).toHaveBeenCalledTimes(1);
+    expect(client.overrideItem).not.toHaveBeenCalled();
+  });
+
+  test("editListingDraft rejects an unavailable / unknown target and a non-string value synchronously", async () => {
+    const { result } = await primeReady(TWO_SELL, {
+      drafts: [unavailDraft("item_001", "lamp"), genDraft("item_003", "book")],
+    });
+    expect(() => result.current.editListingDraft("item_001", { title: "x" })).toThrow(/no draft text to edit/);
+    expect(() => result.current.editListingDraft("item_999", { title: "x" })).toThrow(/not a current listing draft/);
+    expect(() => result.current.editListingDraft("item_003", { title: 42 })).toThrow(/must be a string/);
+  });
+
+  test("discard is local presentation state only; restore reverses only that", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    const confirmationBefore = result.current.confirmation;
+    const overridesBefore = result.current.overridesById;
+
+    act(() => {
+      result.current.discardListingDraft("item_001");
+    });
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").is_discarded).toBe(true);
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_003").is_discarded).toBe(false);
+    expect(result.current.confirmation).toBe(confirmationBefore);
+    expect(result.current.overridesById).toBe(overridesBefore);
+    expect(client.confirmDecisions).toHaveBeenCalledTimes(1); // no extra backend call
+
+    act(() => {
+      result.current.restoreListingDraft("item_001");
+    });
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_001").is_discarded).toBe(false);
+  });
+
+  test.each([
+    ["a new upload", async (r) => { client.uploadImage.mockResolvedValue(listUpload(TWO_SELL)); await r.current.submit({ file: makeFile(), context: null }); }],
+    ["a decision override change", (r) => r.current.setDecisionOverride("item_001", "keep")],
+    ["an exclusion change", (r) => r.current.setItemExcluded("item_001", true)],
+    ["a fresh confirmation", async (r) => { await r.current.confirm(); }],
+    ["full reset", (r) => r.current.reset()],
+  ])("listing state is invalidated by %s", async (_label, trigger) => {
+    const { result } = await primeReady(TWO_SELL);
+    expect(result.current.listingStatus).toBe("ready");
+
+    await act(async () => {
+      await trigger(result);
+    });
+
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.listingDrafts).toEqual([]);
+    expect(result.current.regenerationError).toBeNull();
+  });
+
+  test("clearing a decision override invalidates listing state", async () => {
+    const { result } = await primeReady(TWO_SELL, {
+      beforeConfirm: (r) => r.current.setDecisionOverride("item_001", "sell"),
+      // spec already has item_001 ai:sell, so this override is a redundant restate; it still exists in overridesById
+    });
+    // re-confirm + re-batch so there IS a ready result AND an override to clear
+    expect(result.current.overridesById.item_001).toBeTruthy();
+
+    await act(async () => {
+      result.current.clearDecisionOverride("item_001");
+    });
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+  });
+
+  test("a label correction that actually starts invalidates listing state", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    const d = makeDeferred();
+    client.overrideItem.mockReturnValueOnce(d.promise);
+
+    act(() => {
+      result.current.correctLabel("item_001", "table lamp");
+    });
+    // invalidated the moment the correction starts, before it resolves
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+
+    await act(async () => {
+      d.reject(new Error("correction failed"));
+      await Promise.resolve();
+    });
+  });
+
+  test("a synchronously-rejected edit action does NOT invalidate listing state first", async () => {
+    const { result } = await primeReady(TWO_SELL);
+
+    expect(() => result.current.setDecisionOverride("item_999", "keep")).toThrow();
+    expect(() => result.current.correctLabel("item_999", "x")).toThrow();
+
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.listingResult).not.toBeNull();
+  });
+
+  test("a stale batch success is discarded after an invalidation", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.generateListings.mockReturnValueOnce(d.promise);
+
+    let p;
+    act(() => {
+      p = result.current.generateListingDrafts();
+    });
+    act(() => {
+      result.current.setDecisionOverride("item_001", "keep"); // invalidates listing mid-flight
+    });
+    await act(async () => {
+      d.resolve(batchResp(confirmResponse, [genDraft("item_001", "lamp"), genDraft("item_003", "book")]));
+      await p;
+    });
+
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.listingError).toBeNull();
+  });
+
+  test("a stale batch failure is discarded after an invalidation", async () => {
+    const { result, listingApi } = await primeConfirmed(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.generateListings.mockReturnValueOnce(d.promise);
+
+    let p;
+    act(() => {
+      p = result.current.generateListingDrafts();
+    });
+    act(() => {
+      result.current.reset();
+    });
+    await act(async () => {
+      d.reject(new Error("too late"));
+      await p;
+    });
+
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingError).toBeNull();
+  });
+
+  test("a stale regeneration SUCCESS makes no state changes", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    const okD = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(okD.promise);
+
+    let p1;
+    act(() => {
+      p1 = result.current.regenerateListingDraft("item_003");
+    });
+    act(() => {
+      result.current.setDecisionOverride("item_001", "keep"); // invalidate mid-regen
+    });
+    let out;
+    await act(async () => {
+      okD.resolve(singleResp(confirmResponse, genDraft("item_003", "book", { title: "stale" })));
+      out = await p1;
+    });
+    expect(out).toBeNull();
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.regeneratingItemId).toBeNull();
+    expect(result.current.regenerationError).toBeNull();
+  });
+
+  test("a stale regeneration REJECTION makes no state changes", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    const badD = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(badD.promise);
+
+    let p1;
+    act(() => {
+      p1 = result.current.regenerateListingDraft("item_003");
+    });
+    expect(result.current.regeneratingItemId).toBe("item_003");
+
+    act(() => {
+      result.current.setDecisionOverride("item_001", "keep"); // invalidate mid-regen
+    });
+    // post-invalidation snapshot
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.regeneratingItemId).toBeNull();
+
+    let out;
+    await act(async () => {
+      badD.reject(new Error("regen rejected after invalidation"));
+      out = await p1;
+    });
+
+    expect(out).toBeNull();
+    expect(result.current.regenerationError).toBeNull(); // NOT set by the stale rejection
+    expect(result.current.listingResult).toBeNull(); // NOT restored
+    expect(result.current.listingStatus).toBe("idle"); // unchanged
+    expect(result.current.regeneratingItemId).toBeNull();
+    expect(result.current.listingError).toBeNull();
+  });
+
+  test("reset while a batch is in flight resets everything", async () => {
+    const { result, listingApi } = await primeConfirmed(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.generateListings.mockReturnValueOnce(d.promise);
+
+    let p;
+    act(() => {
+      p = result.current.generateListingDrafts();
+    });
+    expect(result.current.listingStatus).toBe("generating");
+
+    act(() => {
+      result.current.reset();
+    });
+    await act(async () => {
+      d.resolve(batchResp(listConfirmResponse(TWO_SELL), [genDraft("item_001", "lamp"), genDraft("item_003", "book")]));
+      await p;
+    });
+
+    expect(result.current.status).toBe("idle");
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingResult).toBeNull();
+    expect(result.current.confirmation).toBeNull();
+  });
+
+  test("listing operations never touch upload / confirmation status or errors", async () => {
+    const { result, listingApi } = await primeConfirmed(TWO_SELL);
+    listingApi.generateListings.mockRejectedValue(new Error("listing down"));
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(result.current.status).toBe("ready"); // upload domain untouched
+    expect(result.current.error).toBeNull();
+    expect(result.current.confirmationStatus).toBe("confirmed"); // confirmation domain untouched
+    expect(result.current.confirmationError).toBeNull();
+  });
+
+  test("existing upload / confirmation behaviour is unchanged when listing is never used", async () => {
+    client.uploadImage.mockResolvedValue(listUpload(TWO_SELL));
+    client.confirmDecisions.mockResolvedValue(listConfirmResponse(TWO_SELL));
+    const { result } = renderHook(() => useDeclutterFlow());
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+    await act(async () => {
+      await result.current.confirm();
+    });
+    expect(result.current.status).toBe("ready");
+    expect(result.current.confirmationStatus).toBe("confirmed");
+    expect(result.current.confirmation.confirmedKeepIds).toEqual(["item_002"]);
+    // the default listing seam exists and is inert
+    expect(result.current.listingStatus).toBe("idle");
+    expect(typeof result.current.generateListingDrafts).toBe("function");
   });
 });

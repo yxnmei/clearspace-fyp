@@ -10,6 +10,8 @@ vi.mock("../api/client", () => ({
   overrideItem: vi.fn(),
   generateConfirmedReorganisation: vi.fn(),
   getImageGenHealth: vi.fn(),
+  generateListings: vi.fn(),
+  regenerateListing: vi.fn(),
 }));
 
 beforeEach(() => {

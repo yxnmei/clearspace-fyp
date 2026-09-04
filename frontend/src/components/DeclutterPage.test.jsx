@@ -11,6 +11,8 @@ vi.mock("../api/client", () => ({
   uploadImage: vi.fn(),
   confirmDecisions: vi.fn(),
   overrideItem: vi.fn(),
+  generateListings: vi.fn(),
+  regenerateListing: vi.fn(),
 }));
 
 function makeFile(name) {

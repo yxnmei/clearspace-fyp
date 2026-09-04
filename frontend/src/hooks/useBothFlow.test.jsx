@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useBothFlow } from "./useBothFlow";
 import * as client from "../api/client";
+// Real listing normalisers, injected through the listingApi seam (Stage 3).
+import { normaliseListingResponse, normaliseSingleListingResponse } from "../api/listingContract";
 
 // Only the frontend API functions are mocked, the real, validating
 // declutterContract/confirmationContract/reorganiseContract adapters run
@@ -13,6 +15,11 @@ vi.mock("../api/client", () => ({
   confirmDecisions: vi.fn(),
   overrideItem: vi.fn(),
   generateConfirmedReorganisation: vi.fn(),
+  // Present so the composed useDeclutterFlow's `import { generateListings,
+  // regenerateListing }` resolves; listing tests inject their own
+  // `listingApi` seam via useBothFlow({ listingApi }).
+  generateListings: vi.fn(),
+  regenerateListing: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -714,5 +721,243 @@ describe("useBothFlow, reset()", () => {
     expect(result.current.analysis).toBeNull();
     expect(result.current.declutter).toBeNull();
     expect(result.current.confirmation).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Marketplace listing domain (Stage 3): composed through useDeclutterFlow,
+// fully independent of Both's Reorganise generate domain.
+// ===========================================================================
+
+function genDraft(id, label, over = {}) {
+  return {
+    item_id: id,
+    effective_label: label,
+    status: "generated",
+    title: "Wooden chair",
+    description: "A used wooden chair in ordinary condition.",
+    unavailable_reason: null,
+    was_repaired: false,
+    attempts: 1,
+    ...over,
+  };
+}
+
+function batchResp(confirmResponse, drafts) {
+  const nonEmpty = drafts.length > 0;
+  return {
+    run_id: "run1",
+    confirmation: JSON.parse(JSON.stringify(confirmResponse)),
+    drafts,
+    model_name: nonEmpty ? "phi4-mini" : null,
+    prompt_version: nonEmpty ? "v1" : null,
+    max_attempts: nonEmpty ? 3 : null,
+  };
+}
+
+function makeListingApi(over = {}) {
+  return {
+    generateListings: vi.fn(),
+    regenerateListing: vi.fn(),
+    normaliseListingResponse,
+    normaliseSingleListingResponse,
+    ...over,
+  };
+}
+
+// item_001 Keep (feeds Reorganise), item_002 Sell "book" (feeds listing).
+const KEEP_AND_SELL = [
+  { itemId: "item_001", decision: "keep", label: "lamp" },
+  { itemId: "item_002", decision: "sell", label: "book" },
+];
+
+async function bothConfirmed({ decisions = KEEP_AND_SELL, listingApi = makeListingApi() } = {}) {
+  client.uploadImage.mockResolvedValue(makeBothUploadResponse({ decisions }));
+  const confirmed = decisions.map((d) => ({ itemId: d.itemId, aiDecision: d.decision, confirmedDecision: d.decision }));
+  const confirmResponse = makeConfirmResponse("run1", confirmed);
+  client.confirmDecisions.mockResolvedValue(confirmResponse);
+
+  const { result } = renderHook(() => useBothFlow({ listingApi }));
+  await act(async () => {
+    await result.current.submit({ file: makeFile(), context: null });
+  });
+  await act(async () => {
+    await result.current.confirm();
+  });
+  return { result, listingApi, confirmResponse, confirmed };
+}
+
+async function bothListingReady(opts = {}) {
+  const ctx = await bothConfirmed(opts);
+  ctx.listingApi.generateListings.mockResolvedValue(batchResp(ctx.confirmResponse, [genDraft("item_002", "book")]));
+  await act(async () => {
+    await ctx.result.current.generateListingDrafts();
+  });
+  return ctx;
+}
+
+async function bothReorganiseDone(ctx) {
+  client.generateConfirmedReorganisation.mockResolvedValue(
+    makeConfirmedGenerateResponse("run1", ctx.confirmed)
+  );
+  await act(async () => {
+    await ctx.result.current.generate();
+  });
+}
+
+describe("useBothFlow, listing domain composition + independence from Reorganise", () => {
+  test("the listingApi seam is passed through to the composed Declutter flow", async () => {
+    const { result, listingApi } = await bothListingReady();
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1);
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.listingDrafts.map((d) => d.item_id)).toEqual(["item_002"]);
+  });
+
+  test("a listing failure does not clear a completed Reorganise result", async () => {
+    const ctx = await bothConfirmed();
+    await bothReorganiseDone(ctx);
+    expect(ctx.result.current.generationStatus).toBe("done");
+    const reorgResult = ctx.result.current.generateResult;
+
+    ctx.listingApi.generateListings.mockRejectedValue(new Error("listing down"));
+    await act(async () => {
+      await ctx.result.current.generateListingDrafts();
+    });
+
+    expect(ctx.result.current.listingStatus).toBe("error");
+    expect(ctx.result.current.generationStatus).toBe("done"); // untouched
+    expect(ctx.result.current.generateResult).toBe(reorgResult);
+    expect(ctx.result.current.generateError).toBeNull();
+  });
+
+  test("a Reorganise failure does not clear listing state", async () => {
+    const ctx = await bothListingReady();
+    const listingResultBefore = ctx.result.current.listingResult;
+
+    client.generateConfirmedReorganisation.mockRejectedValue(new Error("colab down"));
+    await act(async () => {
+      await ctx.result.current.generate();
+    });
+
+    expect(ctx.result.current.generationStatus).toBe("error");
+    expect(ctx.result.current.listingStatus).toBe("ready"); // untouched
+    expect(ctx.result.current.listingResult).toBe(listingResultBefore);
+  });
+
+  test("listing activity does not claim or release the Reorganise slot", async () => {
+    const ctx = await bothConfirmed();
+
+    // A listing batch owns the LISTING slot...
+    const d = deferred();
+    ctx.listingApi.generateListings.mockReturnValueOnce(d.promise);
+    let listingPromise;
+    act(() => {
+      listingPromise = ctx.result.current.generateListingDrafts();
+    });
+    expect(ctx.result.current.listingStatus).toBe("generating");
+
+    // ...and a Reorganise generate can still be dispatched (its own slot).
+    client.generateConfirmedReorganisation.mockResolvedValue(makeConfirmedGenerateResponse("run1", ctx.confirmed));
+    await act(async () => {
+      await ctx.result.current.generate();
+    });
+    expect(ctx.result.current.generationStatus).toBe("done");
+
+    await act(async () => {
+      d.resolve(batchResp(ctx.confirmResponse, [genDraft("item_002", "book")]));
+      await listingPromise;
+    });
+    expect(ctx.result.current.listingStatus).toBe("ready");
+  });
+
+  test("Reorganise activity does not claim or release the listing slot", async () => {
+    const ctx = await bothConfirmed();
+
+    const rd = deferred();
+    client.generateConfirmedReorganisation.mockReturnValueOnce(rd.promise);
+    let genPromise;
+    act(() => {
+      genPromise = ctx.result.current.generate();
+    });
+    expect(ctx.result.current.generationStatus).toBe("generating");
+
+    // A listing batch is unaffected by the in-flight Reorganise generate.
+    ctx.listingApi.generateListings.mockResolvedValue(batchResp(ctx.confirmResponse, [genDraft("item_002", "book")]));
+    await act(async () => {
+      await ctx.result.current.generateListingDrafts();
+    });
+    expect(ctx.result.current.listingStatus).toBe("ready");
+
+    await act(async () => {
+      rd.resolve(makeConfirmedGenerateResponse("run1", ctx.confirmed));
+      await genPromise;
+    });
+    expect(ctx.result.current.generationStatus).toBe("done");
+  });
+
+  test("a decision change in Both invalidates BOTH domains via their own owners", async () => {
+    const ctx = await bothListingReady();
+    await bothReorganiseDone(ctx);
+    expect(ctx.result.current.listingStatus).toBe("ready");
+    expect(ctx.result.current.generationStatus).toBe("done");
+
+    await act(async () => {
+      ctx.result.current.setDecisionOverride("item_001", "sell");
+    });
+
+    expect(ctx.result.current.listingStatus).toBe("idle");
+    expect(ctx.result.current.listingResult).toBeNull();
+    expect(ctx.result.current.generationStatus).toBe("idle");
+    expect(ctx.result.current.generateResult).toBeNull();
+  });
+
+  test("reset invalidates both the listing and the Reorganise domains", async () => {
+    const ctx = await bothListingReady();
+    await bothReorganiseDone(ctx);
+
+    await act(async () => {
+      ctx.result.current.reset();
+    });
+
+    expect(ctx.result.current.listingStatus).toBe("idle");
+    expect(ctx.result.current.listingResult).toBeNull();
+    expect(ctx.result.current.generationStatus).toBe("idle");
+    expect(ctx.result.current.generateResult).toBeNull();
+    expect(ctx.result.current.confirmation).toBeNull();
+  });
+
+  test("listing regeneration in Both replaces only its target and never touches Reorganise", async () => {
+    const ctx = await bothListingReady();
+    await bothReorganiseDone(ctx);
+    const reorgResult = ctx.result.current.generateResult;
+
+    ctx.listingApi.regenerateListing.mockResolvedValue({
+      run_id: "run1",
+      confirmation: JSON.parse(JSON.stringify(ctx.confirmResponse)),
+      draft: genDraft("item_002", "book", { title: "Regenerated" }),
+      model_name: "phi4-mini",
+      prompt_version: "v1",
+      max_attempts: 3,
+    });
+
+    await act(async () => {
+      await ctx.result.current.regenerateListingDraft("item_002");
+    });
+
+    expect(ctx.result.current.listingDrafts[0].edited_title).toBe("Regenerated");
+    expect(ctx.result.current.generateResult).toBe(reorgResult); // Reorganise untouched
+    expect(ctx.result.current.generationStatus).toBe("done");
+  });
+
+  test("existing Both generate() behaviour is unchanged when listing is never used", async () => {
+    const { result } = await confirmedFlow();
+    client.generateConfirmedReorganisation.mockResolvedValue(
+      makeConfirmedGenerateResponse("run1", [{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }])
+    );
+    await act(async () => {
+      await result.current.generate();
+    });
+    expect(result.current.generationStatus).toBe("done");
+    expect(result.current.listingStatus).toBe("idle");
   });
 });

@@ -1,6 +1,13 @@
 import { useCallback, useRef, useState } from "react";
-import { confirmDecisions, overrideItem, uploadImage } from "../api/client";
+import {
+  confirmDecisions,
+  generateListings,
+  overrideItem,
+  regenerateListing,
+  uploadImage,
+} from "../api/client";
 import { normaliseDeclutterUploadResponse, normaliseOverrideResponse } from "../api/declutterContract";
+import { normaliseListingResponse, normaliseSingleListingResponse } from "../api/listingContract";
 import {
   buildReviewItems,
   clearDecisionOverride as clearDecisionOverrideEntry,
@@ -39,9 +46,25 @@ import {
 // never sets it, so it's simply null for ordinary Declutter use.
 const EMPTY_FLOW = { runId: null, analysis: null, declutter: null, items: [], context: null, inputImageSha256: null };
 
+// Default listing I/O surface. `listingApi` is a default-compatible
+// injection seam (Stage 3): every existing caller invokes useDeclutterFlow()
+// with no arguments and gets exactly this, so nothing about listing
+// behaviour depends on a test double being supplied. useBothFlow passes
+// its own `listingApi` straight through to the composed hook. All four
+// members are the committed Stage 2 functions; a fake replaces the
+// network round-trip (generateListings/regenerateListing) and may
+// optionally replace the pure normalisers too.
+const DEFAULT_LISTING_API = {
+  generateListings,
+  regenerateListing,
+  normaliseListingResponse,
+  normaliseSingleListingResponse,
+};
+
 export function useDeclutterFlow({
   uploadPath = "declutter",
   normaliseUploadResponse = normaliseDeclutterUploadResponse,
+  listingApi = DEFAULT_LISTING_API,
 } = {}) {
   const [status, setStatus] = useState("idle"); // idle | uploading | ready | error
   const [flow, setFlow] = useState(EMPTY_FLOW);
@@ -59,6 +82,36 @@ export function useDeclutterFlow({
   // onto every other item.
   const [correctingItemId, setCorrectingItemId] = useState(null);
   const [correctionError, setCorrectionError] = useState(null);
+
+  // Marketplace listing domain (Stage 3). Its own state, its own
+  // concurrency slot (listingGenerationRef + activeListingRef below),
+  // fully independent of the upload/correction and confirmation domains
+  // -- and, one layer up in useBothFlow, of the Reorganise generate
+  // slot. Nothing in this domain ever writes flow.*, overridesById,
+  // confirmation, or any Reorganise state.
+  //
+  //   listingStatus:        idle | generating | ready | error
+  //   listingResult:        the normalised batch result (or the
+  //                         contract's empty shape for zero eligible
+  //                         Sell items), or null
+  //   listingError:         batch-generation failure message, or null
+  //   regeneratingItemId:   the one item_id whose single regen is in
+  //                         flight, or null
+  //   regenerationError:    { itemId, message } for the item whose last
+  //                         regen failed, or null (never bleeds onto
+  //                         another card)
+  //   listingEditsById:     { [item_id]: { title, description } } -- the
+  //                         user's local edits, stored VERBATIM (never
+  //                         trimmed/coerced), keyed strictly by item_id
+  //   discardedListingIds:  { [item_id]: true } -- local presentation
+  //                         state only; not backend eligibility
+  const [listingStatus, setListingStatus] = useState("idle");
+  const [listingResult, setListingResult] = useState(null);
+  const [listingError, setListingError] = useState(null);
+  const [regeneratingItemId, setRegeneratingItemId] = useState(null);
+  const [regenerationError, setRegenerationError] = useState(null);
+  const [listingEditsById, setListingEditsById] = useState({});
+  const [discardedListingIds, setDiscardedListingIds] = useState({});
 
   // Two SEPARATE concurrency domains, not one shared counter, this used
   // to be a single flowGenerationRef covering upload/correctLabel/confirm
@@ -107,12 +160,43 @@ export function useDeclutterFlow({
   const flowGenerationRef = useRef(0);
   const confirmationGenerationRef = useRef(0);
 
+  // Listing concurrency domain: a monotonic counter ("is this listing
+  // response still current") plus an ownership token ("is a batch OR a
+  // single regen currently in flight"). Deliberately NOT any of the refs
+  // above, and (in useBothFlow) NOT that hook's generate slot. A duplicate
+  // batch/regen dispatch while the slot is owned is a state-neutral no-op;
+  // any invalidation releases the slot immediately rather than waiting
+  // for a stale request to settle, and the bumped counter guarantees a
+  // late stale success OR rejection can never repopulate listing state.
+  const listingGenerationRef = useRef(0);
+  const activeListingRef = useRef(null);
+
+  const invalidateListing = useCallback(() => {
+    listingGenerationRef.current += 1;
+    activeListingRef.current = null;
+    setListingStatus("idle");
+    setListingResult(null);
+    setListingError(null);
+    setRegeneratingItemId(null);
+    setRegenerationError(null);
+    setListingEditsById({});
+    setDiscardedListingIds({});
+  }, []);
+
   const invalidateConfirmation = useCallback(() => {
     confirmationGenerationRef.current += 1;
     setConfirmation(null);
     setConfirmationStatus("idle");
     setConfirmationError(null);
-  }, []);
+    // A dropped/changed confirmation makes any listing result stale --
+    // every caller that changes what a confirmation MEANT (submit,
+    // setDecisionOverride, setItemExcluded, clearDecisionOverride, a
+    // correction that actually starts, reset) routes through here, so
+    // listing invalidation is chained off it once. confirm() bumps
+    // confirmationGenerationRef directly and calls invalidateListing()
+    // itself.
+    invalidateListing();
+  }, [invalidateListing]);
 
   const submit = useCallback(
     async ({ file, context }) => {
@@ -334,6 +418,11 @@ export function useDeclutterFlow({
     // elsewhere invalidates this via invalidateConfirmation() (which
     // bumps this same ref), but never via flowGenerationRef.
     const generation = ++confirmationGenerationRef.current;
+    // Starting a fresh confirmation invalidates any prior listing result:
+    // the drafts it produced were keyed to the OLD confirmation. This is
+    // the one invalidation not chained off invalidateConfirmation()
+    // (which confirm() does not call).
+    invalidateListing();
     const runId = flow.runId;
     const declutterSnapshot = flow.declutter;
 
@@ -362,20 +451,341 @@ export function useDeclutterFlow({
       setConfirmationError(err instanceof Error ? err.message : "Decision confirmation failed");
       return null;
     }
-  }, [correctingItemId, flow.declutter, flow.runId, overridesById]);
+  }, [correctingItemId, flow.declutter, flow.runId, overridesById, invalidateListing]);
+
+  // -------------------------------------------------------------------------
+  // Marketplace listing actions (Stage 3). All snapshot the exact runId /
+  // analysis / declutter / confirmation / review items they will validate
+  // against BEFORE awaiting, so a later edit/correction/upload/reset can
+  // never retroactively change what a response is judged by.
+  // -------------------------------------------------------------------------
+
+  const generateListingDrafts = useCallback(async () => {
+    // Never auto-runs; a caller (Stage 4's explicit "Generate listing
+    // drafts" button) invokes this. Silent no-op unless there is a
+    // successful current confirmation and complete source data.
+    if (confirmationStatus !== "confirmed" || !confirmation) return null;
+    if (!flow.runId || !flow.analysis || !flow.declutter) return null;
+    // A batch or a regen already owns the slot: a duplicate click is a
+    // state-neutral no-op, no second request.
+    if (activeListingRef.current !== null) return null;
+
+    const generation = ++listingGenerationRef.current;
+
+    const runId = flow.runId;
+    const analysisSnapshot = flow.analysis;
+    const declutterSnapshot = flow.declutter;
+    const currentConfirmed = confirmation;
+    const currentReviewItems = buildReviewItems(flow.items, overridesById);
+
+    // Zero eligible Sell items: a valid completed empty result built to
+    // the contract's own empty shape, with NO network call.
+    const eligibleSellIds = currentConfirmed.confirmedDecisions
+      .filter((d) => d.confirmed_decision === "sell" && d.excluded === false)
+      .map((d) => d.item_id);
+    if (eligibleSellIds.length === 0) {
+      const emptyResult = {
+        runId,
+        confirmation: currentConfirmed,
+        eligibleItemIds: [],
+        drafts: [],
+        modelName: null,
+        promptVersion: null,
+        maxAttempts: null,
+      };
+      setListingResult(emptyResult);
+      setListingEditsById({});
+      setDiscardedListingIds({});
+      setListingError(null);
+      setRegenerationError(null);
+      setRegeneratingItemId(null);
+      setListingStatus("ready");
+      return emptyResult;
+    }
+
+    activeListingRef.current = generation; // claim the slot for the round-trip
+    const overrides = serialiseDecisionOverrides(overridesById, declutterSnapshot.expected_item_ids);
+
+    setListingStatus("generating");
+    setListingError(null);
+    setRegenerationError(null);
+
+    try {
+      const response = await listingApi.generateListings({
+        runId,
+        analysis: analysisSnapshot,
+        declutter: declutterSnapshot,
+        overrides,
+      });
+      const normalised = listingApi.normaliseListingResponse(response, {
+        runId,
+        sourceDeclutter: declutterSnapshot,
+        currentConfirmed,
+        currentReviewItems,
+      });
+      if (listingGenerationRef.current !== generation) {
+        return null; // stale success: something newer already invalidated listing
+      }
+      setListingResult(normalised);
+      setListingEditsById({});
+      setDiscardedListingIds({});
+      setListingStatus("ready");
+      return normalised;
+    } catch (err) {
+      if (listingGenerationRef.current !== generation) {
+        return null; // stale rejection discarded too -- no state change
+      }
+      // confirmation / overridesById / flow.* are deliberately untouched:
+      // a batch failure must never disturb confirmed Declutter work.
+      setListingError(err instanceof Error ? err.message : "Listing draft generation failed");
+      setListingStatus("error");
+      return null;
+    } finally {
+      if (activeListingRef.current === generation) activeListingRef.current = null;
+    }
+  }, [
+    confirmationStatus,
+    confirmation,
+    flow.runId,
+    flow.analysis,
+    flow.declutter,
+    flow.items,
+    overridesById,
+    listingApi,
+  ]);
+
+  const performListingRegeneration = useCallback(
+    async (itemId) => {
+      // A batch or another regen owns the slot: no duplicate dispatch.
+      // A transient precondition, handled as a silent no-op (not a throw)
+      // like performCorrection's cross-item block.
+      if (activeListingRef.current !== null) return null;
+
+      const generation = ++listingGenerationRef.current;
+      activeListingRef.current = generation;
+
+      const runId = flow.runId;
+      const analysisSnapshot = flow.analysis;
+      const declutterSnapshot = flow.declutter;
+      const currentConfirmed = confirmation;
+      const currentReviewItems = buildReviewItems(flow.items, overridesById);
+      const overrides = serialiseDecisionOverrides(overridesById, declutterSnapshot.expected_item_ids);
+      // The batch result this regen will merge one draft into. Its
+      // aggregate provenance (modelName/promptVersion/maxAttempts)
+      // describes every OTHER draft, so the single response MUST report
+      // exactly the same values -- otherwise the merged result is
+      // internally inconsistent (e.g. maxAttempts 3 alongside a draft
+      // whose attempts is 4).
+      const resultSnapshot = listingResult;
+
+      setRegeneratingItemId(itemId);
+      setRegenerationError(null);
+
+      try {
+        const response = await listingApi.regenerateListing({
+          runId,
+          analysis: analysisSnapshot,
+          declutter: declutterSnapshot,
+          overrides,
+          itemId,
+        });
+        const normalised = listingApi.normaliseSingleListingResponse(response, {
+          runId,
+          sourceDeclutter: declutterSnapshot,
+          currentConfirmed,
+          currentReviewItems,
+          itemId,
+        });
+        if (listingGenerationRef.current !== generation) {
+          return null; // stale success: NO state change at all
+        }
+        // Aggregate-provenance invariant: the single response's
+        // modelName / promptVersion / maxAttempts must EXACTLY equal the
+        // batch result's. A difference is contract drift -- reject it
+        // exactly like a regen failure: keep the prior draft, edits,
+        // discards, batch result and confirmation untouched, and surface
+        // the item-specific error. It is NOT fixed by overwriting the
+        // batch-level provenance from the single response, which would
+        // mis-attribute the new provenance to every untouched draft.
+        if (
+          !resultSnapshot ||
+          normalised.modelName !== resultSnapshot.modelName ||
+          normalised.promptVersion !== resultSnapshot.promptVersion ||
+          normalised.maxAttempts !== resultSnapshot.maxAttempts
+        ) {
+          setRegeneratingItemId(null);
+          setRegenerationError({
+            itemId,
+            message: "Listing draft regeneration returned inconsistent provenance",
+          });
+          return null;
+        }
+        // Replace ONLY the target draft; every other draft keeps its
+        // exact object identity. Batch-level provenance
+        // (confirmation/eligibleItemIds/model/prompt/max_attempts) is
+        // now verified equal above, so prev's references stay.
+        setListingResult((prev) =>
+          prev
+            ? { ...prev, drafts: prev.drafts.map((d) => (d.item_id === itemId ? normalised.draft : d)) }
+            : prev
+        );
+        // The fresh server draft supersedes THIS item's local edit and
+        // discard state (and only this item's).
+        setListingEditsById((prev) => {
+          if (!(itemId in prev)) return prev;
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setDiscardedListingIds((prev) => {
+          if (!(itemId in prev)) return prev;
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setRegeneratingItemId(null);
+        setRegenerationError(null);
+        return normalised;
+      } catch (err) {
+        if (listingGenerationRef.current !== generation) {
+          return null; // stale rejection: NO state change
+        }
+        // listingResult / edits / discards are left EXACTLY as they were:
+        // a failed regen must keep the prior generated-or-edited draft
+        // and every unrelated piece of state.
+        setRegeneratingItemId(null);
+        setRegenerationError({
+          itemId,
+          message: err instanceof Error ? err.message : "Listing draft regeneration failed",
+        });
+        return null;
+      } finally {
+        if (activeListingRef.current === generation) activeListingRef.current = null;
+      }
+    },
+    [flow.runId, flow.analysis, flow.declutter, flow.items, confirmation, overridesById, listingApi, listingResult]
+  );
+
+  const regenerateListingDraft = useCallback(
+    (itemId) => {
+      // Synchronous caller-input validation, thrown -- matching
+      // setDecisionOverride / correctLabel's "this is not a legitimate
+      // target" convention. The "slot is busy" case is a silent no-op
+      // inside performListingRegeneration instead.
+      if (listingStatus !== "ready" || !listingResult) {
+        throw new Error("regenerateListingDraft: there is no current listing result to regenerate from");
+      }
+      if (typeof itemId !== "string" || !listingResult.eligibleItemIds.includes(itemId)) {
+        throw new Error(
+          `regenerateListingDraft: ${JSON.stringify(itemId)} is not a currently eligible listing draft`
+        );
+      }
+      return performListingRegeneration(itemId);
+    },
+    [listingStatus, listingResult, performListingRegeneration]
+  );
+
+  const editListingDraft = useCallback(
+    (itemId, edit = {}) => {
+      if (listingStatus !== "ready" || !listingResult) {
+        throw new Error("editListingDraft: there is no current listing result to edit");
+      }
+      const draft = listingResult.drafts.find((d) => d.item_id === itemId);
+      if (!draft) {
+        throw new Error(`editListingDraft: ${JSON.stringify(itemId)} is not a current listing draft`);
+      }
+      if (draft.status !== "generated") {
+        throw new Error(`editListingDraft: ${JSON.stringify(itemId)} has no draft text to edit`);
+      }
+      const { title, description } = edit;
+      if (title !== undefined && typeof title !== "string") {
+        throw new Error("editListingDraft: title must be a string");
+      }
+      if (description !== undefined && typeof description !== "string") {
+        throw new Error("editListingDraft: description must be a string");
+      }
+      if (title === undefined && description === undefined) {
+        throw new Error("editListingDraft: nothing to edit");
+      }
+      // Frontend only -- never a backend call. Stored VERBATIM: the
+      // intermediate string states a controlled input produces are kept
+      // exactly, never trimmed or coerced.
+      setListingEditsById((prev) => {
+        const base = prev[itemId] ?? { title: draft.title, description: draft.description };
+        return {
+          ...prev,
+          [itemId]: {
+            title: title === undefined ? base.title : title,
+            description: description === undefined ? base.description : description,
+          },
+        };
+      });
+    },
+    [listingStatus, listingResult]
+  );
+
+  const discardListingDraft = useCallback(
+    (itemId) => {
+      if (listingStatus !== "ready" || !listingResult) {
+        throw new Error("discardListingDraft: there is no current listing result");
+      }
+      if (!listingResult.drafts.some((d) => d.item_id === itemId)) {
+        throw new Error(`discardListingDraft: ${JSON.stringify(itemId)} is not a current listing draft`);
+      }
+      // Local presentation state ONLY: no API call, no confirmation
+      // change, no decision/exclusion change, no other draft touched.
+      setDiscardedListingIds((prev) => (prev[itemId] ? prev : { ...prev, [itemId]: true }));
+    },
+    [listingStatus, listingResult]
+  );
+
+  const restoreListingDraft = useCallback(
+    (itemId) => {
+      if (listingStatus !== "ready" || !listingResult) {
+        throw new Error("restoreListingDraft: there is no current listing result");
+      }
+      if (!listingResult.drafts.some((d) => d.item_id === itemId)) {
+        throw new Error(`restoreListingDraft: ${JSON.stringify(itemId)} is not a current listing draft`);
+      }
+      // Reverses ONLY the local discarded flag.
+      setDiscardedListingIds((prev) => {
+        if (!prev[itemId]) return prev;
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+    },
+    [listingStatus, listingResult]
+  );
+
+  // Ordered draft collection with the local edit/discard overlay applied.
+  // Order is exactly listingResult.drafts (confirmation / eligible-Sell
+  // order). Identity stays item_id; server title/description are kept
+  // alongside the editable values so a consumer can tell them apart.
+  const listingDrafts = (listingResult?.drafts ?? []).map((draft) => {
+    const edit = listingEditsById[draft.item_id];
+    const serverTitle = draft.title ?? "";
+    const serverDescription = draft.description ?? "";
+    return {
+      ...draft,
+      edited_title: edit ? edit.title : serverTitle,
+      edited_description: edit ? edit.description : serverDescription,
+      is_edited: Boolean(edit) && (edit.title !== serverTitle || edit.description !== serverDescription),
+      is_discarded: Boolean(discardedListingIds[draft.item_id]),
+    };
+  });
 
   // Deterministic full reset (R6, required correction 5): invalidates
-  // BOTH concurrency domains (any in-flight upload/correction AND any
-  // in-flight/completed confirmation) via the exact same refs
-  // submit()/invalidateConfirmation() already use, then clears every
-  // piece of state back to its initial value, matching
-  // useReorganiseFlow's own reset() convention exactly. No existing
-  // caller invokes this today (DeclutterPage has no "start over"
-  // concept), so this is purely additive; useBothFlow (R6) is the first
-  // caller, composing this alongside its own generation-state reset.
+  // ALL concurrency domains (any in-flight upload/correction, any
+  // in-flight/completed confirmation, AND -- via invalidateConfirmation
+  // chaining to invalidateListing -- any in-flight/completed listing
+  // batch or regen) via the exact same refs the individual operations
+  // already use, then clears every piece of state back to its initial
+  // value, matching useReorganiseFlow's own reset() convention exactly.
+  // useBothFlow composes this alongside its own generation-state reset.
   const reset = useCallback(() => {
     flowGenerationRef.current += 1; // invalidates any in-flight upload/correction write
-    invalidateConfirmation(); // separate ref, invalidates any in-flight/completed confirm()
+    invalidateConfirmation(); // separate refs; also chains to invalidateListing()
     setStatus("idle");
     setError(null);
     setFlow(EMPTY_FLOW);
@@ -406,5 +816,20 @@ export function useDeclutterFlow({
     correctingItemId,
     correctionError,
     correctLabel,
+    // Marketplace listing domain (Stage 3)
+    listingStatus,
+    listingResult,
+    listingDrafts,
+    listingError,
+    regeneratingItemId,
+    regenerationError,
+    listingEditsById,
+    discardedListingIds,
+    generateListingDrafts,
+    regenerateListingDraft,
+    editListingDraft,
+    discardListingDraft,
+    restoreListingDraft,
+    resetListing: invalidateListing,
   };
 }

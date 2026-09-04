@@ -11,6 +11,8 @@ vi.mock("./api/client", () => ({
   getImageGenHealth: vi.fn(),
   confirmDecisions: vi.fn(),
   overrideItem: vi.fn(),
+  generateListings: vi.fn(),
+  regenerateListing: vi.fn(),
 }));
 
 beforeEach(() => {
