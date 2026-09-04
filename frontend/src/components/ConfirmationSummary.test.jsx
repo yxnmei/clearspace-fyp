@@ -126,7 +126,7 @@ describe("ConfirmationSummary", () => {
     expect(screen.getByText(/no items were confirmed as keep/i)).toBeInTheDocument();
   });
 
-  test("without nextStepNote, the default 'future Reorganise stage' wording is shown", () => {
+  test("without nextStepNote, the standalone-Declutter wording is shown and promises no Reorganise stage", () => {
     const confirmation = {
       runId: "run1",
       confirmedDecisions: [makeConfirmedDecision()],
@@ -136,7 +136,8 @@ describe("ConfirmationSummary", () => {
       response: {},
     };
     render(<ConfirmationSummary confirmation={confirmation} reviewItems={[]} />);
-    expect(screen.getByText(/future reorganise stage/i)).toBeInTheDocument();
+    expect(screen.getByText(/these are the items you confirmed to keep/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reorganise/i)).not.toBeInTheDocument();
   });
 
   test("a configured nextStepNote replaces the default wording (Both)", () => {
@@ -156,7 +157,7 @@ describe("ConfirmationSummary", () => {
       />
     );
     expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
-    expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/these are the items you confirmed to keep/i)).not.toBeInTheDocument();
   });
 
   test("success-toned panel keeps the run status line and every count / evidence field", () => {

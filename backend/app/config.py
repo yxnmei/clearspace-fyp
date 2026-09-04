@@ -77,6 +77,39 @@ class Settings(BaseSettings):
     # including markdown fences, while still stopping a runaway.
     reorganise_llm_num_predict: int = 1536
 
+    # --- marketplace listing drafts (V1 generation bounds) ---
+    # Scoped to app/models/listing_llm.py's single per-item chat() call
+    # and app/services/listing_service.py's per-item retry budget, and
+    # nothing else. Deliberately NOT shared with Declutter classification
+    # or the Reorganise research planner: listing generation is a
+    # distinct, still-provisional boundary whose model and prompt choice
+    # stay unverified until a dedicated listing evaluation exists, so its
+    # bounds must be tunable without touching either of those.
+    #
+    # 60s: a per-call ceiling for one short "title + description for one
+    # item" response. The installed ollama client's own default request
+    # timeout is None (unbounded) — this exists so one stalled call
+    # cannot hang a /listings request indefinitely.
+    listing_llm_timeout_s: float = 60.0
+    # 512 tokens: a title plus a two/three-sentence description is well
+    # under this; the cap only stops a runaway generation.
+    listing_llm_num_predict: int = 512
+    # Total attempts per eligible item — the first try plus up to two
+    # retries. One /listings request with E eligible Sell items makes at
+    # most E * listing_llm_max_attempts model calls, all sequential; a
+    # request with zero eligible items makes none. Bounded to 1..5.
+    listing_llm_max_attempts: int = 3
+    # PROVISIONAL. The default deliberately mirrors Declutter's
+    # llm_model_name / llm_temperature purely for local convenience while
+    # listing generation has no evaluation — it is NOT evidence that the
+    # Declutter classification model or a 0.2 temperature is right for
+    # writing a marketplace listing. A listing evaluation must set these;
+    # until then they are their own knobs so tuning one never disturbs
+    # Declutter. Model name: a non-blank string. Temperature: a real,
+    # finite number in [0.0, 2.0].
+    listing_llm_model_name: str = "phi4-mini"
+    listing_llm_temperature: float = 0.2
+
     # --- speech-to-text ---
     # Exactly "base": this is the only size the project evaluates or
     # ships, and the value is handed to loaders that treat it as a path
@@ -204,6 +237,121 @@ class Settings(BaseSettings):
             )
         if v <= 0:
             raise ValueError(f"reorganise_llm_num_predict must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("listing_llm_timeout_s", mode="before")
+    @classmethod
+    def _check_listing_timeout(cls, v: object) -> object:
+        """Must resolve to a real, finite, strictly-positive number. Same
+        discipline and reasoning as _check_reorganise_timeout above — a
+        numeric string is accepted (that is how pydantic-settings delivers
+        an env var), bool is rejected (an int subclass), and nan/inf are
+        rejected because an infinite timeout is the unboundedness this
+        setting exists to prevent."""
+        if isinstance(v, bool):
+            raise ValueError("listing_llm_timeout_s must be a real number, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("listing_llm_timeout_s must not be blank")
+            try:
+                v = float(text)
+            except ValueError as exc:
+                raise ValueError(f"listing_llm_timeout_s is not a valid number: {v!r}") from exc
+        elif not isinstance(v, (int, float)):
+            raise ValueError(f"listing_llm_timeout_s must be a real number, not {type(v).__name__}")
+        if not math.isfinite(v):
+            raise ValueError("listing_llm_timeout_s must be finite — an infinite timeout is unbounded")
+        if v <= 0:
+            raise ValueError(f"listing_llm_timeout_s must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("listing_llm_num_predict", mode="before")
+    @classmethod
+    def _check_listing_num_predict(cls, v: object) -> object:
+        """A genuine positive WHOLE number. Same discipline as
+        _check_reorganise_num_predict — digit string accepted, bool and
+        float rejected."""
+        if isinstance(v, bool):
+            raise ValueError("listing_llm_num_predict must be an integer, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("listing_llm_num_predict must not be blank")
+            try:
+                v = int(text)
+            except ValueError as exc:
+                raise ValueError(f"listing_llm_num_predict must be a whole number, got {v!r}") from exc
+        elif not isinstance(v, int):
+            raise ValueError(f"listing_llm_num_predict must be an integer, not {type(v).__name__}")
+        if v <= 0:
+            raise ValueError(f"listing_llm_num_predict must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("listing_llm_max_attempts", mode="before")
+    @classmethod
+    def _check_listing_max_attempts(cls, v: object) -> object:
+        """A whole number in 1..5. The lower bound guarantees at least one
+        real attempt per eligible item; the upper bound keeps the
+        worst-case model work for one /listings request bounded and
+        predictable (E eligible items => at most E * this many calls).
+        bool and float are rejected for the same reasons as the other
+        whole-number limits above."""
+        if isinstance(v, bool):
+            raise ValueError("listing_llm_max_attempts must be an integer, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("listing_llm_max_attempts must not be blank")
+            try:
+                v = int(text)
+            except ValueError as exc:
+                raise ValueError(f"listing_llm_max_attempts must be a whole number, got {v!r}") from exc
+        elif not isinstance(v, int):
+            raise ValueError(f"listing_llm_max_attempts must be an integer, not {type(v).__name__}")
+        if not (1 <= v <= 5):
+            raise ValueError(f"listing_llm_max_attempts must be between 1 and 5 inclusive, got {v!r}")
+        return v
+
+    @field_validator("listing_llm_model_name", mode="before")
+    @classmethod
+    def _check_listing_model_name(cls, v: object) -> object:
+        """A non-blank string. Not an allowlist — the model name is
+        provisional and a listing evaluation may name any locally
+        installed model — but a blank value would silently fall through
+        to whatever the model library defaults to, so it is rejected.
+        bool is rejected before the str check (it is not an int subclass
+        issue here, but a non-string is still a config mistake)."""
+        if isinstance(v, bool) or not isinstance(v, str):
+            raise ValueError(f"listing_llm_model_name must be a string, not {type(v).__name__}")
+        if not v.strip():
+            raise ValueError("listing_llm_model_name must not be blank")
+        return v.strip()
+
+    @field_validator("listing_llm_temperature", mode="before")
+    @classmethod
+    def _check_listing_temperature(cls, v: object) -> object:
+        """A real, finite number in [0.0, 2.0]. 0.0 is allowed (greedy
+        decoding). Same discipline as the timeout validator above: a
+        numeric string is parsed (that is how pydantic-settings delivers
+        an env var), bool is rejected (an int subclass — True would
+        become temperature 1.0), and nan/inf are rejected."""
+        if isinstance(v, bool):
+            raise ValueError("listing_llm_temperature must be a real number, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("listing_llm_temperature must not be blank")
+            try:
+                v = float(text)
+            except ValueError as exc:
+                raise ValueError(f"listing_llm_temperature is not a valid number: {v!r}") from exc
+        elif not isinstance(v, (int, float)):
+            raise ValueError(f"listing_llm_temperature must be a real number, not {type(v).__name__}")
+        if not math.isfinite(v):
+            raise ValueError("listing_llm_temperature must be finite")
+        if not (0.0 <= v <= 2.0):
+            raise ValueError(f"listing_llm_temperature must be between 0.0 and 2.0 inclusive, got {v!r}")
         return v
 
     @field_validator("stt_max_upload_bytes", "stt_max_audio_seconds", mode="before")

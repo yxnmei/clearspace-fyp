@@ -554,7 +554,7 @@ describe("DeclutterReview, confirmation handoff copy", () => {
   test("without the prop, ConfirmationSummary's own default wording is shown unchanged", () => {
     const props = baseProps({ confirmation: makeConfirmation() });
     render(<DeclutterReview {...props} />);
-    expect(screen.getByText(/future reorganise stage/i)).toBeInTheDocument();
+    expect(screen.getByText(/these are the items you confirmed to keep/i)).toBeInTheDocument();
   });
 
   test("a configured confirmationNextStepNote is forwarded to ConfirmationSummary", () => {
@@ -564,7 +564,7 @@ describe("DeclutterReview, confirmation handoff copy", () => {
     });
     render(<DeclutterReview {...props} />);
     expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
-    expect(screen.queryByText(/future reorganise stage/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/these are the items you confirmed to keep/i)).not.toBeInTheDocument();
   });
 });
 

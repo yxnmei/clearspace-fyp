@@ -561,3 +561,89 @@ def test_model_size_rejects_a_path_from_the_environment(monkeypatch):
     monkeypatch.setenv("WHISPER_MODEL_SIZE", "/weights/anything.pt")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+# --- listing generation bounds (V1) -----------------------------------
+
+
+def test_listing_bounds_defaults():
+    settings = Settings()
+    assert settings.listing_llm_timeout_s == 60.0
+    assert settings.listing_llm_num_predict == 512
+    assert settings.listing_llm_max_attempts == 3
+    # provisional convenience defaults — mirror Declutter's values, but
+    # are their own knobs (see config.py's comment / this milestone).
+    assert settings.listing_llm_model_name == "phi4-mini"
+    assert settings.listing_llm_temperature == 0.2
+
+
+@pytest.mark.parametrize("good", ["phi4-mini", "qwen3:8b", "  spaced-name  "])
+def test_listing_model_name_accepts_non_blank_strings_trimmed(good):
+    assert Settings(listing_llm_model_name=good).listing_llm_model_name == good.strip()
+
+
+@pytest.mark.parametrize("bad", ["", "   ", None, 7, True, []])
+def test_listing_model_name_rejects_blank_or_non_string(bad):
+    with pytest.raises(ValidationError):
+        Settings(listing_llm_model_name=bad)
+
+
+@pytest.mark.parametrize("good", [0, 0.0, 0.2, 1, 2.0, "0.7"])
+def test_listing_temperature_accepts_finite_zero_to_two(good):
+    assert Settings(listing_llm_temperature=good).listing_llm_temperature == float(good)
+
+
+@pytest.mark.parametrize(
+    "bad", [-0.1, 2.1, float("inf"), float("nan"), True, False, None, "", "warm", []]
+)
+def test_listing_temperature_rejects_out_of_range_or_non_number(bad):
+    with pytest.raises(ValidationError):
+        Settings(listing_llm_temperature=bad)
+
+
+@pytest.mark.parametrize("good", [1, 5.0, 60.0, 600])
+def test_listing_timeout_accepts_finite_positive(good):
+    assert Settings(listing_llm_timeout_s=good).listing_llm_timeout_s == good
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), True, False, None, "", "slow", []])
+def test_listing_timeout_rejects_bad_values(bad):
+    with pytest.raises(ValidationError):
+        Settings(listing_llm_timeout_s=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, False, 512.0, "512.0", "abc", "", None])
+def test_listing_num_predict_rejects_bad_values(bad):
+    with pytest.raises(ValidationError):
+        Settings(listing_llm_num_predict=bad)
+
+
+@pytest.mark.parametrize("good", [1, 2, 3, 5, "4"])
+def test_listing_max_attempts_accepts_1_to_5(good):
+    assert Settings(listing_llm_max_attempts=good).listing_llm_max_attempts == int(good)
+
+
+@pytest.mark.parametrize("bad", [0, 6, 100, -1, True, False, 3.0, "3.0", "", None])
+def test_listing_max_attempts_rejects_out_of_range_or_non_integer(bad):
+    with pytest.raises(ValidationError):
+        Settings(listing_llm_max_attempts=bad)
+
+
+def test_listing_bounds_are_their_own_settings_not_shared_with_declutter_or_reorganise():
+    names = set(Settings.model_fields)
+    assert {
+        "listing_llm_timeout_s",
+        "listing_llm_num_predict",
+        "listing_llm_max_attempts",
+        "listing_llm_model_name",
+        "listing_llm_temperature",
+    } <= names
+    # not folded onto the Declutter or Reorganise knobs
+    assert "llm_timeout_s" not in names
+
+
+def test_listing_model_and_temperature_are_independent_of_declutter():
+    """Changing the Declutter knobs must not move the listing ones."""
+    settings = Settings(llm_model_name="declutter-model", llm_temperature=1.5)
+    assert settings.listing_llm_model_name == "phi4-mini"
+    assert settings.listing_llm_temperature == 0.2

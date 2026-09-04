@@ -143,6 +143,12 @@ from app.services.declutter_service import (
     reclassify_item,
     run_declutter,
 )
+from app.services.listing_service import (
+    ListingEligibilityInputError,
+    ListingGenerationResult,
+    LLMListingGenerator,
+    generate_listing_drafts,
+)
 from app.services.reorganise_pipeline_service import (
     ImageGenerator,
     ImageUnavailableReason,
@@ -1153,3 +1159,99 @@ def image_gen_health(
     defect introduced here.
     """
     return ImageGenHealthResponse(available=health_checker())
+
+
+# --- /listings (marketplace listing drafts, V1) ---------------------------
+
+# Lazy two-level loader, same shape as get_llm_classifier_provider: the
+# Depends() below returns a cheap zero-arg loader, never the resolved
+# callable, so importing app.api.routes / app.main never imports
+# app.models.listing_llm (and it, in turn, never imports `ollama` on
+# import — see its docstring). The handler calls the loader only after a
+# valid request with at least one eligible Sell item; a zero-eligible
+# request resolves the loader but generate_listing_drafts() never invokes
+# the callable, so no model work happens.
+LLMListingGeneratorLoader = Callable[[], LLMListingGenerator]
+
+
+def _load_listing_generator() -> LLMListingGenerator:
+    from app.models.listing_llm import generate_listing_draft_once
+
+    return generate_listing_draft_once
+
+
+def get_listing_generator_provider() -> LLMListingGeneratorLoader:
+    return _load_listing_generator
+
+
+class ListingRequest(BaseModel):
+    """Request body for POST /listings — JSON.
+
+    extra="forbid": a client cannot smuggle in a confirmation, an
+    eligible/Sell id list, image data, user context, a model selection,
+    or any generated listing field. The eligible set and the
+    authoritative confirmation are BOTH derived server-side from
+    (declutter, overrides) inside generate_listing_drafts(); nothing
+    about them is accepted here. `declutter` is the frontend's
+    round-tripped DeclutterResult from /upload — pydantic revalidates it,
+    and its is_complete computed field cannot be spoofed by raw JSON.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: NonEmptyStr
+    analysis: AnalysisResult
+    declutter: DeclutterResult
+    overrides: list[DecisionOverride] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_run_id_consistency(self) -> "ListingRequest":
+        if self.run_id != self.analysis.run_id or self.run_id != self.declutter.run_id:
+            raise ValueError("run_id must match both analysis.run_id and declutter.run_id")
+        return self
+
+
+@router.post("/listings", response_model=ListingGenerationResult)
+def create_listings(
+    request: ListingRequest,
+    listing_generator_provider: LLMListingGeneratorLoader = Depends(get_listing_generator_provider),
+) -> ListingGenerationResult:
+    """
+    Synchronous handler, deliberately — the listing model calls block on
+    real Ollama HTTP, and FastAPI's threadpool keeps that off the event
+    loop with no manual thread management here.
+
+    Thin wrapper: parse/validate the request, resolve the generator
+    loader, call generate_listing_drafts() once, return its raw domain
+    result (ListingGenerationResult, nesting the server-derived
+    ConfirmationResult and one ListingDraft per eligible Sell item).
+
+    Per-item unavailability is NOT an error — a response with some
+    `unavailable` drafts is a normal 200. Only malformed input maps to a
+    4xx. Signed source proof is deferred (see
+    app/services/listing_service.py): a run_id/analysis/declutter/
+    overrides bundle that is internally consistent but fabricated cannot
+    be detected here.
+    """
+    listing_generator = listing_generator_provider()
+
+    try:
+        return generate_listing_drafts(
+            run_id=request.run_id,
+            analysis=request.analysis,
+            declutter=request.declutter,
+            overrides=request.overrides,
+            listing_generator=listing_generator,
+        )
+    except IncompleteDeclutterError as exc:
+        raise HTTPException(
+            status_code=409, detail="all Declutter items must be resolved before listing"
+        ) from exc
+    except ConfirmationInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid decision overrides") from exc
+    except ListingEligibilityInputError as exc:
+        raise HTTPException(status_code=422, detail="invalid listing request") from exc
+    # Any other exception (a genuine programming error, or an unexpected
+    # exception a listing model call raised that the service deliberately
+    # does not catch) is left uncaught — FastAPI's default 500, not a
+    # disguised success, matching every other handler in this module.

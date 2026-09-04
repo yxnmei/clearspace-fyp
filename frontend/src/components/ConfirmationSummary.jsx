@@ -7,9 +7,11 @@ import { cn } from "../lib/cn";
 // can show a clean_label/position next to each confirmed Keep item.
 //
 // nextStepNote: optional. Defaults to the standalone-Declutter wording
-// below (DeclutterReview does not pass it there). Both passes its own
-// note, since for Both, Reorganise is the immediate next step of the
-// same flow rather than a separate workflow the user might start later.
+// below (DeclutterReview does not pass it there). Standalone Declutter
+// cannot continue into Reorganise, so the default note only states what
+// was confirmed and promises nothing about a later stage. Both passes
+// its own note, since for Both, Reorganise is the immediate next step of
+// the same flow rather than a separate workflow the user might start later.
 function Count({ icon: Icon, label, value }) {
   return (
     <div className="flex items-center gap-2 rounded-control border border-success/30 bg-surface px-3 py-2">
@@ -25,7 +27,7 @@ function Count({ icon: Icon, label, value }) {
 export default function ConfirmationSummary({
   confirmation,
   reviewItems,
-  nextStepNote = "Only these confirmed Keep items will be available to the future Reorganise stage.",
+  nextStepNote = "These are the items you confirmed to keep.",
 }) {
   const counts = { keep: 0, sell: 0, donate: 0, discard: 0 };
   for (const decision of confirmation.confirmedDecisions) {
