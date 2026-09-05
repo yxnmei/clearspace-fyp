@@ -10,7 +10,7 @@ import { WORKFLOW_STEPS } from "./workflowProgress";
 // Navigation never depends on this module doing anything with the network
 // it is a plain function of state.
 
-export const DECLUTTER_WIZARD_STEPS = WORKFLOW_STEPS.declutter; // Upload → Analyse → Review → Confirm
+export const DECLUTTER_WIZARD_STEPS = WORKFLOW_STEPS.declutter; // Upload → Analyse → Review → Confirm → Listings
 
 function describeViewedStep({
   viewedStepId,
@@ -21,6 +21,10 @@ function describeViewedStep({
   hasConfirmation,
   correctingItemId,
   unresolvedCount,
+  listingStatus,
+  eligibleSellCount,
+  regeneratingItemId,
+  regenerationError,
 }) {
   switch (viewedStepId) {
     case "upload":
@@ -101,7 +105,7 @@ function describeViewedStep({
       if (confirmationStatus === "confirmed" && hasConfirmation) {
         return {
           statusText: "Your decisions are locked in.",
-          nextActionText: "The confirmed summary is below. This declutter run is complete.",
+          nextActionText: "The confirmed summary is below. Continue to Listings when you are ready.",
           processing: false,
         };
       }
@@ -117,6 +121,61 @@ function describeViewedStep({
         nextActionText: "Press Confirm decisions when your review is ready.",
         processing: false,
       };
+    case "listings": {
+      // Order matters: an in-flight or just-failed single-item
+      // regeneration is reported first, it overlays the (already "ready")
+      // batch state rather than being hidden by it. Eligibility is a
+      // truthful fact of the current confirmation regardless of
+      // listingStatus, so "nothing to sell" is reported the same way
+      // whether or not a (no-op) generation has run yet.
+      if (regeneratingItemId !== null) {
+        return {
+          statusText: "Regenerating one listing draft…",
+          nextActionText: "This can take a moment. Every other draft is unaffected.",
+          processing: true,
+        };
+      }
+      if (regenerationError) {
+        return {
+          statusText: "One listing draft could not be regenerated.",
+          nextActionText: "Its card explains what happened and offers to try again. Every other draft is unaffected.",
+          processing: false,
+        };
+      }
+      if (listingStatus === "generating") {
+        return {
+          statusText: "Generating your listing drafts…",
+          nextActionText: "This can take a moment, no action needed yet.",
+          processing: true,
+        };
+      }
+      if (listingStatus === "error") {
+        return {
+          statusText: "Listing draft generation didn't go through.",
+          nextActionText: "Your confirmed decisions are unchanged. Press Try again below.",
+          processing: false,
+        };
+      }
+      if (eligibleSellCount === 0) {
+        return {
+          statusText: "Nothing was confirmed as Sell.",
+          nextActionText: "There are no listing drafts to generate for this run.",
+          processing: false,
+        };
+      }
+      if (listingStatus === "ready") {
+        return {
+          statusText: "Your listing drafts are ready to review.",
+          nextActionText: "Edit, copy, regenerate or discard any draft below.",
+          processing: false,
+        };
+      }
+      return {
+        statusText: "Ready to generate listing drafts.",
+        nextActionText: "Press Generate listing drafts when you are ready.",
+        processing: false,
+      };
+    }
     default:
       return { statusText: "", nextActionText: "", processing: false };
   }
@@ -133,6 +192,18 @@ export function deriveDeclutterWizard(input = {}) {
     unresolvedCount = 0,
     viewedStep = "upload",
     confirmAcknowledged = false,
+    // Marketplace listing state (Stage 4B), explicit inputs rather than
+    // the raw confirmation/hook objects, so this module keeps its
+    // existing plain-flag style. eligibleSellCount MUST be derived by the
+    // caller only from the current confirmation's confirmedDecisions
+    // (confirmed_decision === "sell" && excluded === false), never from
+    // labels, draft presence or Keep ids, matching ListingsView's own
+    // eligibility rule exactly (both consume
+    // lib/listingDrafts.js's deriveEligibleSellItemIds).
+    listingStatus = "idle",
+    eligibleSellCount = 0,
+    regeneratingItemId = null,
+    regenerationError = null,
   } = input;
 
   const steps = DECLUTTER_WIZARD_STEPS;
@@ -141,23 +212,47 @@ export function deriveDeclutterWizard(input = {}) {
   const analyseUnlocked = status !== "idle"; // a submit has been dispatched
   const reviewUnlocked = hasAnalysis; // analysis succeeded
   const confirmUnlocked = confirmAcknowledged && reviewUnlocked; // explicit Continue from Review
+  // Listings unlocks only on a genuinely successful CURRENT confirmation,
+  // never merely by reaching/acknowledging Confirm. Confirming does not
+  // navigate here and does not generate anything by itself, see confirm().
+  const listingsUnlocked = confirmationStatus === "confirmed" && hasConfirmation;
 
   const unlockedStepIds = ["upload"];
   if (analyseUnlocked) unlockedStepIds.push("analyse");
   if (reviewUnlocked) unlockedStepIds.push("review");
   if (confirmUnlocked) unlockedStepIds.push("confirm");
+  if (listingsUnlocked) unlockedStepIds.push("listings");
+
+  // A confirmed run with zero eligible (non-excluded Sell) items has
+  // nothing to generate, so Listings counts as complete without ever
+  // calling generateListingDrafts, matching ListingsView's own truthful
+  // empty state (no button, no request). Otherwise Listings is complete
+  // only once a batch has actually finished (listingStatus === "ready");
+  // local edits/discards never affect this, they never change
+  // listingStatus.
+  const listingsComplete = listingsUnlocked && (eligibleSellCount === 0 || listingStatus === "ready");
 
   const completedStepIds = [];
   if (analyseUnlocked) completedStepIds.push("upload");
   if (hasAnalysis) completedStepIds.push("analyse");
   if (confirmUnlocked) completedStepIds.push("review");
   if (confirmationStatus === "confirmed" && hasConfirmation) completedStepIds.push("confirm");
+  if (listingsComplete) completedStepIds.push("listings");
 
-  // No navigation while a safety-critical request is in flight.
-  const navigationLocked = status === "uploading" || confirmationStatus === "confirming";
+  // No navigation while a safety-critical request is in flight. Batch
+  // listing generation and a single-item regeneration both lock
+  // navigation the same way upload/confirm do; purely local presentation
+  // actions (editing, copying, discarding, restoring) never do, they
+  // never touch listingStatus or regeneratingItemId.
+  const navigationLocked =
+    status === "uploading" ||
+    confirmationStatus === "confirming" ||
+    listingStatus === "generating" ||
+    regeneratingItemId !== null;
 
   // The step actually shown. A stale viewedStep (e.g. "confirm" after a
-  // re-upload relock) falls back to the furthest unlocked step.
+  // re-upload relock, or "listings" after the confirmation it depended on
+  // was invalidated) falls back to the furthest unlocked step.
   const viewedStepId = unlockedStepIds.includes(viewedStep)
     ? viewedStep
     : unlockedStepIds[unlockedStepIds.length - 1];
@@ -177,9 +272,14 @@ export function deriveDeclutterWizard(input = {}) {
     } else if (viewedStepId === "review") {
       canContinue = canContinueFromReview;
       continueTargetId = "confirm";
+    } else if (viewedStepId === "confirm") {
+      // Navigation only, never a listing API call, mirrors submit()'s
+      // own separation from analysis.
+      canContinue = confirmationStatus === "confirmed" && hasConfirmation;
+      continueTargetId = "listings";
     }
     // Upload's forward action is the form's own "Analyse room" submit.
-    // Confirm is the final step.
+    // Listings is the final step.
   }
   const canGoBack = !navigationLocked && backTargetId !== null;
 
@@ -192,6 +292,10 @@ export function deriveDeclutterWizard(input = {}) {
     hasConfirmation,
     correctingItemId,
     unresolvedCount,
+    listingStatus,
+    eligibleSellCount,
+    regeneratingItemId,
+    regenerationError,
   });
 
   return {

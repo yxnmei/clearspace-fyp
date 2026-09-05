@@ -9,9 +9,9 @@ const ids = (steps) => steps.map((s) => s.id);
 const labels = (steps) => steps.map((s) => s.label);
 
 describe("WORKFLOW_STEPS, each workflow's exact sequence", () => {
-  test("Declutter: Upload → Analyse → Review → Confirm", () => {
-    expect(ids(WORKFLOW_STEPS.declutter)).toEqual(["upload", "analyse", "review", "confirm"]);
-    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload", "Analyse", "Review", "Confirm"]);
+  test("Declutter: Upload → Analyse → Review → Confirm → Listings", () => {
+    expect(ids(WORKFLOW_STEPS.declutter)).toEqual(["upload", "analyse", "review", "confirm", "listings"]);
+    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload", "Analyse", "Review", "Confirm", "Listings"]);
   });
 
   test("Direct Reorganise: Upload → Analyse → Review → Generate", () => {

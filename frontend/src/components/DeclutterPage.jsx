@@ -3,6 +3,7 @@ import { Check, Loader2, TriangleAlert } from "lucide-react";
 import { useDeclutterFlow } from "../hooks/useDeclutterFlow";
 import { useObjectUrl } from "../hooks/useObjectUrl";
 import { deriveDeclutterWizard } from "../lib/declutterWizard";
+import { deriveEligibleSellItemIds } from "../lib/listingDrafts";
 import {
   partitionReviewItems,
   deriveReviewCounts,
@@ -16,26 +17,30 @@ import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
 import ConfirmationSummary from "./ConfirmationSummary";
+import ListingsView from "./ListingsView";
 
-// The Declutter workflow as a four-view wizard: Upload → Analyse →
-// Review → Confirm. useDeclutterFlow stays the sole owner of analysis,
-// decisions, confirmation, concurrency and API activity; this component
-// adds only presentation state, which step is being viewed, and whether
-// the user has acknowledged Review by pressing Continue to Confirm.
+// The Declutter workflow as a five-view wizard: Upload → Analyse →
+// Review → Confirm → Listings. useDeclutterFlow stays the sole owner of
+// analysis, decisions, confirmation, listing state/actions, concurrency
+// and API activity; this component adds only presentation state, which
+// step is being viewed, and whether the user has acknowledged Review by
+// pressing Continue to Confirm.
 //
-// All four views stay mounted (the non-viewed ones `hidden`, so they are
+// All five views stay mounted (the non-viewed ones `hidden`, so they are
 // out of the accessibility tree and unfocusable) purely so DeclutterUploadForm's
 // picked file/context and the review workspace's local UI state survive
 // moving between views. Navigation never touches the network, it is
 // setViewedStep and nothing else. lib/declutterWizard derives the
 // unlocking rules; lib/declutterReview derives the partition, counts and
-// the confirmation guard.
+// the confirmation guard. Listings is the standalone-Declutter run's
+// final step, this workflow never continues into Reorganise, unlike Both.
 //
 // submittedFile is captured at the moment submit() is actually called and
 // drives a separate object-URL lifecycle (useObjectUrl) from
 // DeclutterUploadForm's own picker preview, so the analysed-room image
 // is always the one that was analysed, never whatever the form shows
-// after.
+// after. The same object URL is reused as ListingsView's imageUrl, so
+// listing draft cards crop from the identical analysed photo.
 export default function DeclutterPage() {
   const {
     status,
@@ -53,6 +58,16 @@ export default function DeclutterPage() {
     correctLabel,
     correctingItemId,
     correctionError,
+    listingStatus,
+    listingDrafts,
+    listingError,
+    regeneratingItemId,
+    regenerationError,
+    generateListingDrafts,
+    regenerateListingDraft,
+    editListingDraft,
+    discardListingDraft,
+    restoreListingDraft,
   } = useDeclutterFlow();
 
   const [submittedFile, setSubmittedFile] = useState(null);
@@ -77,6 +92,12 @@ export default function DeclutterPage() {
         ? "Analysis complete"
         : "Analysing your room";
 
+  // Eligibility is derived the SAME way ListingsView derives it (both
+  // consume lib/listingDrafts.js's deriveEligibleSellItemIds), strictly
+  // from confirmation.confirmedDecisions: confirmed_decision === "sell"
+  // && excluded === false. Never labels, draft presence or Keep ids.
+  const eligibleSellCount = deriveEligibleSellItemIds(confirmation).length;
+
   const wizard = deriveDeclutterWizard({
     status,
     uploadError: error,
@@ -87,6 +108,10 @@ export default function DeclutterPage() {
     unresolvedCount,
     viewedStep,
     confirmAcknowledged,
+    listingStatus,
+    eligibleSellCount,
+    regeneratingItemId,
+    regenerationError,
   });
   const viewed = wizard.viewedStepId;
 
@@ -257,6 +282,45 @@ export default function DeclutterPage() {
               <WizardNav
                 backLabel="Back to Review"
                 onBack={() => goToStep("review")}
+                backDisabled={wizard.navigationLocked}
+                // Continue to Listings appears only once there is a
+                // successful CURRENT confirmation (not merely disabled
+                // before then, unlike Review's Continue) and only ever
+                // navigates, it never calls generateListingDrafts itself,
+                // generation stays an explicit action on the Listings
+                // view (ListingsView's own "Generate listing drafts"
+                // button).
+                continueLabel="Continue to Listings"
+                onContinue={confirmationStatus === "confirmed" && confirmation ? handleContinue : undefined}
+                continueDisabled={!(viewed === "confirm" && wizard.canContinue)}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* ---------- Listings ---------- */}
+        <div hidden={viewed !== "listings"}>
+          {hasAnalysis && (
+            <div className="space-y-6">
+              <ListingsView
+                confirmation={confirmation}
+                reviewItems={reviewItems}
+                imageUrl={analysedImageUrl}
+                listingStatus={listingStatus}
+                listingDrafts={listingDrafts}
+                listingError={listingError}
+                regeneratingItemId={regeneratingItemId}
+                regenerationError={regenerationError}
+                generateListingDrafts={generateListingDrafts}
+                regenerateListingDraft={regenerateListingDraft}
+                editListingDraft={editListingDraft}
+                discardListingDraft={discardListingDraft}
+                restoreListingDraft={restoreListingDraft}
+              />
+
+              <WizardNav
+                backLabel="Back to Confirm"
+                onBack={() => goToStep("confirm")}
                 backDisabled={wizard.navigationLocked}
               />
             </div>

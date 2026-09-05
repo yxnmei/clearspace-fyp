@@ -587,8 +587,296 @@ describe("DeclutterPage wizard, carried-over checks", () => {
   test("the stepper still starts on Upload with nothing complete", () => {
     render(<DeclutterPage />);
     const steps = trackerSteps();
-    expect(steps.map((s) => s.label)).toEqual(["Upload", "Analyse", "Review", "Confirm"]);
+    expect(steps.map((s) => s.label)).toEqual(["Upload", "Analyse", "Review", "Confirm", "Listings"]);
     expect(steps.find((s) => s.current).label).toBe("Upload");
     expect(steps.filter((s) => s.current)).toHaveLength(1);
+  });
+});
+
+describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
+  function makeConfirmResponseSell(runId) {
+    return {
+      run_id: runId,
+      confirmed_decisions: [
+        {
+          item_id: "item_001",
+          ai_decision: "keep",
+          confirmed_decision: "sell",
+          ai_reason: "still useful",
+          user_reason: null,
+          excluded: false,
+          decision_changed: true,
+        },
+      ],
+      confirmed_keep_ids: [],
+      decision_changed_count: 1,
+      excluded_count: 0,
+    };
+  }
+
+  function makeDraft(overrides = {}) {
+    return {
+      item_id: "item_001",
+      effective_label: "lamp",
+      status: "generated",
+      title: "Great lamp for sale",
+      description: "A gently used lamp in great condition, perfect for any room.",
+      unavailable_reason: null,
+      was_repaired: false,
+      attempts: 1,
+      ...overrides,
+    };
+  }
+
+  function makeListingsResponse(runId, confirmationResponse, drafts, provenance = {}) {
+    const { modelName = "phi4-mini", promptVersion = "v1", maxAttempts = 3 } = provenance;
+    return {
+      run_id: runId,
+      confirmation: confirmationResponse,
+      drafts,
+      model_name: drafts.length ? modelName : null,
+      prompt_version: drafts.length ? promptVersion : null,
+      max_attempts: drafts.length ? maxAttempts : null,
+    };
+  }
+
+  function makeSingleListingResponse(runId, confirmationResponse, draft, provenance = {}) {
+    const { modelName = "phi4-mini", promptVersion = "v1", maxAttempts = 3 } = provenance;
+    return {
+      run_id: runId,
+      confirmation: confirmationResponse,
+      draft,
+      model_name: modelName,
+      prompt_version: promptVersion,
+      max_attempts: maxAttempts,
+    };
+  }
+
+  async function toConfirmed(user, { decision = "keep", runId = "run-a" } = {}) {
+    client.uploadImage.mockResolvedValueOnce(makeUploadResponse(runId));
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    if (decision !== "keep") {
+      const label = decision.charAt(0).toUpperCase() + decision.slice(1);
+      await user.click(screen.getByRole("radio", { name: label }));
+    }
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+    client.confirmDecisions.mockResolvedValueOnce(
+      decision === "sell" ? makeConfirmResponseSell(runId) : makeConfirmResponse(runId)
+    );
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+  }
+
+  test("Continue to Listings appears only after a successful confirmation", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+
+    expect(screen.queryByRole("button", { name: /continue to listings/i })).not.toBeInTheDocument();
+
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+
+    expect(screen.getByRole("button", { name: /continue to listings/i })).toBeInTheDocument();
+  });
+
+  test("navigating to Listings alone makes no listing request", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+
+    expect(viewedLabel()).toBe("Listings");
+    expect(client.generateListings).not.toHaveBeenCalled();
+  });
+
+  test("zero confirmed Sell items shows the truthful empty state and never calls generateListings", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "keep" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+
+    expect(screen.getByText(/did not confirm any items as sell/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
+    expect(client.generateListings).not.toHaveBeenCalled();
+  });
+
+  test("the explicit Generate action makes exactly one batch request, then shows loading then ready", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+
+    let resolveListings;
+    client.generateListings.mockImplementationOnce(
+      () => new Promise((r) => { resolveListings = () => r(makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])); })
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+
+    expect(client.generateListings).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent(/generating/i);
+
+    resolveListings();
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+    expect(client.generateListings).toHaveBeenCalledTimes(1); // no duplicate dispatch
+  });
+
+  test("a batch failure shows a concise error and an explicit retry that succeeds", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+
+    client.generateListings.mockRejectedValueOnce(new Error("Listing service unreachable"));
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    expect(screen.getByRole("alert")).toHaveTextContent(/confirmed declutter decisions are unchanged/i);
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+  });
+
+  test("a generated draft is joined to the analysed image and its own item metadata by item_id", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    client.uploadImage.mockResolvedValueOnce(makeUploadResponse("run-a"));
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    // Captured while Review is the viewed step, the analysed-room <img>
+    // is out of the accessibility tree (and unqueryable by role) once
+    // this view is hidden behind a later step.
+    const analysedSrc = screen.getByRole("img", { name: /detected item outlines/i }).getAttribute("src");
+    await user.click(screen.getByRole("radio", { name: "Sell" }));
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponseSell("run-a"));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    // The card names item_001 and shows a thumbnail cropped from the same
+    // analysed-room object URL used on Review. Scoped to the listing card
+    // (an <article>), the hidden Review view renders the same item_id and
+    // a thumbnail of its own that would otherwise collide with this query.
+    const card = within(screen.getByRole("article"));
+    expect(card.getByText("item_001")).toBeInTheDocument();
+    expect(card.getByTestId("item-crop-thumbnail")).toHaveAttribute(
+      "style",
+      expect.stringContaining(analysedSrc)
+    );
+  });
+
+  test("editing, regeneration and discard/restore are all connected to the real hook", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    // Editing is verbatim and local.
+    const titleInput = screen.getByLabelText(/listing title for/i);
+    await user.clear(titleInput);
+    await user.type(titleInput, "Edited title");
+    expect(titleInput).toHaveValue("Edited title");
+    expect(screen.getByText("Edited")).toBeInTheDocument();
+
+    // Discard/restore are local, no request.
+    await user.click(screen.getByRole("button", { name: /discard draft/i }));
+    expect(screen.getByText(/discarded locally/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /restore draft/i }));
+    expect(screen.getByLabelText(/listing title for/i)).toHaveValue("Edited title");
+
+    // The restored draft is still edited, so regenerating shows the
+    // inline warning first, then calls the single-item endpoint only.
+    client.regenerateListing.mockResolvedValueOnce(
+      makeSingleListingResponse(
+        "run-a",
+        makeConfirmResponseSell("run-a"),
+        makeDraft({ title: "Regenerated title" })
+      )
+    );
+    await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+    expect(screen.getByText(/will replace your local edits/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /replace my edits and regenerate/i }));
+
+    await waitFor(() => expect(screen.getByDisplayValue("Regenerated title")).toBeInTheDocument());
+    expect(client.regenerateListing).toHaveBeenCalledTimes(1);
+    expect(client.generateListings).toHaveBeenCalledTimes(1); // never a batch call
+  });
+
+  test("Back to Confirm preserves listing state; returning to Listings does not re-request", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /back to confirm/i }));
+    expect(viewedLabel()).toBe("Confirm");
+    expect(screen.getByText(/decisions confirmed/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
+    expect(client.generateListings).toHaveBeenCalledTimes(1);
+  });
+
+  test("invalidating the confirmation on Review relocks Listings", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /back to confirm/i }));
+    await user.click(screen.getByRole("button", { name: /back to review/i }));
+    expect(within(nav()).getByRole("button", { name: "Go to Listings" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Donate" }));
+
+    expect(within(nav()).queryByRole("button", { name: "Go to Listings" })).toBeNull();
+  });
+
+  test("no Reorganise wording or action ever appears in standalone Declutter", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await toConfirmed(user, { decision: "sell" });
+    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    expect(screen.queryByText(/reorganis/i)).not.toBeInTheDocument();
   });
 });

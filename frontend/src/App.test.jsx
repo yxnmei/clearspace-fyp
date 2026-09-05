@@ -82,7 +82,7 @@ describe("App, path selection", () => {
 
 describe("App, each workflow page shows its own progress stepper", () => {
   test.each([
-    [/declutter/i, /declutter workflow progress/i, ["Upload", "Analyse", "Review", "Confirm"]],
+    [/declutter/i, /declutter workflow progress/i, ["Upload", "Analyse", "Review", "Confirm", "Listings"]],
     [/reorganise/i, /reorganise workflow progress/i, ["Upload", "Analyse", "Review", "Generate"]],
     [/^both$/i, /both workflow progress/i, ["Upload", "Analyse", "Review", "Confirm", "Reorganise"]],
   ])("mounting %s renders its stepper with its exact step sequence", async (card, navName, steps) => {

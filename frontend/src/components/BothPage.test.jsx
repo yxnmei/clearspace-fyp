@@ -446,3 +446,277 @@ describe("BothPage, workflow progress stepper", () => {
     expect(within(stepper()).getAllByRole("listitem").every((li) => li.getAttribute("aria-current") !== "step")).toBe(true);
   });
 });
+
+describe("BothPage, Listings as an independent parallel action (Stage 4B)", () => {
+  function makeDraft(itemId, overrides = {}) {
+    return {
+      item_id: itemId,
+      effective_label: "lamp",
+      status: "generated",
+      title: "Great lamp for sale",
+      description: "A gently used lamp in great condition, perfect for any room.",
+      unavailable_reason: null,
+      was_repaired: false,
+      attempts: 1,
+      ...overrides,
+    };
+  }
+
+  function makeListingsResponse(confirmationResponse, drafts) {
+    return {
+      run_id: "run1",
+      confirmation: confirmationResponse,
+      drafts,
+      model_name: drafts.length ? "phi4-mini" : null,
+      prompt_version: drafts.length ? "v1" : null,
+      max_attempts: drafts.length ? 3 : null,
+    };
+  }
+
+  function makeSingleListingResponse(confirmationResponse, draft) {
+    return { run_id: "run1", confirmation: confirmationResponse, draft, model_name: "phi4-mini", prompt_version: "v1", max_attempts: 3 };
+  }
+
+  // No radio clicks are needed anywhere below: confirmDecisions is fully
+  // mocked, so the confirmed shape is whatever this helper's `confirmed`
+  // argument says, independent of the review UI's own state.
+  async function toConfirmed(user, { decisions, confirmed }) {
+    client.uploadImage.mockResolvedValue(makeBothUploadResponse({ decisions }));
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse(confirmed));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    // getByText(/decisions confirmed/i) is ambiguous with 2+ confirmed
+    // items: the summary's own status line reads "…2 decisions
+    // confirmed." (plural), which also matches the loose text pattern
+    // alongside the "Decisions confirmed" heading. The heading role is
+    // unambiguous regardless of item count.
+    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+  }
+
+  const KEEP_AND_SELL = {
+    decisions: [
+      { itemId: "item_001", decision: "keep" },
+      { itemId: "item_002", decision: "sell" },
+    ],
+    confirmed: [
+      { itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" },
+      { itemId: "item_002", aiDecision: "sell", confirmedDecision: "sell" },
+    ],
+  };
+
+  test("no listing generation before confirmation", async () => {
+    const user = userEvent.setup();
+    client.uploadImage.mockResolvedValue(makeBothUploadResponse());
+    render(<BothPage />);
+
+    await user.upload(screen.getByLabelText(/room photo/i), makeFile());
+    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
+    expect(client.generateListings).not.toHaveBeenCalled();
+  });
+
+  test("no automatic generation after confirmation", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    expect(screen.getByRole("button", { name: /generate listing drafts/i })).toBeInTheDocument();
+    expect(client.generateListings).not.toHaveBeenCalled();
+  });
+
+  test("Keep + Sell shows both independent next-action capabilities", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    expect(screen.getByRole("button", { name: /continue to reorganisation/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate listing drafts/i })).toBeInTheDocument();
+  });
+
+  test("zero confirmed Keep with confirmed Sell still allows Listings", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, {
+      decisions: [{ itemId: "item_001", decision: "sell" }],
+      confirmed: [{ itemId: "item_001", aiDecision: "sell", confirmedDecision: "sell" }],
+    });
+
+    expect(screen.getByText(/nothing to reorganise/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to reorganisation/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate listing drafts/i })).toBeInTheDocument();
+  });
+
+  test("confirmed Keep with zero confirmed Sell still allows Reorganise", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, {
+      decisions: [{ itemId: "item_001", decision: "keep" }],
+      confirmed: [{ itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" }],
+    });
+
+    expect(screen.getByRole("button", { name: /continue to reorganisation/i })).toBeInTheDocument();
+    expect(screen.getByText(/did not confirm any items as sell/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
+  });
+
+  test("zero confirmed Keep and zero confirmed Sell shows both truthful empty states", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, {
+      decisions: [{ itemId: "item_001", decision: "donate" }],
+      confirmed: [{ itemId: "item_001", aiDecision: "donate", confirmedDecision: "donate" }],
+    });
+
+    expect(screen.getByText(/nothing to reorganise/i)).toBeInTheDocument();
+    expect(screen.getByText(/did not confirm any items as sell/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to reorganisation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
+  });
+
+  test("either action may start first, and both may be in flight concurrently, each disabled only by its own operation", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    let resolveListings;
+    client.generateListings.mockImplementationOnce(
+      () => new Promise((r) => { resolveListings = () => r(makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])); })
+    );
+    // Listings started FIRST.
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    expect(client.generateListings).toHaveBeenCalledTimes(1);
+
+    // Reorganise is not disabled by the listing generation in flight.
+    expect(screen.getByRole("button", { name: /continue to reorganisation/i })).toBeEnabled();
+
+    let resolveReorganise;
+    client.generateConfirmedReorganisation.mockImplementationOnce(
+      () => new Promise((r) => { resolveReorganise = () => r(makeConfirmedGenerateResponse(KEEP_AND_SELL.confirmed)); })
+    );
+    // Reorganise started SECOND, while Listings is still in flight: both
+    // concurrently in flight, proving the concurrency domains are
+    // independent (neither is blocked by the other's own busy state).
+    await user.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+    expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
+    // Both operations are genuinely in flight at once, each with its own
+    // accessible progress text.
+    expect(screen.getByText(/generating.*listing drafts/i)).toBeInTheDocument();
+    expect(screen.getByText(/planning the room and generating a preview/i)).toBeInTheDocument();
+
+    resolveListings();
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+    // Reorganise is STILL generating, unaffected by the listing batch settling.
+    expect(screen.queryByRole("heading", { name: /your room plan/i })).not.toBeInTheDocument();
+
+    resolveReorganise();
+    await waitFor(() => expect(screen.getByRole("heading", { name: /your room plan/i })).toBeInTheDocument());
+    // The finished listing draft is still visible after Reorganise completes.
+    expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
+  });
+
+  test("a listing failure does not hide, disable or relabel Reorganise", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    client.generateListings.mockRejectedValueOnce(new Error("Listing service unreachable"));
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    const reorganiseButton = screen.getByRole("button", { name: /continue to reorganisation/i });
+    expect(reorganiseButton).toBeEnabled();
+    expect(reorganiseButton).toHaveTextContent(/^continue to reorganisation$/i);
+  });
+
+  test("a Reorganise failure does not hide or disable Listings", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
+    await user.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
+
+    const generateButton = screen.getByRole("button", { name: /generate listing drafts/i });
+    expect(generateButton).toBeEnabled();
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    await user.click(generateButton);
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+  });
+
+  test("a completed Reorganise result keeps Listings visible and usable, and existing edits survive", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    const titleInput = screen.getByLabelText(/listing title for/i);
+    await user.clear(titleInput);
+    await user.type(titleInput, "My edited title");
+
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeConfirmedGenerateResponse(KEEP_AND_SELL.confirmed));
+    await user.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /your room plan/i })).toBeInTheDocument());
+
+    // Listings is still rendered and usable, the edit survived.
+    expect(screen.getByDisplayValue("My edited title")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy listing/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /regenerate draft/i })).toBeInTheDocument();
+  });
+
+  test("Start over resets both the Reorganise result and the listing drafts", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeConfirmedGenerateResponse(KEEP_AND_SELL.confirmed));
+    await user.click(screen.getByRole("button", { name: /continue to reorganisation/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /your room plan/i })).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /start over/i }));
+
+    expect(screen.getByLabelText(/room photo/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /your room plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Great lamp for sale")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
+  });
+
+  test("regeneration calls the single-item endpoint only, independent of Reorganise", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await toConfirmed(user, KEEP_AND_SELL);
+
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+
+    client.regenerateListing.mockResolvedValueOnce(
+      makeSingleListingResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), makeDraft("item_002", { title: "Regenerated title" }))
+    );
+    await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("Regenerated title")).toBeInTheDocument());
+
+    expect(client.regenerateListing).toHaveBeenCalledTimes(1);
+    expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
+  });
+});

@@ -7,6 +7,7 @@ import ImageGenStatusBanner from "./ImageGenStatusBanner";
 import DeclutterUploadForm from "./DeclutterUploadForm";
 import DeclutterReview from "./DeclutterReview";
 import ReorganiseResult from "./ReorganiseResult";
+import ListingsView from "./ListingsView";
 
 // Top-level Both workflow (R6), composes DeclutterUploadForm/
 // DeclutterReview (Declutter's own, unmodified presentational
@@ -41,6 +42,23 @@ import ReorganiseResult from "./ReorganiseResult";
 // separate, explicit user actions. The Continue button/empty-Keep message
 // only appears once confirmationStatus === "confirmed", before that,
 // there is nothing to continue to.
+//
+// Stage 4B: ListingsView is rendered as an INDEPENDENT parallel sibling
+// of the Reorganise action, not a further step in a sequence. It appears
+// once confirmationStatus === "confirmed" regardless of confirmed Keep
+// count (a run with zero Keep and some Sell items still gets listing
+// drafts), and it is rendered OUTSIDE the generateResult ternary below so
+// a completed Reorganise result never hides it, existing drafts/edits
+// stay visible and usable after Reorganise finishes. ListingsView owns
+// its own zero-Sell/idle/generating/error/ready states and never
+// auto-generates; this page passes its listing props straight through
+// from useBothFlow (which exposes useDeclutterFlow's listing domain
+// unwrapped via the `...declutter` spread) and adds no listing logic of
+// its own. Listings never waits for Reorganise and vice versa: they are
+// separate concurrency domains (useDeclutterFlow's listing slot vs this
+// hook's own generation slot), so either may start first and both may be
+// in flight at once; a failure in one never disables, hides, clears or
+// relabels the other, and their busy flags are never combined.
 const NEXT_STEP_NOTE =
   "These confirmed Keep items will be sent to reorganisation next. Nothing is generated automatically.";
 
@@ -148,6 +166,31 @@ export default function BothPage() {
             originalImageUrl={imageUrl}
             onStartOver={flow.reset}
           />
+        )}
+
+        {/* Independent of the ternary above on purpose: a completed
+            Reorganise result must not make Listings disappear, and
+            Listings must not wait for (or block) Reorganise. Renders
+            regardless of confirmed Keep count, ListingsView owns its own
+            truthful zero-Sell state. */}
+        {hasConfirmation && (
+          <div className="mt-6">
+            <ListingsView
+              confirmation={flow.confirmation}
+              reviewItems={flow.reviewItems}
+              imageUrl={imageUrl}
+              listingStatus={flow.listingStatus}
+              listingDrafts={flow.listingDrafts}
+              listingError={flow.listingError}
+              regeneratingItemId={flow.regeneratingItemId}
+              regenerationError={flow.regenerationError}
+              generateListingDrafts={flow.generateListingDrafts}
+              regenerateListingDraft={flow.regenerateListingDraft}
+              editListingDraft={flow.editListingDraft}
+              discardListingDraft={flow.discardListingDraft}
+              restoreListingDraft={flow.restoreListingDraft}
+            />
+          </div>
         )}
       </div>
     </div>

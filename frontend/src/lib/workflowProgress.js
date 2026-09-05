@@ -23,6 +23,7 @@ const DECLUTTER_STEPS = [
   { id: "analyse", label: "Analyse" },
   { id: "review", label: "Review" },
   { id: "confirm", label: "Confirm" },
+  { id: "listings", label: "Listings" },
 ];
 
 const REORGANISE_STEPS = [
@@ -52,7 +53,7 @@ const UPLOAD_ERROR_STATUS = "That upload didn't go through.";
 const UPLOAD_ERROR_NEXT = "Your photo and context are still here. Submit again to retry.";
 const NO_ACTION_WAIT = "This can take up to two minutes, no action needed yet.";
 
-// Declutter is no longer derived here. Its four-view wizard owns its own
+// Declutter is no longer derived here. Its five-view wizard owns its own
 // presentation + navigation model in lib/declutterWizard.js
 // (deriveDeclutterWizard), which is the single Declutter source of truth.
 // WORKFLOW_STEPS.declutter is still exported above and consumed there.
