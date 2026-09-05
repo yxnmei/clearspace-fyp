@@ -268,3 +268,114 @@ model sizes. `faster-whisper-base` is **not** shown to be more accurate
 — it tied. Latency was measured on one machine (Windows, AMD64,
 CPU-only, `compute_type="int8"`) and does not transfer to other
 hardware.
+
+---
+
+## 2026-09-06 — Marketplace listing draft harness: BUILT, NOT YET RUN
+
+**No inference has been run.** This entry documents the harness itself,
+not a result — there is no results table here because no candidate has
+been evaluated yet. It exists so a future run (separately approved) has
+somewhere to record its outcome without inventing the harness at the
+same time.
+
+Harness: `evaluation/scripts/compare_listing_drafts.py`. Fixture corpus:
+`evaluation/fixtures/listing_draft_eval.json` (20 synthetic, non-personal
+cases: clear household labels, ambiguous labels — `monitor`, `mouse`,
+`notebook`, `bottle`, `drawer`, `clothes` — multiword labels, labels that
+tempt fabricated condition/material/colour/size/brand/accessories/
+functionality, and 4 prompt-injection-style labels testing
+`app/models/listing_llm.py`'s existing data-boundary). Example candidate
+matrix: `evaluation/fixtures/listing_candidates.example.json` (never
+loaded automatically; every invocation names `--candidates` explicitly).
+
+**Safe by construction.** `validate` / `plan` / `dry-run` never reach a
+model — `dry-run` rehearses the full pipeline (preflight, retries,
+JSON/schema validation, heuristic screening, aggregation, atomic write)
+with a fixed, deterministic, built-in fake caller. Only
+`run --execute-real-models` constructs a real Ollama client, and only
+after confirming every required model is already present locally
+(`ollama.list()`, never a pull). Exact worst-case call count is computed
+and enforced (`MAX_TOTAL_CALLS_CEILING`) before the first call. Reuses
+`app.models.listing_llm.build_listing_prompt` byte-identical for the
+production "v1" arm, `app.core.json_repair.extract_json_detailed`, and
+`app.core.listing_schemas.ListingDraftContent`'s real bounds — never a
+reimplementation of any of the three. One evaluation-only prompt
+variant (`eval-a1`) is registered; a candidate set must include the
+production prompt and may use at most one non-production prompt
+version.
+
+**Screening is not proof.** JSON validity, schema compliance, and a
+fixed set of regex/word-list content flags (price, contact details,
+links, hashtags, emoji, condition/functionality claims, dimensions,
+obvious brand/model claims) are coarse, over-inclusive-by-design
+screening signals — recorded per draft, never treated as a factual-
+safety verdict. A **genuinely separate, atomically-written reviewer
+packet** (`<out>.reviewer.json`, built by `build_reviewer_packet`) is
+what a human reviewer actually receives: review IDs, labels, guidance,
+generated drafts and blank judgement fields, seeded/deterministically
+blinded, with NO candidate/model/prompt identity, no answer key, and no
+technical result data anywhere in it. The full researcher artifact
+(`<out>.json`) keeps everything, including the one-to-one
+`human_review_answer_key`. `plan` may print the case/candidate mapping
+for the researcher, but always labels it researcher-only and never
+describes it as the blinded view. Predeclared decision rules (never
+computed by the harness): a prompt-injection compliance or
+unsupported-claim failure is a hard safety disqualifier ahead of
+everything else; then schema reliability; then human acceptance without
+required deletion; then clarity/usefulness; latency last.
+
+**Review corrections (2026-09-06), all fake-backed, no real run:**
+model-availability failures (transport/HTTP/malformed response) are now
+caught and turned into a fixed, sanitised incomplete result (CLI exit 1)
+instead of a raw exception; every model call attempt gets its own
+ordered diagnostic record so a later transport failure can never inherit
+a stale JSON/schema diagnosis from an earlier attempt; unit latency is
+now end-to-end across every attempt (including failed and unavailable
+units), not just the final successful call; automated summaries now
+expose clearly separate, clearly labelled `rep0` and `all_repetitions`
+figures rather than silently reporting rep-0-only numbers as the
+candidate rate, and a repetition that came back unavailable makes that
+case's determinism explicitly UNASSESSABLE rather than false; the real
+Ollama caller's error handling now mirrors production's own two-stage
+split (known operational failures vs. malformed-response shape vs.
+genuine programming defects, which still propagate); and the
+reproducibility record now includes a deterministic fixture-content
+SHA-256 plus, from the availability check, each resolved model's
+installed name/tag and digest (explicit `null` when Ollama supplies
+none, dict- and object-shaped `ollama.list()` responses both supported).
+`plan`'s output and the artifact's `bounds` now say explicitly that
+determinism is not assessed with `reps=1`.
+
+**Second review pass (2026-09-06), all fake-backed, no real run:** the
+built-in `dry-run` fake caller is now fully candidate-neutral, its
+placeholder title/description never embed candidate_id, model_name,
+prompt_version or temperature, since that text flows unchanged into the
+human review queue and then the reviewer packet. The researcher
+artifact and reviewer packet now share one opaque `artifact_id` per
+run; an incomplete, zero-entry reviewer-packet placeholder is written
+before the first model call, so a stale COMPLETE packet from an earlier
+run can never appear current during a new, still-running, failed, or
+interrupted one; the researcher artifact is marked "complete" only
+after its paired reviewer packet has actually been written, and if that
+write fails the researcher artifact stays incomplete and the CLI claims
+neither output succeeded. Model/tag resolution in the availability
+check is now exact: a tagged request (`mistral:q4_K_M`) matches only
+that exact installed tag, an untagged request (`mistral`) matches only
+an exact untagged entry or its explicit `:latest` form, and an
+arbitrary other installed tag never silently satisfies an untagged
+request; a missing/non-collection `models` value or a response whose
+entries are wholly unparseable is now a sanitised `ModelPreflightError`
+rather than being read as "every model missing". The one test that
+invoked the CLI's real `run --execute-real-models` code path (behind a
+fully monkeypatched fake Ollama module) was removed; the same sanitised
+preflight-failure and exit-1 behaviour is now covered directly through
+`run_evaluation()` and `_report_exit()`, with no test in the suite
+passing or invoking that flag.
+
+**Verified so far (fake-backed only):** 199 focused unit tests
+(`tests/unit/test_compare_listing_drafts.py`) plus the full backend
+suite green. No Ollama call, no network connection, no download, no
+production setting change. `app.config`'s `listing_llm_*` defaults
+(`phi4-mini`, temperature 0.2, `max_attempts=3`) are untouched and
+remain provisional pending a real run of this harness.
