@@ -24,11 +24,13 @@ each candidate's max_attempts) BEFORE any call is made, and
 run_evaluation() refuses to start if the upper bound exceeds
 MAX_TOTAL_CALLS_CEILING. Sequential execution only, no threading.
 
-SAFE BY DEFAULT. The CLI's `validate`, `plan` and `dry-run` subcommands
-can never reach a model — dry-run uses a fixed, deterministic, built-in
-fake caller. Only `run --execute-real-models` constructs a real Ollama
-client, and even that requires the caller to name candidates explicitly
-(--candidates has no default anywhere in this module).
+SAFE BY DEFAULT. The CLI's `validate`, `plan`, `dry-run`,
+`validate-review` and `summarise-review` subcommands can never reach a
+model — dry-run uses a fixed, deterministic, built-in fake caller, and
+the two review subcommands only read/aggregate JSON files. Only
+`run --execute-real-models` constructs a real Ollama client, and even
+that requires the caller to name candidates explicitly (--candidates has
+no default anywhere in this module).
 
 AUTOMATED SCREENING IS NOT PROOF. JSON validity, schema compliance, and
 the heuristic content flags below (compute_heuristic_flags) are coarse,
@@ -38,6 +40,19 @@ factually faithful to its item — that judgement is the human review
 queue's job (build_human_review_queue), never computed here. This
 harness never ranks candidates or declares a winner; DECISION_RULES
 below is a predeclared priority list for a human to apply by hand.
+
+HUMAN REVIEW COMPLETION LAYER (model-free). Every blinded reviewer
+packet embeds REVIEWER_RUBRIC — the exact meaning, type, allowed values
+and written 1-5 anchors for each judgement field, plus the rules for
+completing an unavailable draft and the internal-consistency rules
+("accept" requires a faithful draft with nothing to delete). Once a
+reviewer has filled a packet in, `validate-review` checks it against its
+researcher artifact (matching artifact_id/seed, exact one-to-one review
+coverage, untouched immutable fields, and every human value strictly
+against the rubric) and `summarise-review` — only for a packet that
+passes validation — joins through the researcher-only answer key to
+produce candidate-level DESCRIPTIVE metrics. Neither ranks candidates,
+picks a winner, or changes a production setting.
 
 TWO-ARTIFACT CONSISTENCY. Every run produces two files: the full
 researcher report and a genuinely separate, identity-free reviewer
@@ -63,11 +78,19 @@ Usage (no model call happens until `run --execute-real-models` is used):
     python -m evaluation.scripts.compare_listing_drafts run \
         --candidates evaluation/fixtures/listing_candidates.example.json \
         --out evaluation/results/listing_draft_eval.json --execute-real-models
+    python -m evaluation.scripts.compare_listing_drafts validate-review \
+        --researcher evaluation/results/listing_draft_eval.json \
+        --reviewed evaluation/results/listing_draft_eval.reviewed.json
+    python -m evaluation.scripts.compare_listing_drafts summarise-review \
+        --researcher evaluation/results/listing_draft_eval.json \
+        --reviewed evaluation/results/listing_draft_eval.reviewed.json \
+        --out evaluation/results/listing_draft_eval.review_summary.json
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 import hashlib
 import json
@@ -248,6 +271,19 @@ class ModelPreflightError(RuntimeError):
     implementation (e.g. real_models_available); run_evaluation() catches
     this ONE type and turns it into a sanitised incomplete result — any
     other exception type is a programming defect and propagates."""
+
+
+class ReviewInputError(ValueError):
+    """A file handed to `validate-review` / `summarise-review` is missing,
+    is not JSON, or is not a JSON object. A structural problem with the
+    bytes on disk, before any content rule is checked. Model-free."""
+
+
+class ReviewValidationError(ValueError):
+    """`summarise-review` was asked to aggregate a reviewed packet that
+    does not pass `validate-review`, or whose fixture content hash does
+    not match the researcher artifact. Never raised for a clean review.
+    Model-free."""
 
 
 # The KNOWN operational failure types a real Ollama client build,
@@ -1196,6 +1232,115 @@ REVIEWER_PACKET_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
 )
 
 
+# --- reviewer rubric (embedded in every packet; model-free) ----------------
+
+REVIEWER_RUBRIC_VERSION = 1
+RATING_MIN = 1
+RATING_MAX = 5
+REVIEW_DECISION_VALUES: tuple[str, ...] = ("accept", "reject", "unavailable")
+
+# Case tags (from the fixture corpus) that mark a draft as safety-critical.
+# summarise-review counts a rejected generated draft on one of these cases
+# as a prompt-injection / high-risk failure.
+HIGH_RISK_CASE_TAGS = frozenset({"prompt_injection", "high_risk"})
+
+# The complete instruction set handed to a blinded reviewer. Pure text
+# about the review process — it names no candidate, model, prompt or
+# configuration, and is safe to embed in the identity-free reviewer
+# packet. This module constant is the source of truth; build_reviewer_packet
+# embeds a DEEP COPY (never this object), and validate-review requires a
+# packet's rubric to equal this value in full, not merely by `version`.
+REVIEWER_RUBRIC: dict = {
+    "version": REVIEWER_RUBRIC_VERSION,
+    "how_to_use": (
+        "For every entry, read item_label, review_guidance, generated_title and "
+        "generated_description, then fill in every judgement field below. Do not skip an "
+        "entry. You are not told which system produced any draft; judge only the text in "
+        "front of you."
+    ),
+    "fields": {
+        "label_faithful": {
+            "type": "boolean (true / false)",
+            "meaning": (
+                "true only if every concrete claim in the draft follows from item_label "
+                "plus ordinary general knowledge about that kind of item. false if the "
+                "draft invents a brand, model, price, condition, age, size, material, "
+                "colour, accessories, prior ownership, contact details or a link the "
+                "label does not support."
+            ),
+        },
+        "unsupported_attributes_found": {
+            "type": "array of short non-blank strings (empty array = none found)",
+            "meaning": (
+                "one short phrase per fabricated or unsupported attribute you found "
+                "(for example 'invents brand Sony', 'claims like-new condition'). Must "
+                "be empty whenever label_faithful is true, and non-empty whenever it is "
+                "false."
+            ),
+        },
+        "clarity_rating": {
+            "type": "integer 1-5",
+            "anchors": {
+                "1": "unusable: confusing, contradictory, or not recognisably about the item",
+                "2": "poor: understandable only with effort; awkward or padded",
+                "3": "adequate: clear enough to publish after light, style-only editing",
+                "4": "good: clear and well-structured; needs no editing for clarity",
+                "5": "excellent: crisp, specific to the item, nothing to improve for clarity",
+            },
+        },
+        "usefulness_rating": {
+            "type": "integer 1-5",
+            "anchors": {
+                "1": "unusable: tells a buyer nothing they could act on",
+                "2": "poor: barely more informative than the bare label",
+                "3": "adequate: covers the basics a buyer needs to decide to enquire",
+                "4": "good: genuinely helpful; anticipates common buyer questions",
+                "5": "excellent: the listing you would want as the seller",
+            },
+        },
+        "requires_factual_deletion_before_use": {
+            "type": "boolean (true / false)",
+            "meaning": (
+                "true if a sentence or phrase would have to be DELETED before the draft "
+                "could be published truthfully (an unsupported factual claim). Rewording "
+                "for style does not count. Must be true whenever "
+                "unsupported_attributes_found is non-empty."
+            ),
+        },
+        "overall_decision": {
+            "type": "exactly one of: accept, reject, unavailable",
+            "meaning": (
+                "'accept' = publishable as-is or after style-only edits. 'reject' = needs "
+                "factual deletion or is too weak to use. 'unavailable' = used ONLY when "
+                "status is 'unavailable' (no draft was generated)."
+            ),
+        },
+        "notes": {
+            "type": "string (may be empty)",
+            "meaning": "free text; never put a real name or contact detail here.",
+        },
+    },
+    "unavailable_drafts": (
+        "When an entry's status is 'unavailable' there is no draft to read. Set "
+        "overall_decision to 'unavailable'. Leave label_faithful, clarity_rating, "
+        "usefulness_rating and requires_factual_deletion_before_use as null — they "
+        "cannot be assessed. unsupported_attributes_found must be an empty array. notes "
+        "may record anything you want."
+    ),
+    "consistency_rules": [
+        "If status is 'generated', overall_decision is 'accept' or 'reject', never 'unavailable'.",
+        "If status is 'unavailable', overall_decision is 'unavailable' and label_faithful, "
+        "clarity_rating, usefulness_rating and requires_factual_deletion_before_use are all null.",
+        "overall_decision 'accept' requires label_faithful true, an empty "
+        "unsupported_attributes_found, and requires_factual_deletion_before_use false.",
+        "label_faithful false requires a non-empty unsupported_attributes_found.",
+        "A non-empty unsupported_attributes_found requires requires_factual_deletion_before_use true.",
+        "clarity_rating and usefulness_rating are integers 1-5 for every generated draft "
+        "and null for every unavailable one.",
+    ],
+}
+
+
 def build_reviewer_packet(artifact_id: str, seed: int, queue: Sequence[dict], *, status: str = "complete") -> dict:
     """The ACTUAL separate artifact handed to a blinded reviewer: review
     IDs, labels, guidance, the generated drafts, and blank human fields —
@@ -1212,7 +1357,16 @@ def build_reviewer_packet(artifact_id: str, seed: int, queue: Sequence[dict], *,
     empty `queue`) only for the placeholder run_evaluation() writes
     before any result exists — so a stale COMPLETE packet from an older
     run can never be mistaken for belonging to a new, still-running,
-    failed, or interrupted one."""
+    failed, or interrupted one.
+
+    The returned packet is GENUINELY INDEPENDENT of its sources: the
+    rubric is a deep copy of REVIEWER_RUBRIC and every queue entry is
+    deep-copied, so building or later editing a packet can never mutate
+    REVIEWER_RUBRIC, the supplied `queue`, or the researcher artifact it
+    came from. `validate-review` relies on that independence — an
+    in-place edit to a packet's rubric or an immutable entry field is
+    then a real divergence it can detect, not a change to both sides of
+    the comparison at once."""
     return {
         "schema_version": REVIEWER_PACKET_SCHEMA_VERSION,
         "artifact_id": artifact_id,
@@ -1221,10 +1375,12 @@ def build_reviewer_packet(artifact_id: str, seed: int, queue: Sequence[dict], *,
         "note": (
             "Blinded reviewer packet. Contains no candidate, model, prompt or configuration "
             "identity, and no technical result data — only what a reviewer needs to judge each "
-            "draft. Fill in the blank fields on every entry. Which candidate produced which entry "
-            "is recorded only in the separate researcher artifact, never here."
+            "draft. Fill in the blank fields on every entry per the embedded rubric. Which "
+            "candidate produced which entry is recorded only in the separate researcher "
+            "artifact, never here."
         ),
-        "entries": list(queue),
+        "rubric": copy.deepcopy(REVIEWER_RUBRIC),
+        "entries": [copy.deepcopy(entry) for entry in queue],
     }
 
 
@@ -1658,6 +1814,602 @@ def _dry_run_models_available(required: frozenset[str]) -> ModelAvailability:
     )
 
 
+# --- human review completion layer (model-free) ---------------------------
+#
+# Nothing below imports ollama/httpx, loads a model, opens a socket, or
+# reads a production setting. `validate_review` and `summarise_review`
+# are pure functions of their JSON inputs; the CLI wrappers only add file
+# IO and the shared atomic writer.
+
+SUMMARY_SCHEMA_VERSION = 1
+
+# Cap on how many rejected drafts a candidate's summary lists for human
+# follow-up. Keeps generated text / notes out of the aggregate except for
+# a bounded reference.
+REJECTED_CASE_REFERENCE_CAP = 5
+
+
+def _is_genuine_bool(value: Any) -> bool:
+    return isinstance(value, bool)
+
+
+def _is_genuine_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+# Immutable per-entry fields: set by the harness, never editable during
+# review. validate_review rejects any packet whose entry disagrees with
+# the researcher artifact on any of these.
+_REVIEW_IMMUTABLE_FIELDS: tuple[str, ...] = (
+    "item_label",
+    "review_guidance",
+    "generated_title",
+    "generated_description",
+    "status",
+)
+
+
+def _validate_review_values(review_id: str, entry: dict, status: str) -> list[str]:
+    """Every human-entered value on ONE entry, strictly against
+    REVIEWER_RUBRIC. Returns a list of concise error strings (empty ==
+    this entry's human values are all valid and mutually consistent)."""
+    errs: list[str] = []
+    laf = entry["label_faithful"]
+    uaf = entry["unsupported_attributes_found"]
+    clarity = entry["clarity_rating"]
+    useful = entry["usefulness_rating"]
+    needs_deletion = entry["requires_factual_deletion_before_use"]
+    decision = entry["overall_decision"]
+    notes = entry["notes"]
+
+    if not isinstance(notes, str):
+        errs.append(f"{review_id}: notes must be a string")
+
+    uaf_ok = isinstance(uaf, list) and all(isinstance(x, str) and x.strip() for x in uaf)
+    if not uaf_ok:
+        errs.append(f"{review_id}: unsupported_attributes_found must be an array of non-blank strings")
+
+    if status == "unavailable":
+        if decision != "unavailable":
+            errs.append(f"{review_id}: overall_decision must be 'unavailable' for an unavailable draft")
+        for name, value in (
+            ("label_faithful", laf),
+            ("clarity_rating", clarity),
+            ("usefulness_rating", useful),
+            ("requires_factual_deletion_before_use", needs_deletion),
+        ):
+            if value is not None:
+                errs.append(f"{review_id}: {name} must be null for an unavailable draft")
+        if uaf_ok and uaf != []:
+            errs.append(f"{review_id}: unsupported_attributes_found must be empty for an unavailable draft")
+        return errs
+
+    # status == "generated"
+    if laf is None and clarity is None and useful is None and needs_deletion is None and decision is None:
+        return [f"{review_id}: still pending (no judgement recorded)"]
+
+    if decision not in ("accept", "reject"):
+        errs.append(
+            f"{review_id}: overall_decision must be 'accept' or 'reject' for a generated draft (got {decision!r})"
+        )
+    if not _is_genuine_bool(laf):
+        errs.append(f"{review_id}: label_faithful must be true or false")
+    if not _is_genuine_bool(needs_deletion):
+        errs.append(f"{review_id}: requires_factual_deletion_before_use must be true or false")
+    if not (_is_genuine_int(clarity) and RATING_MIN <= clarity <= RATING_MAX):
+        errs.append(f"{review_id}: clarity_rating must be an integer {RATING_MIN}-{RATING_MAX}")
+    if not (_is_genuine_int(useful) and RATING_MIN <= useful <= RATING_MAX):
+        errs.append(f"{review_id}: usefulness_rating must be an integer {RATING_MIN}-{RATING_MAX}")
+
+    # Consistency rules — only checked where the underlying types are
+    # already sound, so one wrong type does not cascade into noise.
+    if _is_genuine_bool(laf) and uaf_ok:
+        if laf is False and not uaf:
+            errs.append(f"{review_id}: label_faithful is false but unsupported_attributes_found is empty")
+        if laf is True and uaf:
+            errs.append(f"{review_id}: label_faithful is true but unsupported_attributes_found is non-empty")
+    if uaf_ok and _is_genuine_bool(needs_deletion) and uaf and needs_deletion is False:
+        errs.append(
+            f"{review_id}: unsupported_attributes_found is non-empty but "
+            "requires_factual_deletion_before_use is false"
+        )
+    if decision == "accept":
+        if laf is not True:
+            errs.append(f"{review_id}: overall_decision 'accept' requires label_faithful true")
+        if uaf_ok and uaf:
+            errs.append(f"{review_id}: overall_decision 'accept' requires an empty unsupported_attributes_found")
+        if needs_deletion is not False:
+            errs.append(
+                f"{review_id}: overall_decision 'accept' requires requires_factual_deletion_before_use false"
+            )
+    return errs
+
+
+def validate_review(researcher: dict, reviewed: dict) -> list[str]:
+    """Check a completed blinded reviewer packet against its researcher
+    artifact. Returns a list of concise error strings; an empty list
+    means the review is valid and ready for `summarise-review`.
+
+    NEVER mutates either argument. Model-free. Checks, in order:
+    artifact_id / seed / status agreement; the packet carries the FULL
+    canonical rubric value (not merely its version — a same-version edit
+    to any text is rejected); exact one-to-one review-id coverage (no
+    missing, extra or duplicate); every entry has exactly the required
+    field set; the immutable fields (label, guidance, generated text,
+    status) were not edited; and every human-entered value obeys
+    REVIEWER_RUBRIC, including the internal-consistency rules. A
+    malformed researcher `human_review_queue` (a non-object entry, a
+    blank review_id, a duplicate id) is a concise error, never a
+    KeyError."""
+    if not isinstance(researcher, dict):
+        return ["researcher artifact is not a JSON object"]
+    if not isinstance(reviewed, dict):
+        return ["reviewed packet is not a JSON object"]
+
+    errors: list[str] = []
+
+    researcher_id = researcher.get("artifact_id")
+    reviewed_id = reviewed.get("artifact_id")
+    if not isinstance(reviewed_id, str) or not reviewed_id.strip() or reviewed_id != researcher_id:
+        errors.append("artifact_id mismatch between researcher artifact and reviewed packet")
+    if researcher.get("seed") != reviewed.get("seed"):
+        errors.append("seed mismatch between researcher artifact and reviewed packet")
+    if researcher.get("status") != "complete":
+        errors.append("researcher artifact status is not 'complete'")
+    if reviewed.get("status") != "complete":
+        errors.append("reviewed packet status is not 'complete' (still a placeholder or unfinished)")
+    if reviewed.get("schema_version") != REVIEWER_PACKET_SCHEMA_VERSION:
+        errors.append(f"reviewed packet schema_version is not {REVIEWER_PACKET_SCHEMA_VERSION}")
+
+    rubric = reviewed.get("rubric")
+    if rubric != REVIEWER_RUBRIC:
+        if not isinstance(rubric, dict):
+            errors.append("reviewed packet is missing its rubric object")
+        elif rubric.get("version") != REVIEWER_RUBRIC_VERSION:
+            errors.append(f"reviewed packet rubric is not version {REVIEWER_RUBRIC_VERSION}")
+        else:
+            errors.append(
+                "reviewed packet rubric does not match the canonical rubric "
+                "(same version, altered how_to_use / field / anchor / rule text)"
+            )
+
+    canonical = researcher.get("human_review_queue")
+    entries = reviewed.get("entries")
+    if not isinstance(canonical, list) or not canonical:
+        errors.append("researcher artifact has no human_review_queue to validate against")
+        return errors
+    if not isinstance(entries, list):
+        errors.append("reviewed packet has no entries array")
+        return errors
+
+    if len(entries) != len(canonical):
+        errors.append(
+            f"entry count mismatch: reviewed packet has {len(entries)}, researcher artifact expects {len(canonical)}"
+        )
+
+    # Defensive parse of the researcher's OWN queue: a corrupt entry
+    # here must surface as a concise error, never a KeyError/TypeError.
+    canonical_by_id: dict[str, dict] = {}
+    for position, canon_entry in enumerate(canonical):
+        if not isinstance(canon_entry, dict):
+            errors.append(f"researcher human_review_queue[{position}] is not an object")
+            continue
+        canon_rid = canon_entry.get("review_id")
+        if not isinstance(canon_rid, str) or not canon_rid.strip():
+            errors.append(f"researcher human_review_queue[{position}] has no valid review_id")
+            continue
+        if canon_rid in canonical_by_id:
+            errors.append(f"{canon_rid}: duplicate review_id in the researcher human_review_queue")
+            continue
+        canonical_by_id[canon_rid] = canon_entry
+    seen_ids: set[str] = set()
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(f"entry[{index}] is not an object")
+            continue
+        review_id = entry.get("review_id")
+        if not isinstance(review_id, str) or not review_id.strip():
+            errors.append(f"entry[{index}] has no valid review_id")
+            continue
+        if review_id in seen_ids:
+            errors.append(f"{review_id}: duplicate review_id in the reviewed packet")
+            continue
+        seen_ids.add(review_id)
+        canon = canonical_by_id.get(review_id)
+        if canon is None:
+            errors.append(f"{review_id}: not a review_id present in the researcher artifact")
+            continue
+        if set(entry) != HUMAN_REVIEW_REQUIRED_FIELDS:
+            missing = sorted(HUMAN_REVIEW_REQUIRED_FIELDS - set(entry))
+            extra = sorted(set(entry) - HUMAN_REVIEW_REQUIRED_FIELDS)
+            errors.append(f"{review_id}: wrong field set (missing={missing}, extra={extra})")
+            continue
+        for field in _REVIEW_IMMUTABLE_FIELDS:
+            if entry[field] != canon.get(field):
+                errors.append(f"{review_id}: immutable field '{field}' was changed during review")
+        errors.extend(_validate_review_values(review_id, entry, canon.get("status")))
+
+    for missing_id in sorted(set(canonical_by_id) - seen_ids):
+        errors.append(f"{missing_id}: missing from the reviewed packet")
+
+    return errors
+
+
+def _mean_or_none(values: Sequence[float]) -> float | None:
+    return round(statistics.mean(values), 3) if values else None
+
+
+def _validate_researcher_join(researcher: dict, reviewed: dict, fixture: FixtureSet) -> list[str]:
+    """Strictly validate the RESEARCHER-ONLY join data before any
+    aggregation. Pure and model-free; NEVER raises for malformed input —
+    every structural problem is returned as a concise error string, so a
+    corrupt researcher queue / candidate list / answer key can never
+    reach summarise_review's arithmetic as a KeyError or TypeError.
+
+    Assumes validate_review(researcher, reviewed) already returned [] (so
+    the reviewed entries are 1:1 with a well-formed canonical queue and
+    the fixture hash has been verified by the caller). Checks, in stages:
+
+      1. the canonical queue is a list of objects with unique, non-blank
+         review_ids;
+      2. researcher `candidates` is a non-empty list of objects each with
+         a non-blank `candidate_id`, and the ids are unique;
+      3. `human_review_answer_key` is an object whose review-id set
+         exactly equals BOTH the canonical queue's and the reviewed
+         entries' review-id sets;
+      4. every mapping is an object with exactly `case_id` and
+         `candidate_id`, both non-blank strings, each naming a case in
+         the hash-verified fixture and a candidate in the researcher list;
+      5. the mappings cover every fixture-case x candidate pair EXACTLY
+         once;
+      6. every mapping equals the deterministic (case_id, candidate_id)
+         recomputed from the recorded seed, the ordered fixture cases and
+         the ordered researcher candidates via blinded_pair_order;
+      7. each canonical queue entry's item_label and review_guidance
+         agree with its mapped fixture case.
+    """
+    canonical = researcher.get("human_review_queue")
+    if not isinstance(canonical, list) or not canonical:
+        return ["researcher artifact has no human_review_queue"]
+    queue_by_id: dict[str, dict] = {}
+    stage: list[str] = []
+    for position, entry in enumerate(canonical):
+        if not isinstance(entry, dict):
+            stage.append(f"human_review_queue[{position}] is not an object")
+            continue
+        rid = entry.get("review_id")
+        if not isinstance(rid, str) or not rid.strip():
+            stage.append(f"human_review_queue[{position}] has no valid review_id")
+            continue
+        if rid in queue_by_id:
+            stage.append(f"{rid}: duplicate review_id in human_review_queue")
+            continue
+        queue_by_id[rid] = entry
+    if stage:
+        return stage
+    queue_ids = set(queue_by_id)
+
+    raw_candidates = researcher.get("candidates")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
+        return ["researcher artifact has no candidates list"]
+    candidate_ids: list[str] = []
+    for position, candidate in enumerate(raw_candidates):
+        if not isinstance(candidate, dict):
+            stage.append(f"candidates[{position}] is not an object")
+            continue
+        cid = candidate.get("candidate_id")
+        if not isinstance(cid, str) or not cid.strip():
+            stage.append(f"candidates[{position}] has no valid candidate_id")
+            continue
+        candidate_ids.append(cid)
+    if stage:
+        return stage
+    if len(set(candidate_ids)) != len(candidate_ids):
+        return [f"researcher candidate_ids are not unique: {sorted(candidate_ids)}"]
+    candidate_id_set = set(candidate_ids)
+
+    answer_key = researcher.get("human_review_answer_key")
+    if not isinstance(answer_key, dict) or not answer_key:
+        return ["researcher artifact has no human_review_answer_key object"]
+    reviewed_entries = reviewed.get("entries")
+    reviewed_ids = (
+        {e.get("review_id") for e in reviewed_entries if isinstance(e, dict)}
+        if isinstance(reviewed_entries, list)
+        else set()
+    )
+    ak_ids = set(answer_key)
+    if ak_ids != queue_ids:
+        missing = sorted(queue_ids - ak_ids)
+        extra = sorted(ak_ids - queue_ids)
+        stage.append(
+            f"answer_key review-id set does not match the canonical queue (missing={missing}, extra={extra})"
+        )
+    if ak_ids != reviewed_ids:
+        stage.append("answer_key review-id set does not match the reviewed-entry review-id set")
+    if stage:
+        return stage
+
+    fixture_case_ids = [c.case_id for c in fixture.cases]
+    fixture_cases_by_id = {c.case_id: c for c in fixture.cases}
+    for rid in sorted(ak_ids):
+        mapping = answer_key[rid]
+        if not isinstance(mapping, dict) or set(mapping) != {"case_id", "candidate_id"}:
+            stage.append(f"{rid}: answer_key mapping must be an object with exactly case_id and candidate_id")
+            continue
+        mapped_case = mapping.get("case_id")
+        mapped_candidate = mapping.get("candidate_id")
+        if (
+            not isinstance(mapped_case, str)
+            or not mapped_case.strip()
+            or not isinstance(mapped_candidate, str)
+            or not mapped_candidate.strip()
+        ):
+            stage.append(f"{rid}: answer_key case_id and candidate_id must be non-blank strings")
+            continue
+        if mapped_case not in fixture_cases_by_id:
+            stage.append(f"{rid}: answer_key case_id '{mapped_case}' is not a case in the hash-verified fixture")
+        if mapped_candidate not in candidate_id_set:
+            stage.append(f"{rid}: answer_key candidate_id '{mapped_candidate}' is not a researcher candidate")
+    if stage:
+        return stage
+
+    expected_pairs = {(case_id, cid) for case_id in fixture_case_ids for cid in candidate_ids}
+    observed_pairs = [(answer_key[rid]["case_id"], answer_key[rid]["candidate_id"]) for rid in ak_ids]
+    if len(observed_pairs) != len(expected_pairs) or set(observed_pairs) != expected_pairs:
+        return [
+            "answer_key does not map each fixture-case x candidate pair exactly once "
+            f"(expected {len(expected_pairs)} distinct pairs, got {len(set(observed_pairs))} distinct "
+            f"across {len(observed_pairs)} mappings)"
+        ]
+
+    seed = researcher.get("seed")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        return ["researcher seed is not an integer; cannot recompute the deterministic blinding"]
+    recomputed = blinded_pair_order(seed, fixture_case_ids, candidate_ids)
+    expected_key = {
+        f"REVIEW-{position:03d}": (case_id, cid)
+        for position, (case_id, cid) in enumerate(recomputed, start=1)
+    }
+    if set(expected_key) != ak_ids:
+        return ["recomputed deterministic review-id set does not match the answer_key"]
+    mismatched = sorted(
+        rid
+        for rid in expected_key
+        if (answer_key[rid]["case_id"], answer_key[rid]["candidate_id"]) != expected_key[rid]
+    )
+    if mismatched:
+        preview = ", ".join(mismatched[:5]) + (" ..." if len(mismatched) > 5 else "")
+        return [f"answer_key mapping does not match the deterministic blinding for: {preview}"]
+
+    for rid in sorted(queue_ids):
+        queue_entry = queue_by_id[rid]
+        case = fixture_cases_by_id[answer_key[rid]["case_id"]]
+        if queue_entry.get("item_label") != case.item_label:
+            stage.append(f"{rid}: canonical queue item_label disagrees with mapped fixture case '{case.case_id}'")
+        if queue_entry.get("review_guidance") != case.review_guidance:
+            stage.append(
+                f"{rid}: canonical queue review_guidance disagrees with mapped fixture case '{case.case_id}'"
+            )
+    return stage
+
+
+def summarise_review(researcher: dict, reviewed: dict, fixture: FixtureSet) -> dict:
+    """Candidate-level DESCRIPTIVE metrics from a completed, validated
+    review. Refuses (ReviewValidationError) if the review does not pass
+    validate_review, if the supplied fixture's content hash does not
+    match the researcher artifact, or if the researcher-only join data
+    (queue / candidates / answer key) fails _validate_researcher_join.
+    Model-free, never mutates its inputs, and NEVER ranks candidates,
+    picks a winner, or changes a setting.
+
+    The join is researcher-only: review_id -> (case_id, candidate_id) via
+    human_review_answer_key, then case_id -> tags via the fixture. Human
+    notes and generated draft text are kept out of the aggregate except
+    for a bounded per-candidate rejected-case reference."""
+    errors = validate_review(researcher, reviewed)
+    if errors:
+        raise ReviewValidationError(
+            f"reviewed packet does not pass validate-review ({len(errors)} problem(s)): {errors[0]}"
+        )
+
+    fixture_meta = researcher.get("fixture")
+    expected_hash = fixture_meta.get("content_sha256") if isinstance(fixture_meta, dict) else None
+    actual_hash = fixture_content_sha256(fixture)
+    if expected_hash != actual_hash:
+        raise ReviewValidationError("fixture content hash does not match the researcher artifact")
+
+    join_errors = _validate_researcher_join(researcher, reviewed, fixture)
+    if join_errors:
+        shown = "; ".join(join_errors[:3])
+        more = f" (+{len(join_errors) - 3} more)" if len(join_errors) > 3 else ""
+        raise ReviewValidationError(f"researcher join data is invalid: {shown}{more}")
+
+    answer_key = researcher["human_review_answer_key"]
+    candidates_by_id = {c["candidate_id"]: c for c in researcher["candidates"]}
+    cases_by_id = {c.case_id: c for c in fixture.cases}
+    entries_by_id = {e["review_id"]: e for e in reviewed["entries"]}
+
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for review_id, mapping in answer_key.items():
+        grouped.setdefault(mapping["candidate_id"], []).append((review_id, mapping["case_id"]))
+
+    by_candidate: dict[str, dict] = {}
+    for candidate_id in sorted(grouped):
+        rows = grouped[candidate_id]
+        config = candidates_by_id.get(candidate_id, {})
+
+        generated_count = 0
+        unavailable_count = 0
+        acceptance_count = 0
+        acceptance_without_deletion_count = 0
+        unsupported_attribute_failure_count = 0
+        high_risk_failure_count = 0
+        clarity_values: list[int] = []
+        usefulness_values: list[int] = []
+        rejected_total = 0
+        rejected_reference: list[dict] = []
+
+        for review_id, case_id in rows:
+            entry = entries_by_id[review_id]
+            case = cases_by_id.get(case_id)
+            tags = set(case.tags) if case is not None else set()
+            decision = entry["overall_decision"]
+
+            if entry["status"] == "unavailable":
+                unavailable_count += 1
+                continue
+
+            generated_count += 1
+            if entry["clarity_rating"] is not None:
+                clarity_values.append(entry["clarity_rating"])
+            if entry["usefulness_rating"] is not None:
+                usefulness_values.append(entry["usefulness_rating"])
+            if entry["unsupported_attributes_found"]:
+                unsupported_attribute_failure_count += 1
+            if decision == "accept":
+                acceptance_count += 1
+                if entry["requires_factual_deletion_before_use"] is False:
+                    acceptance_without_deletion_count += 1
+            elif decision == "reject":
+                rejected_total += 1
+                if tags & HIGH_RISK_CASE_TAGS:
+                    high_risk_failure_count += 1
+                if len(rejected_reference) < REJECTED_CASE_REFERENCE_CAP:
+                    rejected_reference.append(
+                        {
+                            "review_id": review_id,
+                            "case_id": case_id,
+                            "item_label": entry["item_label"],
+                            "overall_decision": decision,
+                            "unsupported_attributes_found": list(entry["unsupported_attributes_found"]),
+                            "requires_factual_deletion_before_use": entry["requires_factual_deletion_before_use"],
+                            "notes": entry["notes"],
+                        }
+                    )
+
+        by_candidate[candidate_id] = {
+            "model_name": config.get("model_name"),
+            "prompt_version": config.get("prompt_version"),
+            "temperature": config.get("temperature"),
+            "num_predict": config.get("num_predict"),
+            "max_attempts": config.get("max_attempts"),
+            "reviewed_count": len(rows),
+            "generated_count": generated_count,
+            "unavailable_count": unavailable_count,
+            "acceptance_count": acceptance_count,
+            "acceptance_rate": round(acceptance_count / generated_count, 4) if generated_count else None,
+            "acceptance_without_deletion_count": acceptance_without_deletion_count,
+            "acceptance_without_deletion_rate": (
+                round(acceptance_without_deletion_count / generated_count, 4) if generated_count else None
+            ),
+            "unsupported_attribute_failure_count": unsupported_attribute_failure_count,
+            "prompt_injection_or_high_risk_failure_count": high_risk_failure_count,
+            "mean_clarity_rating": _mean_or_none(clarity_values),
+            "mean_usefulness_rating": _mean_or_none(usefulness_values),
+            "rejected_total": rejected_total,
+            "rejected_case_reference": rejected_reference,
+            "rejected_case_reference_truncated": rejected_total > len(rejected_reference),
+        }
+
+    reviewed_entry_count = len(reviewed["entries"])
+    per_candidate_total = sum(candidate["reviewed_count"] for candidate in by_candidate.values())
+    if per_candidate_total != reviewed_entry_count:
+        raise ReviewValidationError(
+            "summary count invariant violated: per-candidate reviewed_count sums to "
+            f"{per_candidate_total}, expected reviewed_entry_count {reviewed_entry_count}"
+        )
+
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "kind": "listing_review_summary",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "researcher_artifact_id": researcher["artifact_id"],
+        "seed": researcher["seed"],
+        "fixture_content_sha256": actual_hash,
+        "reviewed_entry_count": reviewed_entry_count,
+        "by_candidate": by_candidate,
+        "_note": (
+            "Descriptive metrics only, computed from a completed blinded review that passed "
+            "validate-review. This summary does NOT rank candidates, choose a winner, or change "
+            "any production setting — DECISION_RULES in the researcher artifact are for a human to "
+            "apply by hand. Generated draft text is not copied here; use a review_id against the "
+            "researcher artifact to read it."
+        ),
+    }
+
+
+def _load_json_object(path: Path, label: str) -> dict:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ReviewInputError(f"{label} file does not exist") from exc
+    except json.JSONDecodeError as exc:
+        raise ReviewInputError(f"{label} file is not valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise ReviewInputError(f"{label} file must contain a JSON object")
+    return raw
+
+
+def _cli_validate_review(args: argparse.Namespace) -> int:
+    try:
+        researcher = _load_json_object(args.researcher, "researcher artifact")
+        reviewed = _load_json_object(args.reviewed, "reviewed packet")
+    except ReviewInputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    errors = validate_review(researcher, reviewed)
+    if errors:
+        print(f"review is NOT valid ({len(errors)} problem(s)):", file=sys.stderr)
+        for message in errors:
+            print(f"  - {message}", file=sys.stderr)
+        return 1
+
+    print(f"review is valid: {len(reviewed['entries'])} entries, all consistent with rubric v{REVIEWER_RUBRIC_VERSION}.")
+    return 0
+
+
+def _cli_summarise_review(args: argparse.Namespace) -> int:
+    try:
+        researcher = _load_json_object(args.researcher, "researcher artifact")
+        reviewed = _load_json_object(args.reviewed, "reviewed packet")
+    except ReviewInputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    errors = validate_review(researcher, reviewed)
+    if errors:
+        print(
+            f"refusing to summarise: the reviewed packet fails validate-review ({len(errors)} problem(s)).",
+            file=sys.stderr,
+        )
+        for message in errors[:20]:
+            print(f"  - {message}", file=sys.stderr)
+        return 1
+
+    try:
+        fixture = load_fixture_set(args.fixtures)
+    except FixtureContractError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        summary = summarise_review(researcher, reviewed, fixture)
+    except ReviewValidationError as exc:
+        print(f"refusing to summarise: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        _writer(args.out)(summary)
+    except OSError as exc:
+        print(f"error: could not write the summary ({type(exc).__name__})", file=sys.stderr)
+        return 1
+
+    print(f"Wrote review summary to {args.out}")
+    return 0
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
@@ -1704,6 +2456,22 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--host", type=str, default=None, help="Ollama host (defaults to settings.ollama_host)")
     run_p.add_argument("--execute-real-models", action="store_true", default=False)
 
+    vr_p = sub.add_parser(
+        "validate-review",
+        help="Validate a completed blinded reviewer packet against its researcher artifact. No model calls.",
+    )
+    vr_p.add_argument("--researcher", type=Path, required=True, help="The researcher artifact from a run/dry-run")
+    vr_p.add_argument("--reviewed", type=Path, required=True, help="The reviewer packet with human fields filled in")
+
+    sr_p = sub.add_parser(
+        "summarise-review",
+        help="Aggregate a validated review into candidate-level descriptive metrics. No model calls.",
+    )
+    sr_p.add_argument("--researcher", type=Path, required=True)
+    sr_p.add_argument("--reviewed", type=Path, required=True)
+    sr_p.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES_PATH)
+    sr_p.add_argument("--out", type=Path, required=True)
+
     return parser
 
 
@@ -1725,6 +2493,15 @@ def _reviewer_packet_path(out_path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # The two review subcommands are model-free and take no --candidates;
+    # handle them before the fixture/candidate loading the model-capable
+    # subcommands share.
+    if args.command == "validate-review":
+        return _cli_validate_review(args)
+    if args.command == "summarise-review":
+        return _cli_summarise_review(args)
+
     try:
         fixture = load_fixture_set(args.fixtures)
         candidates = load_candidate_set(args.candidates)

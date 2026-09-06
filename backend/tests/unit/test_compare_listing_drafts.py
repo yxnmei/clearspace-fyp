@@ -36,10 +36,15 @@ from evaluation.scripts.compare_listing_drafts import (
     ALLOWED_CLAIM_CATEGORIES,
     DEFAULT_SEED,
     EVAL_PROMPT_VERSION,
+    HIGH_RISK_CASE_TAGS,
     HUMAN_REVIEW_REQUIRED_FIELDS,
     MAX_TOTAL_CALLS_CEILING,
     PRODUCTION_PROMPT_VERSION,
+    REJECTED_CASE_REFERENCE_CAP,
     REVIEWER_PACKET_FORBIDDEN_SUBSTRINGS,
+    REVIEWER_RUBRIC,
+    REVIEWER_RUBRIC_VERSION,
+    SUMMARY_SCHEMA_VERSION,
     CandidateConfig,
     CandidateContractError,
     CallBudgetExceededError,
@@ -50,6 +55,8 @@ from evaluation.scripts.compare_listing_drafts import (
     ModelCallError,
     ModelPreflightError,
     ResolvedModel,
+    ReviewInputError,
+    ReviewValidationError,
     blinded_pair_order,
     build_human_review_queue,
     build_reviewer_packet,
@@ -63,6 +70,8 @@ from evaluation.scripts.compare_listing_drafts import (
     parse_fixture_set,
     resolve_prompt_builder,
     run_evaluation,
+    summarise_review,
+    validate_review,
 )
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -2254,3 +2263,1455 @@ def test_importing_the_module_never_imports_ollama_or_httpx():
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
+
+
+# ======================================================================
+# Human review completion layer: rubric, validate-review, summarise-review
+# ======================================================================
+
+
+def _researcher_and_blank_packet(cases_raw, candidates_raw, script, *, reps=1, seed=DEFAULT_SEED):
+    """Run the fake-backed matrix, then build the (still blank) reviewer
+    packet from the researcher artifact — the exact pair a reviewer and
+    then validate-review / summarise-review would see."""
+    fake_clock.t = 0.0
+    fs = parse_fixture_set(fixture_file(cases_raw))
+    candidates = parse_candidate_set(candidate_file(candidates_raw))
+    report = run_evaluation(
+        fs,
+        candidates,
+        reps=reps,
+        seed=seed,
+        caller_fn=ScriptedCaller(script),
+        models_available_fn=fake_available,
+        clock_fn=fake_clock,
+        save=None,
+    )
+    assert report["status"] == "complete"
+    packet = build_reviewer_packet(report["artifact_id"], report["seed"], report["human_review_queue"])
+    return report, packet
+
+
+_ACCEPT_FIELDS = {
+    "label_faithful": True,
+    "unsupported_attributes_found": [],
+    "clarity_rating": 4,
+    "usefulness_rating": 4,
+    "requires_factual_deletion_before_use": False,
+    "overall_decision": "accept",
+    "notes": "",
+}
+_REJECT_FIELDS = {
+    "label_faithful": False,
+    "unsupported_attributes_found": ["invents an unstated attribute"],
+    "clarity_rating": 2,
+    "usefulness_rating": 3,
+    "requires_factual_deletion_before_use": True,
+    "overall_decision": "reject",
+    "notes": "one factual claim would need deleting",
+}
+_UNAVAILABLE_FIELDS = {
+    "label_faithful": None,
+    "unsupported_attributes_found": [],
+    "clarity_rating": None,
+    "usefulness_rating": None,
+    "requires_factual_deletion_before_use": None,
+    "overall_decision": "unavailable",
+    "notes": "",
+}
+
+
+def _complete_packet(packet, decisions=None):
+    """Fill every entry in a deep copy: unavailable -> the unavailable
+    template; generated -> accept, unless `decisions[review_id]` overrides
+    it to 'reject'."""
+    decisions = decisions or {}
+    out = copy.deepcopy(packet)
+    for entry in out["entries"]:
+        if entry["status"] == "unavailable":
+            entry.update(_UNAVAILABLE_FIELDS)
+        elif decisions.get(entry["review_id"]) == "reject":
+            entry.update(_REJECT_FIELDS)
+        else:
+            entry.update(_ACCEPT_FIELDS)
+    return out
+
+
+def _corrupt(completed, review_id, **fields):
+    out = copy.deepcopy(completed)
+    for entry in out["entries"]:
+        if entry["review_id"] == review_id:
+            entry.update(fields)
+            break
+    return out
+
+
+def _first_generated_rid(packet):
+    for entry in packet["entries"]:
+        if entry["status"] == "generated":
+            return entry["review_id"]
+    raise AssertionError("no generated entry in packet")
+
+
+def _rids_for_cases(report, case_ids):
+    key = report["human_review_answer_key"]
+    return [rid for rid, mapping in key.items() if mapping["case_id"] in set(case_ids)]
+
+
+# --- the embedded rubric ---------------------------------------------------
+
+
+def test_every_reviewer_packet_embeds_the_rubric_without_identity():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate("hidden_candidate", model_name="hidden-model")], script=[valid_json_text()]
+    )
+    assert packet["rubric"]["version"] == REVIEWER_RUBRIC_VERSION
+    assert packet["rubric"] == REVIEWER_RUBRIC
+    serialised = json.dumps(packet)
+    assert "hidden_candidate" not in serialised
+    assert "hidden-model" not in serialised
+    for forbidden in REVIEWER_PACKET_FORBIDDEN_SUBSTRINGS:
+        assert forbidden not in serialised
+
+
+def test_the_rubric_defines_every_human_field_and_two_sets_of_rating_anchors():
+    human_value_fields = {
+        "label_faithful",
+        "unsupported_attributes_found",
+        "clarity_rating",
+        "usefulness_rating",
+        "requires_factual_deletion_before_use",
+        "overall_decision",
+        "notes",
+    }
+    assert set(REVIEWER_RUBRIC["fields"]) == human_value_fields
+    assert {str(n) for n in range(1, 6)} == set(REVIEWER_RUBRIC["fields"]["clarity_rating"]["anchors"])
+    assert {str(n) for n in range(1, 6)} == set(REVIEWER_RUBRIC["fields"]["usefulness_rating"]["anchors"])
+    assert REVIEWER_RUBRIC["unavailable_drafts"]
+    assert any("accept" in rule for rule in REVIEWER_RUBRIC["consistency_rules"])
+
+
+# --- build_reviewer_packet independence (no mutable aliasing) ---------
+
+
+def test_build_reviewer_packet_rubric_is_a_deep_independent_copy():
+    _, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    assert packet["rubric"] == REVIEWER_RUBRIC
+    assert packet["rubric"] is not REVIEWER_RUBRIC
+    assert packet["rubric"]["fields"] is not REVIEWER_RUBRIC["fields"]
+    assert (
+        packet["rubric"]["fields"]["clarity_rating"]["anchors"]
+        is not REVIEWER_RUBRIC["fields"]["clarity_rating"]["anchors"]
+    )
+    assert packet["rubric"]["consistency_rules"] is not REVIEWER_RUBRIC["consistency_rules"]
+
+    before = copy.deepcopy(REVIEWER_RUBRIC)
+    packet["rubric"]["how_to_use"] = "mutated"
+    packet["rubric"]["fields"]["clarity_rating"]["anchors"]["3"] = "mutated"
+    packet["rubric"]["consistency_rules"].append("mutated rule")
+    packet["rubric"]["fields"].clear()
+    assert REVIEWER_RUBRIC == before
+
+
+def test_build_reviewer_packet_entries_are_deep_independent_from_the_source_queue():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    queue = report["human_review_queue"]
+    assert packet["entries"][0] is not queue[0]
+
+    packet["entries"][0]["notes"] = "reviewer typed here"
+    packet["entries"][0]["unsupported_attributes_found"] = ["invented thing"]
+    packet["entries"][0]["item_label"] = "hacked label"
+
+    assert queue[0]["notes"] == ""
+    assert queue[0]["unsupported_attributes_found"] is None
+    assert queue[0]["item_label"] != "hacked label"
+    assert "reviewer typed here" not in json.dumps(report)
+
+
+def test_modifying_a_returned_packet_cannot_modify_the_researcher_artifact_or_canonical_rubric():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text()] * 2
+    )
+    before_report = json.dumps(report, sort_keys=True)
+    before_rubric = copy.deepcopy(REVIEWER_RUBRIC)
+
+    packet["rubric"]["version"] = 999
+    packet["rubric"]["fields"].clear()
+    for entry in packet["entries"]:
+        entry["item_label"] = "hacked"
+        entry["generated_title"] = "hacked"
+        entry["label_faithful"] = True
+
+    assert json.dumps(report, sort_keys=True) == before_report
+    assert REVIEWER_RUBRIC == before_rubric
+
+
+def test_an_in_process_rubric_edit_to_a_packet_is_rejected_not_silently_equal_on_both_sides():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    for entry in packet["entries"]:
+        entry.update(_ACCEPT_FIELDS)
+    # A reviewer tool edits the packet's OWN rubric in place. Because the
+    # packet holds an independent deep copy, REVIEWER_RUBRIC is untouched
+    # and validate_review's full-equality comparison fails.
+    packet["rubric"]["how_to_use"] = "edited inside the packet"
+    errors = validate_review(report, packet)
+    assert any("does not match the canonical rubric" in e for e in errors)
+
+
+def test_an_in_process_immutable_entry_edit_to_a_packet_is_rejected_not_silently_equal_on_both_sides():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    for entry in packet["entries"]:
+        entry.update(_ACCEPT_FIELDS)
+    packet["entries"][0]["generated_title"] = "edited inside the packet"
+    errors = validate_review(report, packet)
+    assert any("immutable field 'generated_title' was changed" in e for e in errors)
+    # The researcher queue entry was NOT dragged along by that edit.
+    assert report["human_review_queue"][0]["generated_title"] != "edited inside the packet"
+
+
+# --- validate-review: happy paths ---------------------------------------
+
+
+def test_validate_review_accepts_a_correctly_completed_packet():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    assert validate_review(report, completed) == []
+
+
+def test_validate_review_accepts_a_mix_of_accept_reject_and_unavailable():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2), make_case(3)],
+        [make_candidate(max_attempts=1)],
+        script=[valid_json_text(), valid_json_text(), "not json"],
+    )
+    reject_rid = _first_generated_rid(packet)
+    completed = _complete_packet(packet, decisions={reject_rid: "reject"})
+    statuses = {e["status"] for e in completed["entries"]}
+    assert statuses == {"generated", "unavailable"}
+    assert validate_review(report, completed) == []
+
+
+def test_validate_review_accepts_a_correctly_completed_unavailable_entry():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=["not json"]
+    )
+    assert packet["entries"][0]["status"] == "unavailable"
+    completed = _complete_packet(packet)
+    assert validate_review(report, completed) == []
+
+
+# --- validate-review: unavailable handling ------------------------------
+
+
+def test_validate_review_rejects_an_unavailable_entry_scored_like_a_generated_draft():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=["not json"]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(
+        completed,
+        rid,
+        label_faithful=True,
+        clarity_rating=4,
+        usefulness_rating=4,
+        requires_factual_deletion_before_use=False,
+        overall_decision="accept",
+    )
+    errors = validate_review(report, bad)
+    assert any("must be null for an unavailable draft" in e for e in errors)
+    assert any("overall_decision must be 'unavailable'" in e for e in errors)
+
+
+def test_validate_review_rejects_a_generated_entry_marked_unavailable():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(completed, rid, overall_decision="unavailable")
+    errors = validate_review(report, bad)
+    assert any("accept" in e and "reject" in e for e in errors)
+
+
+def test_validate_review_rejects_a_completely_unfilled_packet():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    errors = validate_review(report, packet)
+    assert len(errors) >= 2
+    assert all("still pending" in e for e in errors)
+
+
+# --- validate-review: wrong types / ranges ----------------------------
+
+
+@pytest.mark.parametrize("bad_value", [0, 1, "true", "false", None, [], 1.0])
+def test_validate_review_rejects_non_boolean_label_faithful(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, label_faithful=bad_value))
+    assert any("label_faithful" in e for e in errors)
+
+
+@pytest.mark.parametrize("bad_value", [None, "x", "true", 0, 1, 1.0])
+def test_validate_review_rejects_non_boolean_requires_factual_deletion(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, requires_factual_deletion_before_use=bad_value))
+    assert any("requires_factual_deletion_before_use" in e for e in errors)
+
+
+@pytest.mark.parametrize("bad_value", [1.0, "3", True, 0, 6, -1, None, 2.5])
+def test_validate_review_rejects_out_of_range_or_non_integer_ratings(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors_clarity = validate_review(report, _corrupt(completed, rid, clarity_rating=bad_value))
+    errors_useful = validate_review(report, _corrupt(completed, rid, usefulness_rating=bad_value))
+    assert any("clarity_rating" in e for e in errors_clarity)
+    assert any("usefulness_rating" in e for e in errors_useful)
+
+
+@pytest.mark.parametrize("bad_value", ["x", 3, None, ["  "], ["ok", 4], [""], {"a": 1}])
+def test_validate_review_rejects_bad_unsupported_attributes_found(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, unsupported_attributes_found=bad_value))
+    assert any("unsupported_attributes_found" in e for e in errors)
+
+
+@pytest.mark.parametrize("bad_value", ["maybe", "ACCEPT", "", "unavailable", 1, None])
+def test_validate_review_rejects_a_bad_overall_decision_on_a_generated_entry(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, overall_decision=bad_value))
+    assert errors  # some concise error, whichever rule catches it first
+
+
+@pytest.mark.parametrize("bad_value", [None, 5, ["a"], {"k": "v"}])
+def test_validate_review_rejects_non_string_notes(bad_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, notes=bad_value))
+    assert any("notes must be a string" in e for e in errors)
+
+
+# --- validate-review: inconsistent decisions --------------------------
+
+
+def test_validate_review_rejects_accept_with_unfaithful_label():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(completed, rid, label_faithful=False, unsupported_attributes_found=["invents a brand"])
+    errors = validate_review(report, bad)
+    assert any("'accept' requires label_faithful true" in e for e in errors)
+
+
+def test_validate_review_rejects_accept_with_unsupported_attributes():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(completed, rid, unsupported_attributes_found=["invents a brand"])
+    errors = validate_review(report, bad)
+    assert any("'accept' requires an empty unsupported_attributes_found" in e for e in errors)
+
+
+def test_validate_review_rejects_accept_that_requires_deletion():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(completed, rid, requires_factual_deletion_before_use=True)
+    errors = validate_review(report, bad)
+    assert any("'accept' requires requires_factual_deletion_before_use false" in e for e in errors)
+
+
+def test_validate_review_rejects_unfaithful_label_with_empty_unsupported_list():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet, decisions={_first_generated_rid(packet): "reject"})
+    rid = _first_generated_rid(packet)
+    bad = _corrupt(completed, rid, unsupported_attributes_found=[])
+    errors = validate_review(report, bad)
+    assert any("label_faithful is false but unsupported_attributes_found is empty" in e for e in errors)
+
+
+def test_validate_review_rejects_unsupported_attributes_without_required_deletion():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet, decisions={_first_generated_rid(packet): "reject"})
+    rid = _first_generated_rid(packet)
+    bad = _corrupt(completed, rid, requires_factual_deletion_before_use=False)
+    errors = validate_review(report, bad)
+    assert any("requires_factual_deletion_before_use is false" in e for e in errors)
+
+
+def test_validate_review_flags_a_still_pending_generated_entry():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    bad = _corrupt(
+        completed,
+        rid,
+        label_faithful=None,
+        unsupported_attributes_found=None,
+        clarity_rating=None,
+        usefulness_rating=None,
+        requires_factual_deletion_before_use=None,
+        overall_decision=None,
+    )
+    errors = validate_review(report, bad)
+    assert errors == [f"{rid}: still pending (no judgement recorded)"]
+
+
+# --- validate-review: immutable content -------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,new_value",
+    [
+        ("item_label", "a different label"),
+        ("review_guidance", "different guidance"),
+        ("generated_title", "an edited title"),
+        ("generated_description", "an edited description that is long enough to look plausible"),
+        ("status", "unavailable"),
+    ],
+)
+def test_validate_review_rejects_edited_immutable_fields(field, new_value):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    rid = completed["entries"][0]["review_id"]
+    errors = validate_review(report, _corrupt(completed, rid, **{field: new_value}))
+    assert any(f"immutable field '{field}' was changed" in e for e in errors)
+
+
+# --- validate-review: artifact / structural mismatch -----------------
+
+
+def test_validate_review_rejects_a_non_object_input():
+    assert validate_review([], {}) == ["researcher artifact is not a JSON object"]
+    assert validate_review({}, "x") == ["reviewed packet is not a JSON object"]
+
+
+def test_validate_review_rejects_artifact_id_mismatch():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["artifact_id"] = "some-other-run"
+    errors = validate_review(report, completed)
+    assert any("artifact_id mismatch" in e for e in errors)
+
+
+def test_validate_review_rejects_seed_mismatch():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()], seed=11
+    )
+    completed = _complete_packet(packet)
+    completed["seed"] = 999
+    errors = validate_review(report, completed)
+    assert any("seed mismatch" in e for e in errors)
+
+
+def test_validate_review_rejects_a_placeholder_status_packet():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["status"] = "incomplete"
+    errors = validate_review(report, completed)
+    assert any("status is not 'complete'" in e for e in errors)
+
+
+def test_validate_review_rejects_a_wrong_rubric_version():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["rubric"] = {"version": REVIEWER_RUBRIC_VERSION + 1}
+    errors = validate_review(report, completed)
+    assert any("rubric is not version" in e for e in errors)
+
+
+def test_validate_review_rejects_a_missing_rubric_object():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["rubric"] = "not an object"
+    errors = validate_review(report, completed)
+    assert any("missing its rubric object" in e for e in errors)
+
+
+def _tamper_rubric(mutate):
+    tampered = copy.deepcopy(REVIEWER_RUBRIC)
+    mutate(tampered)
+    return tampered
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda r: r.__setitem__("how_to_use", r["how_to_use"] + " (tampered)"), id="how_to_use"),
+        pytest.param(lambda r: r["fields"]["label_faithful"].__setitem__("meaning", "reworded"), id="field_meaning"),
+        pytest.param(lambda r: r["fields"]["clarity_rating"].__setitem__("type", "integer 0-9"), id="field_type"),
+        pytest.param(
+            lambda r: r["fields"]["clarity_rating"]["anchors"].__setitem__("3", "reworded anchor"),
+            id="rating_anchor",
+        ),
+        pytest.param(lambda r: r.__setitem__("unavailable_drafts", "reworded rule"), id="unavailable_rule"),
+        pytest.param(lambda r: r["consistency_rules"].__setitem__(0, "reworded rule"), id="consistency_rule"),
+        pytest.param(lambda r: r["consistency_rules"].append("an added rule"), id="consistency_rule_added"),
+        pytest.param(lambda r: r.__setitem__("extra_section", True), id="extra_section"),
+    ],
+)
+def test_validate_review_rejects_same_version_rubric_tampering(mutate):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["rubric"] = _tamper_rubric(mutate)
+    assert completed["rubric"]["version"] == REVIEWER_RUBRIC_VERSION  # version untouched
+    errors = validate_review(report, completed)
+    assert any("does not match the canonical rubric" in e for e in errors)
+
+
+def test_validate_review_rubric_comparison_does_not_mutate_the_canonical_rubric():
+    before = copy.deepcopy(REVIEWER_RUBRIC)
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["rubric"] = _tamper_rubric(lambda r: r.__setitem__("how_to_use", "x"))
+    validate_review(report, completed)
+    assert REVIEWER_RUBRIC == before
+
+
+def test_validate_review_rejects_an_incomplete_researcher_artifact():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    stale = copy.deepcopy(report)
+    stale["status"] = "incomplete"
+    errors = validate_review(stale, completed)
+    assert any("researcher artifact status is not 'complete'" in e for e in errors)
+
+
+# --- validate-review: review-id coverage -----------------------------
+
+
+def test_validate_review_rejects_entry_count_mismatch():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["entries"] = completed["entries"][:1]
+    errors = validate_review(report, completed)
+    assert any("entry count mismatch" in e for e in errors)
+
+
+def test_validate_review_rejects_a_missing_review_id():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    dropped = completed["entries"].pop()["review_id"]
+    errors = validate_review(report, completed)
+    assert any(f"{dropped}: missing from the reviewed packet" in e for e in errors)
+
+
+def test_validate_review_rejects_a_duplicate_review_id():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["entries"][1] = copy.deepcopy(completed["entries"][0])
+    errors = validate_review(report, completed)
+    assert any("duplicate review_id" in e for e in errors)
+
+
+def test_validate_review_rejects_an_unknown_review_id():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["entries"][0]["review_id"] = "REVIEW-999"
+    errors = validate_review(report, completed)
+    assert any("REVIEW-999: not a review_id present in the researcher artifact" in e for e in errors)
+
+
+@pytest.mark.parametrize("mutation", ["extra", "missing"])
+def test_validate_review_rejects_a_wrong_entry_field_set(mutation):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    entry = completed["entries"][0]
+    if mutation == "extra":
+        entry["reviewer_name"] = "someone"
+    else:
+        del entry["notes"]
+    errors = validate_review(report, completed)
+    assert any("wrong field set" in e for e in errors)
+
+
+# --- validate-review never mutates its inputs -----------------------
+
+
+def test_validate_review_never_mutates_its_inputs():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], script=[valid_json_text(), "not json"]
+    )
+    completed = _complete_packet(packet)
+    before_r = json.dumps(report, sort_keys=True)
+    before_v = json.dumps(completed, sort_keys=True)
+    validate_review(report, completed)
+    assert json.dumps(report, sort_keys=True) == before_r
+    assert json.dumps(completed, sort_keys=True) == before_v
+
+
+# --- summarise-review ----------------------------------------------------
+
+
+def _summ_setup(cases_raw, candidates_raw, script, *, reject_case_ids=(), seed=DEFAULT_SEED):
+    fake_clock.t = 0.0
+    fs = parse_fixture_set(fixture_file(cases_raw))
+    candidates = parse_candidate_set(candidate_file(candidates_raw))
+    report = run_evaluation(
+        fs,
+        candidates,
+        reps=1,
+        seed=seed,
+        caller_fn=ScriptedCaller(script),
+        models_available_fn=fake_available,
+        clock_fn=fake_clock,
+        save=None,
+    )
+    packet = build_reviewer_packet(report["artifact_id"], report["seed"], report["human_review_queue"])
+    decisions = {rid: "reject" for rid in _rids_for_cases(report, reject_case_ids)}
+    completed = _complete_packet(packet, decisions=decisions)
+    return report, completed, fs
+
+
+def test_summarise_review_counts_acceptance_and_rates():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2), make_case(3), make_case(4)],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text()] * 4,
+        reject_case_ids=["case_001"],
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    assert cand["reviewed_count"] == 4
+    assert cand["generated_count"] == 4
+    assert cand["unavailable_count"] == 0
+    assert cand["acceptance_count"] == 3
+    assert cand["acceptance_rate"] == 0.75
+    assert summary["reviewed_entry_count"] == 4
+    assert summary["schema_version"] == SUMMARY_SCHEMA_VERSION
+
+
+def test_summarise_review_counts_acceptance_without_deletion_and_unsupported_failures():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2), make_case(3)],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text()] * 3,
+        reject_case_ids=["case_002", "case_003"],
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    # 1 accept (no deletion), 2 rejects (each carries an unsupported attr + needs deletion)
+    assert cand["acceptance_count"] == 1
+    assert cand["acceptance_without_deletion_count"] == 1
+    assert cand["unsupported_attribute_failure_count"] == 2
+    assert cand["rejected_total"] == 2
+
+
+def test_summarise_review_counts_prompt_injection_and_high_risk_failures():
+    report, completed, fs = _summ_setup(
+        [
+            make_case(1, tags=["prompt_injection", "high_risk"]),
+            make_case(2, tags=["high_risk"]),
+            make_case(3),  # ordinary
+        ],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text()] * 3,
+        reject_case_ids=["case_001", "case_003"],  # one high-risk reject, one ordinary reject
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    assert cand["prompt_injection_or_high_risk_failure_count"] == 1  # only case_001 counts
+    assert set(HIGH_RISK_CASE_TAGS) == {"prompt_injection", "high_risk"}
+
+
+def test_summarise_review_reports_mean_clarity_and_usefulness():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text(), valid_json_text()],
+        reject_case_ids=["case_002"],
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    # accept -> clarity 4 / usefulness 4 ; reject -> clarity 2 / usefulness 3
+    assert cand["mean_clarity_rating"] == 3.0
+    assert cand["mean_usefulness_rating"] == 3.5
+
+
+def test_summarise_review_counts_unavailable_and_yields_none_means_when_all_unavailable():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("only", max_attempts=1)],
+        script=["not json", "not json"],
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    assert cand["generated_count"] == 0
+    assert cand["unavailable_count"] == 2
+    assert cand["acceptance_rate"] is None
+    assert cand["acceptance_without_deletion_rate"] is None
+    assert cand["mean_clarity_rating"] is None
+    assert cand["mean_usefulness_rating"] is None
+
+
+def test_summarise_review_bounds_the_rejected_case_reference():
+    n = REJECTED_CASE_REFERENCE_CAP + 3
+    cases = [make_case(i) for i in range(1, n + 1)]
+    report, completed, fs = _summ_setup(
+        cases,
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text()] * n,
+        reject_case_ids=[f"case_{i:03d}" for i in range(1, n + 1)],
+    )
+    summary = summarise_review(report, completed, fs)
+    cand = summary["by_candidate"]["only"]
+    assert cand["rejected_total"] == n
+    assert len(cand["rejected_case_reference"]) == REJECTED_CASE_REFERENCE_CAP
+    assert cand["rejected_case_reference_truncated"] is True
+
+
+def test_summarise_review_omits_generated_text_from_the_aggregate():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text("A Unique Title Xyz", "A unique description body qwerty that is long enough."),
+                valid_json_text("A Unique Title Xyz", "A unique description body qwerty that is long enough.")],
+        reject_case_ids=["case_001"],
+    )
+    blob = json.dumps(summarise_review(report, completed, fs))
+    assert "A Unique Title Xyz" not in blob
+    assert "unique description body qwerty" not in blob
+
+
+def test_summarise_review_does_not_rank_or_pick_a_winner():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("a", max_attempts=1), make_candidate("b", max_attempts=1)],
+        script=[valid_json_text()] * 4,
+    )
+    summary = summarise_review(report, completed, fs)
+
+    def _all_keys(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield k
+                yield from _all_keys(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from _all_keys(item)
+
+    banned_key_parts = ("winner", "rank", "recommend", "best", "verdict", "chosen")
+    for key in _all_keys(summary):
+        assert not any(part in key.lower() for part in banned_key_parts), key
+    # The disclaimer is stated explicitly, in prose, in the note.
+    assert "does not rank candidates" in summary["_note"].lower()
+    assert "choose a winner" in summary["_note"].lower()
+    assert set(summary["by_candidate"]) == {"a", "b"}
+
+
+def test_summarise_review_refuses_a_review_that_fails_validation():
+    report, completed, fs = _summ_setup(
+        [make_case(1)], [make_candidate("only", max_attempts=1)], script=[valid_json_text()]
+    )
+    broken = _corrupt(completed, completed["entries"][0]["review_id"], overall_decision="maybe")
+    with pytest.raises(ReviewValidationError):
+        summarise_review(report, broken, fs)
+
+
+def test_summarise_review_refuses_a_fixture_content_hash_mismatch():
+    report, completed, _ = _summ_setup(
+        [make_case(1), make_case(2)], [make_candidate("only", max_attempts=1)], script=[valid_json_text()] * 2
+    )
+    other_fixture = parse_fixture_set(fixture_file([make_case(1), make_case(2), make_case(3)]))
+    with pytest.raises(ReviewValidationError):
+        summarise_review(report, completed, other_fixture)
+
+
+def test_summarise_review_never_mutates_its_inputs():
+    report, completed, fs = _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("only", max_attempts=1)],
+        script=[valid_json_text(), "not json"],
+    )
+    before_r = json.dumps(report, sort_keys=True)
+    before_v = json.dumps(completed, sort_keys=True)
+    summarise_review(report, completed, fs)
+    assert json.dumps(report, sort_keys=True) == before_r
+    assert json.dumps(completed, sort_keys=True) == before_v
+
+
+# --- researcher answer-key / join integrity before summarisation ------
+
+
+def _join_setup():
+    """A valid 2-case x 2-candidate review, all four drafts generated:
+    report (researcher), completed reviewer packet, and the FixtureSet."""
+    return _summ_setup(
+        [make_case(1), make_case(2)],
+        [make_candidate("a", max_attempts=1), make_candidate("b", max_attempts=1)],
+        script=[valid_json_text()] * 4,
+    )
+
+
+def _some_rid(report):
+    return sorted(report["human_review_answer_key"])[0]
+
+
+def test_summarise_review_accepts_a_valid_join_unchanged():
+    report, completed, fs = _join_setup()
+    summary = summarise_review(report, completed, fs)
+    assert set(summary["by_candidate"]) == {"a", "b"}
+    assert summary["reviewed_entry_count"] == 4
+
+
+def test_summarise_review_count_invariant_holds_on_the_valid_path():
+    report, completed, fs = _join_setup()
+    summary = summarise_review(report, completed, fs)
+    per_candidate = sum(c["reviewed_count"] for c in summary["by_candidate"].values())
+    assert per_candidate == summary["reviewed_entry_count"] == 4
+
+
+def test_summarise_review_refuses_a_missing_answer_key_review_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    del bad["human_review_answer_key"][_some_rid(report)]
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "review-id set does not match" in str(exc.value)
+
+
+def test_summarise_review_refuses_an_extra_answer_key_review_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"]["REVIEW-404"] = {"case_id": "case_001", "candidate_id": "a"}
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "review-id set does not match the canonical queue" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "bad_mapping",
+    [
+        "not-a-dict",
+        {"case_id": "case_001"},
+        {"case_id": "case_001", "candidate_id": "a", "extra": 1},
+        {"case_id": "  ", "candidate_id": "a"},
+        {"case_id": "case_001", "candidate_id": ""},
+    ],
+)
+def test_summarise_review_refuses_a_malformed_mapping_value(bad_mapping):
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"][_some_rid(report)] = bad_mapping
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+
+
+def test_summarise_review_refuses_an_unknown_mapped_case_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"][_some_rid(report)]["case_id"] = "case_999"
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "is not a case in the hash-verified fixture" in str(exc.value)
+
+
+def test_summarise_review_refuses_an_unknown_mapped_candidate_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"][_some_rid(report)]["candidate_id"] = "zzz"
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "is not a researcher candidate" in str(exc.value)
+
+
+def test_summarise_review_refuses_swapped_answer_key_mappings():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    rid_a, rid_b = sorted(bad["human_review_answer_key"])[:2]
+    key = bad["human_review_answer_key"]
+    key[rid_a], key[rid_b] = key[rid_b], key[rid_a]
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "does not match the deterministic blinding" in str(exc.value)
+
+
+def test_summarise_review_refuses_a_cartesian_coverage_gap():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    # Point one mapping at a pair another review already owns: the multiset
+    # of pairs no longer covers the Cartesian product exactly once.
+    rid_a, rid_b = sorted(bad["human_review_answer_key"])[:2]
+    bad["human_review_answer_key"][rid_a] = dict(bad["human_review_answer_key"][rid_b])
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "exactly once" in str(exc.value)
+
+
+def test_summarise_review_refuses_a_duplicate_researcher_candidate():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["candidates"].append(copy.deepcopy(bad["candidates"][0]))
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "candidate_ids are not unique" in str(exc.value)
+
+
+@pytest.mark.parametrize("broken", ["not-a-dict", {"model_name": "x"}, {"candidate_id": "  "}])
+def test_summarise_review_refuses_a_malformed_researcher_candidate(broken):
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["candidates"][0] = broken
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+
+
+def test_summarise_review_refuses_a_missing_candidates_list():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    del bad["candidates"]
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "no candidates list" in str(exc.value)
+
+
+@pytest.mark.parametrize("broken", ["not-a-dict", {"review_id": ""}, {"item_label": "x"}])
+def test_summarise_review_refuses_a_malformed_researcher_queue_entry(broken):
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_queue"][0] = broken
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+
+
+def test_summarise_review_refuses_a_duplicate_researcher_queue_review_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_queue"][1]["review_id"] = bad["human_review_queue"][0]["review_id"]
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+
+
+@pytest.mark.parametrize("field", ["item_label", "review_guidance"])
+def test_summarise_review_refuses_queue_label_or_guidance_disagreeing_with_the_fixture(field):
+    report, completed, fs = _join_setup()
+    bad_report = copy.deepcopy(report)
+    bad_reviewed = copy.deepcopy(completed)
+    rid = bad_report["human_review_queue"][0]["review_id"]
+    # Change BOTH the canonical queue entry and its reviewed entry so
+    # validate_review still passes (they agree with each other) but the
+    # value no longer matches the mapped fixture case.
+    bad_report["human_review_queue"][0][field] = "disagrees with the fixture"
+    for entry in bad_reviewed["entries"]:
+        if entry["review_id"] == rid:
+            entry[field] = "disagrees with the fixture"
+    assert validate_review(bad_report, bad_reviewed) == []
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad_report, bad_reviewed, fs)
+    assert "disagrees with mapped fixture case" in str(exc.value)
+
+
+def test_summarise_review_refuses_a_seed_that_is_not_an_integer():
+    report, completed, fs = _join_setup()
+    bad_report = copy.deepcopy(report)
+    bad_reviewed = copy.deepcopy(completed)
+    bad_report["seed"] = "eleven"
+    bad_reviewed["seed"] = "eleven"  # keep validate_review's seed-match check happy
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad_report, bad_reviewed, fs)
+    assert "seed is not an integer" in str(exc.value)
+
+
+def test_summarise_review_never_raises_keyerror_or_typeerror_for_malformed_join_data():
+    report, completed, fs = _join_setup()
+    for mutate in (
+        lambda r: r.__setitem__("human_review_answer_key", "not-a-dict"),
+        lambda r: r.__setitem__("human_review_answer_key", {}),
+        lambda r: r.__setitem__("candidates", "not-a-list"),
+        lambda r: r.__setitem__("human_review_queue", []),
+        lambda r: r["human_review_answer_key"].__setitem__(_some_rid(report), {"case_id": 1, "candidate_id": 2}),
+    ):
+        bad = copy.deepcopy(report)
+        mutate(bad)
+        with pytest.raises(ReviewValidationError):
+            summarise_review(bad, completed, fs)
+
+
+def test_summarise_review_does_not_mutate_inputs_when_refusing_a_broken_join():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"][_some_rid(report)]["candidate_id"] = "zzz"
+    before_bad = json.dumps(bad, sort_keys=True)
+    before_completed = json.dumps(completed, sort_keys=True)
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+    assert json.dumps(bad, sort_keys=True) == before_bad
+    assert json.dumps(completed, sort_keys=True) == before_completed
+
+
+# --- whitespace-only identifiers are not "non-blank" -----------------
+
+
+_BLANK_IDS = ["   ", "\t", "\n ", " \t\n"]
+
+
+@pytest.mark.parametrize("blank", _BLANK_IDS)
+def test_validate_review_rejects_a_whitespace_only_reviewed_entry_review_id(blank):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    completed["entries"][0]["review_id"] = blank
+    errors = validate_review(report, completed)
+    assert any("has no valid review_id" in e for e in errors)
+
+
+@pytest.mark.parametrize("blank", _BLANK_IDS)
+def test_validate_review_rejects_a_whitespace_only_canonical_review_id(blank):
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    bad = copy.deepcopy(report)
+    bad["human_review_queue"][0]["review_id"] = blank
+    errors = validate_review(bad, completed)
+    assert any("has no valid review_id" in e for e in errors)
+
+
+def test_validate_review_rejects_a_whitespace_only_artifact_id_even_when_both_sides_match():
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)], [make_candidate(max_attempts=1)], script=[valid_json_text()]
+    )
+    completed = _complete_packet(packet)
+    bad = copy.deepcopy(report)
+    bad["artifact_id"] = "   "
+    completed["artifact_id"] = "   "
+    errors = validate_review(bad, completed)
+    assert any("artifact_id mismatch" in e for e in errors)
+
+
+def test_summarise_review_rejects_a_whitespace_only_researcher_candidate_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["candidates"][0]["candidate_id"] = "   "
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "candidate_id" in str(exc.value)
+
+
+@pytest.mark.parametrize("field", ["case_id", "candidate_id"])
+def test_summarise_review_rejects_a_whitespace_only_answer_key_mapping_field(field):
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_answer_key"][sorted(bad["human_review_answer_key"])[0]][field] = "   "
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "non-blank strings" in str(exc.value)
+
+
+def test_summarise_review_rejects_a_whitespace_only_canonical_queue_review_id():
+    report, completed, fs = _join_setup()
+    bad = copy.deepcopy(report)
+    bad["human_review_queue"][0]["review_id"] = "   "
+    with pytest.raises(ReviewValidationError):
+        summarise_review(bad, completed, fs)
+
+
+def _blank_out_candidate(report, from_id, to_value="   "):
+    """Coordinated tamper: rename a candidate ID to `to_value` in BOTH
+    the researcher candidate list AND every answer-key mapping that
+    referenced it, so nothing is left dangling and only a genuine
+    non-blank check can catch it."""
+    bad = copy.deepcopy(report)
+    for candidate in bad["candidates"]:
+        if candidate["candidate_id"] == from_id:
+            candidate["candidate_id"] = to_value
+    for mapping in bad["human_review_answer_key"].values():
+        if mapping["candidate_id"] == from_id:
+            mapping["candidate_id"] = to_value
+    return bad
+
+
+def test_summarise_review_refuses_a_coordinated_whitespace_candidate_id_tamper():
+    report, completed, fs = _join_setup()
+    bad = _blank_out_candidate(report, "a", "   ")
+    with pytest.raises(ReviewValidationError) as exc:
+        summarise_review(bad, completed, fs)
+    assert "candidate_id" in str(exc.value)
+
+
+def test_cli_summarise_review_refuses_a_coordinated_whitespace_candidate_id_tamper_and_writes_nothing(
+    tmp_path, capsys
+):
+    report, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path,
+        [make_case(1), make_case(2)],
+        [make_candidate("a", max_attempts=1), make_candidate("b", max_attempts=1)],
+        [valid_json_text()] * 4,
+    )
+    bad = _blank_out_candidate(report, "a", "   ")
+    researcher_path.write_text(json.dumps(bad), encoding="utf-8")
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert not out.exists()
+    assert "researcher join data is invalid" in capsys.readouterr().err
+
+
+def test_legitimate_non_empty_identifiers_are_never_trimmed_or_altered():
+    # A candidate id with an internal (non-edge) space is a legitimate,
+    # non-blank identifier: it must survive verbatim through the join and
+    # remain the exact key in the summary, never silently trimmed.
+    report, packet = _researcher_and_blank_packet(
+        [make_case(1)],
+        [make_candidate("cand one", max_attempts=1)],
+        script=[valid_json_text()],
+    )
+    completed = _complete_packet(packet)
+    fs = parse_fixture_set(fixture_file([make_case(1)]))
+    summary = summarise_review(report, completed, fs)
+    assert list(summary["by_candidate"]) == ["cand one"]
+
+
+# --- review CLI --------------------------------------------------------
+
+
+def _write_review_inputs(tmp_path, cases_raw, candidates_raw, script, *, reject_case_ids=(), seed=DEFAULT_SEED):
+    report, completed, _ = _summ_setup(
+        cases_raw, candidates_raw, script, reject_case_ids=reject_case_ids, seed=seed
+    )
+    researcher_path = write_json(tmp_path / "researcher.json", report)
+    reviewed_path = write_json(tmp_path / "reviewed.json", completed)
+    fixtures_path = write_json(tmp_path / "fixtures.json", fixture_file(cases_raw))
+    return report, completed, researcher_path, reviewed_path, fixtures_path
+
+
+def test_cli_validate_review_happy_path_exit_0(tmp_path, capsys):
+    _, _, researcher_path, reviewed_path, _ = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    rc = runner.main(["validate-review", "--researcher", str(researcher_path), "--reviewed", str(reviewed_path)])
+    assert rc == 0
+    assert "review is valid" in capsys.readouterr().out
+
+
+def test_cli_validate_review_reports_problems_and_exits_1(tmp_path, capsys):
+    _, completed, researcher_path, reviewed_path, _ = _write_review_inputs(
+        tmp_path, [make_case(1)], [make_candidate(max_attempts=1)], [valid_json_text()]
+    )
+    completed["entries"][0]["clarity_rating"] = 9
+    reviewed_path.write_text(json.dumps(completed), encoding="utf-8")
+    rc = runner.main(["validate-review", "--researcher", str(researcher_path), "--reviewed", str(reviewed_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "clarity_rating" in err
+
+
+def test_cli_validate_review_missing_file_exits_2(tmp_path, capsys):
+    _, _, researcher_path, _, _ = _write_review_inputs(
+        tmp_path, [make_case(1)], [make_candidate(max_attempts=1)], [valid_json_text()]
+    )
+    rc = runner.main(
+        ["validate-review", "--researcher", str(researcher_path), "--reviewed", str(tmp_path / "nope.json")]
+    )
+    assert rc == 2
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_cli_summarise_review_writes_the_summary_atomically(tmp_path):
+    _, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 0
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["kind"] == "listing_review_summary"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_cli_summarise_review_refuses_an_invalid_review_and_writes_nothing(tmp_path, capsys):
+    _, completed, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path, [make_case(1)], [make_candidate(max_attempts=1)], [valid_json_text()]
+    )
+    completed["entries"][0]["overall_decision"] = "maybe"
+    reviewed_path.write_text(json.dumps(completed), encoding="utf-8")
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert not out.exists()
+    assert "fails validate-review" in capsys.readouterr().err
+
+
+def test_cli_summarise_review_refuses_a_fixture_hash_mismatch(tmp_path, capsys):
+    _, _, researcher_path, reviewed_path, _ = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    wrong_fixtures = write_json(tmp_path / "wrong.json", fixture_file([make_case(1), make_case(2), make_case(3)]))
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(wrong_fixtures),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert not out.exists()
+    assert "fixture content hash" in capsys.readouterr().err
+
+
+def test_cli_validate_review_rejects_a_tampered_rubric(tmp_path, capsys):
+    _, completed, researcher_path, reviewed_path, _ = _write_review_inputs(
+        tmp_path, [make_case(1)], [make_candidate(max_attempts=1)], [valid_json_text()]
+    )
+    completed["rubric"] = _tamper_rubric(lambda r: r.__setitem__("how_to_use", r["how_to_use"] + " (tampered)"))
+    reviewed_path.write_text(json.dumps(completed), encoding="utf-8")
+    rc = runner.main(["validate-review", "--researcher", str(researcher_path), "--reviewed", str(reviewed_path)])
+    assert rc == 1
+    assert "does not match the canonical rubric" in capsys.readouterr().err
+
+
+def test_cli_summarise_review_refuses_a_tampered_rubric_and_writes_nothing(tmp_path):
+    _, completed, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    completed["rubric"] = _tamper_rubric(lambda r: r["consistency_rules"].append("added rule"))
+    reviewed_path.write_text(json.dumps(completed), encoding="utf-8")
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert not out.exists()
+
+
+def test_cli_summarise_review_refuses_a_broken_answer_key_and_writes_nothing(tmp_path, capsys):
+    report, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path,
+        [make_case(1), make_case(2)],
+        [make_candidate("a", max_attempts=1), make_candidate("b", max_attempts=1)],
+        [valid_json_text()] * 4,
+    )
+    tampered = copy.deepcopy(report)
+    rid = sorted(tampered["human_review_answer_key"])[0]
+    tampered["human_review_answer_key"][rid]["candidate_id"] = "ghost"
+    researcher_path.write_text(json.dumps(tampered), encoding="utf-8")
+    out = tmp_path / "summary.json"
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert not out.exists()
+    assert "researcher join data is invalid" in capsys.readouterr().err
+
+
+def test_cli_summarise_review_refusal_path_in_a_fresh_process_never_imports_ollama_or_httpx(tmp_path):
+    import subprocess
+
+    report, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path,
+        [make_case(1), make_case(2)],
+        [make_candidate("a", max_attempts=1), make_candidate("b", max_attempts=1)],
+        [valid_json_text()] * 4,
+    )
+    tampered = copy.deepcopy(report)
+    del tampered["human_review_answer_key"][sorted(tampered["human_review_answer_key"])[0]]
+    researcher_path.write_text(json.dumps(tampered), encoding="utf-8")
+    out_path = tmp_path / "summary.json"
+    argv = [
+        "summarise-review",
+        "--researcher", str(researcher_path),
+        "--reviewed", str(reviewed_path),
+        "--fixtures", str(fixtures_path),
+        "--out", str(out_path),
+    ]
+    script = (
+        "import sys\n"
+        "from evaluation.scripts.compare_listing_drafts import main\n"
+        f"rc = main({argv!r})\n"
+        "assert rc == 1, rc\n"
+        "assert 'ollama' not in sys.modules, 'ollama was imported'\n"
+        "assert 'httpx' not in sys.modules, 'httpx was imported'\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=str(_BACKEND_DIR), capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OK" in result.stdout
+    assert not out_path.exists()
+
+
+@pytest.mark.parametrize("break_call", ["replace", "fsync"])
+def test_cli_summarise_review_atomic_write_failure_exits_1_and_preserves_the_previous_file(
+    tmp_path, monkeypatch, break_call
+):
+    _, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    out = tmp_path / "summary.json"
+    out.write_text('{"previous": true}', encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner.os, break_call, boom)
+    rc = runner.main(
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 1
+    assert json.loads(out.read_text(encoding="utf-8")) == {"previous": True}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["validate-review", "--reviewed", "r.json"],
+        ["validate-review", "--researcher", "a.json"],
+        ["summarise-review", "--researcher", "a.json", "--reviewed", "r.json"],
+    ],
+)
+def test_review_subcommands_require_their_arguments(argv):
+    with pytest.raises(SystemExit):
+        runner.main(argv)
+
+
+def test_review_subcommands_in_a_fresh_process_never_import_ollama_or_httpx(tmp_path):
+    import subprocess
+
+    _, _, researcher_path, reviewed_path, fixtures_path = _write_review_inputs(
+        tmp_path, [make_case(1), make_case(2)], [make_candidate(max_attempts=1)], [valid_json_text()] * 2
+    )
+    out_path = tmp_path / "summary.json"
+    invocations = [
+        ["validate-review", "--researcher", str(researcher_path), "--reviewed", str(reviewed_path)],
+        [
+            "summarise-review",
+            "--researcher", str(researcher_path),
+            "--reviewed", str(reviewed_path),
+            "--fixtures", str(fixtures_path),
+            "--out", str(out_path),
+        ],
+    ]
+    for argv in invocations:
+        script = (
+            "import sys\n"
+            "from evaluation.scripts.compare_listing_drafts import main\n"
+            f"rc = main({argv!r})\n"
+            "assert rc == 0, rc\n"
+            "assert 'ollama' not in sys.modules, 'ollama was imported'\n"
+            "assert 'httpx' not in sys.modules, 'httpx was imported'\n"
+            "print('OK')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=str(_BACKEND_DIR), capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "OK" in result.stdout

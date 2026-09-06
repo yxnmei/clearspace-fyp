@@ -347,6 +347,71 @@ none, dict- and object-shaped `ollama.list()` responses both supported).
 `plan`'s output and the artifact's `bounds` now say explicitly that
 determinism is not assessed with `reps=1`.
 
+**Human review completion layer (2026-09-06), model-free.** Every
+blinded reviewer packet now embeds `REVIEWER_RUBRIC`: the type, meaning
+and allowed values of each judgement field, written 1-5 anchors for
+`clarity_rating` and `usefulness_rating`, how to complete an
+`unavailable` draft (decision `unavailable`; the four assessment fields
+left `null`), and the internal-consistency rules (`accept` requires a
+faithful draft with an empty `unsupported_attributes_found` and no
+required factual deletion). Two new model-free subcommands consume a
+completed packet: `validate-review` checks it against its researcher
+artifact (matching `artifact_id`/`seed`, exact one-to-one review
+coverage with no missing/extra/duplicate/pending entry, untouched
+immutable fields, and every human value strictly against the rubric,
+reporting every problem it finds and never altering either input);
+`summarise-review` — only for a packet that passes validation and whose
+`--fixtures` content hash matches the researcher artifact — joins
+through the researcher-only answer key to produce candidate-level
+DESCRIPTIVE metrics (reviewed/generated/unavailable counts, acceptance
+count and rate, acceptance-without-deletion count and rate,
+unsupported-attribute failure count, prompt-injection/high-risk failure
+count, mean clarity/usefulness, and a bounded rejected-case reference),
+written atomically to an explicit `--out`. Neither subcommand ranks
+candidates, picks a winner, changes a production setting, or imports
+`ollama`/`httpx`.
+
+**Integrity hardening (2026-09-06), model-free.** `validate-review` now
+requires the reviewed packet's rubric to equal `REVIEWER_RUBRIC` in
+full, not merely carry the current version: a same-version edit to
+`how_to_use`, any field meaning/type, a rating anchor, the unavailable
+rule or a consistency rule fails validation with a concise error, and
+the comparison never mutates either input. Before it aggregates,
+`summarise-review` strictly re-validates the researcher-only join
+(`_validate_researcher_join`): the `human_review_answer_key` must be an
+object whose review-ID set exactly equals both the canonical queue and
+the reviewed-entry sets; every mapping must be an object with exactly
+non-blank `case_id`/`candidate_id`; researcher candidates must form a
+valid, unique ID set; every mapped case must exist in the hash-verified
+fixture and every mapped candidate in the researcher list; the mappings
+must cover each fixture-case x candidate pair exactly once and match the
+deterministic `blinded_pair_order` recomputed from the recorded seed,
+ordered fixture cases and ordered candidates; each canonical queue label
+and guidance must agree with its mapped fixture case; and the final
+`reviewed_entry_count` must equal the sum of per-candidate
+`reviewed_count`. Any malformed researcher queue / candidate / answer-key
+structure is a concise `ReviewValidationError` (CLI exit 1, `--out`
+never created or replaced), never a `KeyError`, `TypeError` or
+traceback.
+
+**Aliasing + blank-identifier hardening (2026-09-06), model-free.**
+`build_reviewer_packet` now returns a genuinely independent packet: the
+rubric is a deep copy of `REVIEWER_RUBRIC` (never that object) and every
+queue entry is deep-copied with all nested values, so building or later
+editing a packet can never mutate `REVIEWER_RUBRIC`, the supplied queue,
+or the researcher artifact — which is also what lets `validate-review`
+catch an in-place edit to a packet's rubric or an immutable entry field
+as a real divergence rather than a change to both comparison sides at
+once. Every identifier documented as a non-blank string (canonical and
+reviewed review IDs, the packet `artifact_id`, researcher candidate IDs,
+and answer-key `case_id`/`candidate_id`) is now rejected when it is
+whitespace-only (`.strip()` semantics); legitimate non-empty values,
+including ones with internal spaces, pass through verbatim and are never
+trimmed. A coordinated tamper that blanks a candidate ID to `"   "` in
+both the researcher candidate list and every answer-key mapping is
+refused by `summarise_review` (`ReviewValidationError`; CLI exit 1,
+`--out` untouched).
+
 **Second review pass (2026-09-06), all fake-backed, no real run:** the
 built-in `dry-run` fake caller is now fully candidate-neutral, its
 placeholder title/description never embed candidate_id, model_name,
@@ -373,7 +438,7 @@ preflight-failure and exit-1 behaviour is now covered directly through
 `run_evaluation()` and `_report_exit()`, with no test in the suite
 passing or invoking that flag.
 
-**Verified so far (fake-backed only):** 199 focused unit tests
+**Verified so far (fake-backed only):** 354 focused unit tests
 (`tests/unit/test_compare_listing_drafts.py`) plus the full backend
 suite green. No Ollama call, no network connection, no download, no
 production setting change. `app.config`'s `listing_llm_*` defaults
