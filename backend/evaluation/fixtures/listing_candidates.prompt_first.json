@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "candidate_id": "prod_v1_phi4_t0.2",
+      "model_name": "phi4-mini",
+      "prompt_version": "v1",
+      "temperature": 0.2,
+      "num_predict": 512,
+      "max_attempts": 3
+    },
+    {
+      "candidate_id": "eval_a1_phi4_t0.2",
+      "model_name": "phi4-mini",
+      "prompt_version": "eval-a1",
+      "temperature": 0.2,
+      "num_predict": 512,
+      "max_attempts": 3
+    },
+    {
+      "candidate_id": "eval_a2_phi4_t0.2",
+      "model_name": "phi4-mini",
+      "prompt_version": "eval-a2",
+      "temperature": 0.2,
+      "num_predict": 512,
+      "max_attempts": 3
+    },
+    {
+      "candidate_id": "eval_a3_phi4_t0.2",
+      "model_name": "phi4-mini",
+      "prompt_version": "eval-a3",
+      "temperature": 0.2,
+      "num_predict": 512,
+      "max_attempts": 3
+    }
+  ]
+}

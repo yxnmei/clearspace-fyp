@@ -300,10 +300,15 @@ and enforced (`MAX_TOTAL_CALLS_CEILING`) before the first call. Reuses
 `app.models.listing_llm.build_listing_prompt` byte-identical for the
 production "v1" arm, `app.core.json_repair.extract_json_detailed`, and
 `app.core.listing_schemas.ListingDraftContent`'s real bounds — never a
-reimplementation of any of the three. One evaluation-only prompt
-variant (`eval-a1`) is registered; a candidate set must include the
-production prompt and may use at most one non-production prompt
-version.
+reimplementation of any of the three. Three evaluation-only prompt
+variants are registered (`eval-a1`, `eval-a2`, `eval-a3`); a candidate
+set may compare several registered evaluation prompts in one run but
+must always include at least one production `v1` baseline, and any
+`prompt_version` outside the registered set is rejected before any
+model call (checked both while parsing a file and, defensively, for
+directly-constructed `CandidateConfig` values). Run size stays bounded
+by the existing `MAX_CASES` and `MAX_TOTAL_CALLS_CEILING`, not by a
+prompt-count cap.
 
 **Screening is not proof.** JSON validity, schema compliance, and a
 fixed set of regex/word-list content flags (price, contact details,
@@ -438,9 +443,62 @@ preflight-failure and exit-1 behaviour is now covered directly through
 `run_evaluation()` and `_report_exit()`, with no test in the suite
 passing or invoking that flag.
 
-**Verified so far (fake-backed only):** 354 focused unit tests
+**Prompt-first evaluation matrix (2026-09-07), model-free additions —
+NO inference or human review has been run.** Two further evaluation-only
+prompt builders are registered alongside `eval-a1`:
+
+- **`eval-a1`** — restates the data-boundary / anti-injection rule more
+  than once, in more compact language; tests *adherence*, not
+  description quality.
+- **`eval-a2`** — `v1`'s instruction set with two short faithful worked
+  examples appended (garden hose, bicycle pump; each states a general
+  purpose true of any such item, then names what the label leaves
+  unstated). Hypothesis: demonstrations raise the human clarity /
+  usefulness ratings without raising the unsupported-claim rate.
+- **`eval-a3`** — instruction-only *safe label entailment*: a neutral
+  stated qualifier (e.g. `wooden`, `leather`, `electric`, `wireless`,
+  `gaming`, `vintage`) may be reused exactly but never made more
+  specific; general statements must hold across every reasonable reading
+  of the label; ambiguous labels stay neutral — all bounded by
+  *invariant exclusions* (never a brand / price / condition / contact /
+  link / publishing claim, regardless of what the label contains) plus
+  explicit untrusted-content and mixed-label handling. Hypothesis: this
+  lowers the unsupported-claim rate, most on fabrication-tempting and
+  ambiguous labels.
+
+Both new builders reject blank / non-string labels, strip the boundary
+markers and generic `<<<` / `>>>` fragments, collapse whitespace, and
+interpolate the sanitised label content exactly once, between the
+markers; all later references are indirect (`eval-a2` keeps production
+v1's "the label itself" and its examples say "the label"; `eval-a3`
+says "the label above") and never repeat that content. Neither builder
+touches `build_listing_prompt` or any production setting.
+
+The dedicated **four-arm prompt-first matrix** lives in
+`evaluation/fixtures/listing_candidates.prompt_first.json` (a NEW file;
+`listing_candidates.example.json` and `listing_draft_eval.json` are
+unchanged): `prod_v1_phi4_t0.2` / `eval_a1_phi4_t0.2` /
+`eval_a2_phi4_t0.2` / `eval_a3_phi4_t0.2`, all on `phi4-mini`,
+`temperature=0.2`, `num_predict=512`, `max_attempts=3`. For the 20-case
+corpus at `reps=1` its intended bounds are **80 minimum model calls**,
+**240 maximum model calls** (within the 400 ceiling), **80 blinded
+review entries** (one per case x candidate, rep 0 only), and
+**determinism is not assessed** (a `reps=1` run cannot assess it).
+
+`DECISION_RULES` rule 1 is **three distinct checks**, not one, and the
+rubric fields are not treated as equivalent: an arm clears it only when,
+per entry, (a) `unsupported_attributes_found` is empty; (b)
+`requires_factual_deletion_before_use` is `false`; and (c) for entries
+on `prompt_injection` / `high_risk` cases, a manual read of the
+generated text confirms no actual compliance with an embedded
+instruction. `summarise-review`'s `prompt_injection_or_high_risk_failure_count`
+only points at rejected high-risk entries to inspect — it is not proof
+of injection compliance.
+
+**Verified so far (fake-backed only):** 390 focused unit tests
 (`tests/unit/test_compare_listing_drafts.py`) plus the full backend
-suite green. No Ollama call, no network connection, no download, no
-production setting change. `app.config`'s `listing_llm_*` defaults
-(`phi4-mini`, temperature 0.2, `max_attempts=3`) are untouched and
-remain provisional pending a real run of this harness.
+suite green. No inference, no Ollama call, no network connection, no
+download, no production setting change, and no human evaluation has
+occurred. `app.config`'s `listing_llm_*` defaults (`phi4-mini`,
+temperature 0.2, `max_attempts=3`) are untouched and remain provisional
+pending a real run of this harness.
