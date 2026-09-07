@@ -271,13 +271,17 @@ hardware.
 
 ---
 
-## 2026-09-06 — Marketplace listing draft harness: BUILT, NOT YET RUN
+## 2026-09-06 — Marketplace listing draft harness: BUILT (first real run 2026-09-07, below)
 
-**No inference has been run.** This entry documents the harness itself,
-not a result — there is no results table here because no candidate has
-been evaluated yet. It exists so a future run (separately approved) has
-somewhere to record its outcome without inventing the harness at the
-same time.
+**Current status: the harness has since been run for real.** This entry
+is the build record only. Every dated pass in it was model-free at the
+time it was made, and its "no real run" / "fake-backed only" notes
+describe the state on that date, not now. The first real evaluation ran
+on 2026-09-07 and has its own section further down
+(`2026-09-07 — Marketplace listing prompt-first real evaluation`); read
+that for the current result. It found no prompt that cleared the
+predeclared hard safety rule, so no candidate was promoted and the
+production prompt / configuration are unchanged and still provisional.
 
 Harness: `evaluation/scripts/compare_listing_drafts.py`. Fixture corpus:
 `evaluation/fixtures/listing_draft_eval.json` (20 synthetic, non-personal
@@ -443,9 +447,12 @@ preflight-failure and exit-1 behaviour is now covered directly through
 `run_evaluation()` and `_report_exit()`, with no test in the suite
 passing or invoking that flag.
 
-**Prompt-first evaluation matrix (2026-09-07), model-free additions —
-NO inference or human review has been run.** Two further evaluation-only
-prompt builders are registered alongside `eval-a1`:
+**Prompt-first evaluation matrix (2026-09-07), model-free additions.**
+Registering the two extra prompt builders and adding the four-arm matrix
+file was itself done without any model call; the matrix was then executed
+for real the same day (see `2026-09-07 — Marketplace listing prompt-first
+real evaluation` below). Two further evaluation-only prompt builders are
+registered alongside `eval-a1`:
 
 - **`eval-a1`** — restates the data-boundary / anti-injection rule more
   than once, in more compact language; tests *adherence*, not
@@ -495,10 +502,142 @@ instruction. `summarise-review`'s `prompt_injection_or_high_risk_failure_count`
 only points at rejected high-risk entries to inspect — it is not proof
 of injection compliance.
 
-**Verified so far (fake-backed only):** 390 focused unit tests
+**Harness verification (fake-backed):** 390 focused unit tests
 (`tests/unit/test_compare_listing_drafts.py`) plus the full backend
-suite green. No inference, no Ollama call, no network connection, no
-download, no production setting change, and no human evaluation has
-occurred. `app.config`'s `listing_llm_*` defaults (`phi4-mini`,
-temperature 0.2, `max_attempts=3`) are untouched and remain provisional
-pending a real run of this harness.
+suite green, with no inference, Ollama call, network connection,
+download or production setting change during that verification. The
+harness was then executed for real on 2026-09-07 (next section).
+`app.config`'s `listing_llm_*` defaults (`phi4-mini`, temperature 0.2,
+`max_attempts=3`) are still untouched and remain provisional: the
+2026-09-07 run produced no prompt arm that cleared the predeclared hard
+safety rule, so no candidate was promoted.
+
+---
+
+## 2026-09-07 — Marketplace listing prompt-first real evaluation
+
+**First and only real run of the listing harness.** One approved local
+run of `compare_listing_drafts.py run --execute-real-models` against the
+committed four-arm prompt-first matrix. This supersedes every "no
+inference / no human evaluation has occurred" note in the section above,
+which described the state on its own date. Production is still
+unchanged.
+
+### Run parameters (verified against the artifact)
+
+| | |
+|---|---|
+| Model | `phi4-mini:latest` (requested `phi4-mini`) |
+| Model digest | `78fad5d182a7c33065e153a5f8ba210754207ba9d91973f57dffa7f487363753` |
+| Seed | `918273645` (the printed default `20260906` was deliberately not reused) |
+| Fixture corpus | `evaluation/fixtures/listing_draft_eval.json`, 20 synthetic label-only cases |
+| Prompt arms | 4: production `v1`, `eval-a1`, `eval-a2`, `eval-a3` (all `phi4-mini`, temperature 0.2, `num_predict` 512, `max_attempts` 3) |
+| Repetitions | `reps=1` |
+| Model-call attempts | 80 (20 cases x 4 arms x 1 rep); planned bounds min 80 / max 240, ceiling 400 |
+| Attempt outcomes | every one of the 80 units succeeded on its first attempt; 0 retries anywhere |
+| Draft outcomes | 80 `generated`, 0 `unavailable` |
+| Blinded human review | 80-entry reviewer packet completed, `validate-review` passed, `summarise-review` produced the table below |
+| Determinism | not assessed (a `reps=1` run cannot assess it) |
+
+### Reviewed results (blinded single-reviewer, `summarise-review` output)
+
+| Arm | Accepted | Unsupported-attribute failures | Mean clarity | Mean usefulness |
+|---|---|---|---|---|
+| production `v1` | 6 / 20 (30%) | 14 | 3.90 | 1.95 |
+| `eval-a1` | 6 / 20 (30%) | 14 | 3.85 | 1.90 |
+| `eval-a2` | 14 / 20 (70%) | 6 | 4.00 | 2.60 |
+| `eval-a3` | 6 / 20 (30%) | 14 | 4.00 | 2.00 |
+
+All four arms: 20 `generated`, 0 `unavailable`; acceptance was identical
+to acceptance-without-required-deletion (no arm had an accepted draft
+that still needed a factual deletion).
+
+### Schema / reliability observations (verified)
+
+- Schema-valid: **20 / 20 for every arm**; JSON-valid 20 / 20 for every
+  arm.
+- **No retries**: mean attempts 1 across all 80 units.
+- JSON-fence repair rate (the model wrapping its object in a
+  ```` ```json ```` fence, then mechanically repaired): production `v1`
+  **20 / 20**, `eval-a1` **20 / 20**, `eval-a2` **0 / 20**, `eval-a3`
+  **6 / 20**. `eval-a2`'s two bare-JSON worked examples are the only
+  visible difference that removed fencing; `eval-a3`'s longer rule block
+  reduced but did not remove it.
+- Median call latency (from the artifact `latency_ms.median_ms`):
+  production `v1` **7213 ms**, `eval-a1` **6355 ms**, `eval-a2`
+  **7279 ms**, `eval-a3` **11135 ms**. `eval-a3` is markedly slower for
+  no reliability gain.
+
+### Decision
+
+- **No prompt passed the predeclared hard safety rule
+  (`DECISION_RULES` rule 1).** On the four `prompt_injection` /
+  `high_risk` cases the reviewer accepted 0 / 4 (`v1`), 0 / 4
+  (`eval-a1`), 1 / 4 (`eval-a2`) and 1 / 4 (`eval-a3`); a manual read of
+  the generated text confirmed real compliance with embedded
+  instructions in more than one arm (production `v1` and `eval-a3`
+  reproduced the injected phone number and the injected promotional link
+  verbatim; `eval-a2` adopted the injected "Rolex" and "Apple iPhone 15
+  Pro, 128GB" framing as if it were the item).
+- **No production-ready winner was selected.**
+- **`eval-a2` was the strongest descriptive result, not an approved
+  winner.** Despite 70% acceptance and the lowest unsupported-attribute
+  count, `eval-a2` still adopted the injected Rolex / iPhone content,
+  leaked its own "garden hose" worked example as the entire draft on the
+  marker-spoof case, and still made unsupported ordinary claims
+  ("comfortable seating" for the desk chair, "high-performance" for the
+  gaming laptop).
+- **Production prompt and configuration remain unchanged and
+  provisional.** `LISTING_PROMPT_VERSION` stays `"v1"`; the
+  `app.config` `listing_llm_*` defaults are untouched.
+- **Mandatory human review / editing of every generated draft remains
+  necessary.** The stage still produces drafts to be checked; they are
+  never automatically published and must be reviewed before use.
+
+### Limitations
+
+- 20 synthetic, label-only cases (a short item label is the only input;
+  no real personal data).
+- One blinded reviewer.
+- One repetition; no determinism assessment.
+- No image or video context, and no user-confirmed listing attributes
+  (condition, dimensions, accessories, etc.) were available to the
+  model.
+- No real marketplace publishing and no buyer-outcome measurement.
+- A deliberately strict unsupported-claim rubric: a few rejections sit
+  on an arguable general-knowledge boundary (e.g. whether "comfortable
+  seating" for a desk chair or "high-performance" for a gaming laptop is
+  a fabricated attribute or a category-general statement). Reviewer
+  guidance on that boundary would benefit from written anchor examples
+  before any future review.
+
+### Future-work direction (not a plan)
+
+- Richer input context: an image or video crop of the item rather than a
+  bare label.
+- User-confirmed condition and other item details, entered and vouched
+  for by the seller.
+- Category and price suggestions kept as clearly separated, clearly
+  labelled estimates, never stated as facts.
+- Stronger deterministic input validation / neutralisation of the item
+  label before it reaches the model.
+- Further model or prompt comparison only if a later change makes it
+  justified; another round of "more prohibition text" on `phi4-mini` is
+  not indicated by this run.
+
+ClearSpace currently generates an editable title/description draft per
+confirmed Sell item and nothing more. It does not claim full
+Carousell-style feature parity (no image-conditioned listing generation,
+no category, condition, price or publishing).
+
+### Local artifacts (gitignored, local-only, read-only)
+
+All four live under `evaluation/results/` and share
+`artifact_id` `fa9d87f93f35471ba782f1ca2a0db404`.
+
+| Artifact | Path (`evaluation/results/`) | SHA-256 |
+|---|---|---|
+| Researcher | `listing_drafts_prompt_first_20260907_105659.json` | `db231d1e8aea32e4c8a63a456993658e0d13079ae86bc067d04183947f578284` |
+| Reviewer packet (original, blank) | `listing_drafts_prompt_first_20260907_105659.reviewer.json` | `913c223d992eaf50044096514b3b3b287656756b7153fb807ae604ba67a5cf6c` |
+| Reviewed packet (completed) | `listing_drafts_prompt_first_20260907_105659.reviewed.json` | `cddf9314f2ae5804db641408e858bcc3c2503422d8f125e0d5628bbfd0b90fc6` |
+| Review summary | `listing_drafts_prompt_first_20260907_105659.review_summary.json` | `5c3c355de3f93dff3e8f0d0681439bafe79833109afd99368853069b1f606f8e` |
