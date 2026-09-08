@@ -107,15 +107,21 @@ def load_pipeline(settings: Any) -> None:
     pipe.enable_attention_slicing()
     # VAE slicing is an extra memory optimisation, not a safety or
     # correctness feature. StableDiffusionControlNetImg2ImgPipeline in
-    # the installed diffusers 0.40.0 runtime did not expose
-    # enable_vae_slicing() (verified on a real Colab runtime); call it
-    # only when the installed diffusers provides it, and continue
-    # normally when it does not. A method that IS present is invoked
+    # the installed diffusers 0.40.0 runtime did not expose the
+    # pipeline-level enable_vae_slicing() method (verified on a real
+    # Colab runtime); current diffusers exposes VAE slicing on the VAE
+    # itself, as pipe.vae.enable_slicing(). Prefer that current
+    # VAE-level API, fall back to the legacy pipeline-level method when
+    # only it is present, and continue normally when neither exists (VAE
+    # slicing is optional). Whichever method is selected is invoked
     # directly, with no surrounding try/except, so a genuine failure
     # inside it is never swallowed.
-    enable_vae_slicing = getattr(pipe, "enable_vae_slicing", None)
-    if callable(enable_vae_slicing):
-        enable_vae_slicing()
+    vae_enable_slicing = getattr(getattr(pipe, "vae", None), "enable_slicing", None)
+    legacy_enable_vae_slicing = getattr(pipe, "enable_vae_slicing", None)
+    if callable(vae_enable_slicing):
+        vae_enable_slicing()
+    elif callable(legacy_enable_vae_slicing):
+        legacy_enable_vae_slicing()
 
     _pipeline = pipe
     _loaded_base_model_id = settings.base_model_id

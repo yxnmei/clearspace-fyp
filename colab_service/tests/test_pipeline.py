@@ -206,20 +206,34 @@ def test_load_pipeline_is_idempotent(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# load_pipeline — optional VAE slicing (diffusers 0.40.0 compatibility)
+# load_pipeline — VAE slicing: current pipe.vae.enable_slicing() API,
+# legacy pipe.enable_vae_slicing() fallback, optional when neither exists
 # ---------------------------------------------------------------------------
 
 
-class _FakePipelineNoVaeSlicing:
-    """Mirrors what was observed of StableDiffusionControlNetImg2ImgPipeline
-    in the installed diffusers 0.40.0 runtime: it has
-    enable_attention_slicing() but did not expose enable_vae_slicing()."""
+class _FakeVae:
+    """Minimal VAE exposing the current diffusers VAE-level slicing API
+    (pipe.vae.enable_slicing()). Records the call into a shared list so a
+    test can assert exactly which slicing path load_pipeline() took."""
+
+    def __init__(self, record: list, *, raises: bool = False) -> None:
+        self._record = record
+        self._raises = raises
+
+    def enable_slicing(self) -> None:
+        if self._raises:
+            raise RuntimeError("vae.enable_slicing blew up for a real reason")
+        self._record.append("vae.enable_slicing")
+
+
+class _FakePipelineBase:
+    """Shared shape: chainable to('cuda') plus recorded attention slicing."""
 
     def __init__(self) -> None:
         self.to_calls: list[str] = []
         self.sliced: list[str] = []
 
-    def to(self, device: str) -> "_FakePipelineNoVaeSlicing":
+    def to(self, device: str) -> "_FakePipelineBase":
         self.to_calls.append(device)
         return self
 
@@ -227,25 +241,77 @@ class _FakePipelineNoVaeSlicing:
         self.sliced.append("attention")
 
 
-class _FakePipelineVaeSlicingRaises(_FakePipelineNoVaeSlicing):
-    """Has enable_vae_slicing(), but calling it genuinely fails — the
-    optional-call guard must NOT hide that."""
+class _FakePipelineCurrentVaeApi(_FakePipelineBase):
+    """Current diffusers shape: VAE slicing lives on the VAE
+    (pipe.vae.enable_slicing()). Also carries the legacy pipeline-level
+    enable_vae_slicing() so a test can prove the current API is
+    preferred over it."""
+
+    def __init__(self, *, vae_raises: bool = False) -> None:
+        super().__init__()
+        self.vae = _FakeVae(self.sliced, raises=vae_raises)
 
     def enable_vae_slicing(self) -> None:
-        raise RuntimeError("enable_vae_slicing blew up for a real reason")
+        self.sliced.append("legacy.enable_vae_slicing")
 
 
-def test_load_pipeline_enables_vae_slicing_when_the_method_exists(monkeypatch):
-    fake = _load_with_fake_pipeline(monkeypatch)
-    # Attention slicing first, then VAE slicing — unchanged from before
-    # the compatibility guard, for a pipeline that exposes it.
-    assert fake.sliced == ["attention", "vae"]
+class _FakePipelineLegacyVaeApi(_FakePipelineBase):
+    """No VAE-level enable_slicing(); only the legacy pipeline-level
+    enable_vae_slicing()."""
+
+    def __init__(self, *, raises: bool = False) -> None:
+        super().__init__()
+        self._raises = raises
+
+    def enable_vae_slicing(self) -> None:
+        if self._raises:
+            raise RuntimeError("legacy enable_vae_slicing blew up for a real reason")
+        self.sliced.append("legacy.enable_vae_slicing")
 
 
-def test_load_pipeline_without_enable_vae_slicing_still_loads(monkeypatch):
-    # StableDiffusionControlNetImg2ImgPipeline in the installed diffusers
-    # 0.40.0 runtime did not expose enable_vae_slicing() — loading must
-    # succeed and attention slicing must still have been enabled.
+class _FakePipelineNoVaeSlicing(_FakePipelineBase):
+    """A DEFENSIVE compatibility case: a pipeline exposing neither the
+    current pipe.vae.enable_slicing() nor the legacy pipeline-level
+    enable_vae_slicing(). This shape was NOT observed in the installed
+    diffusers 0.40.0 runtime — there pipe.vae.enable_slicing() existed
+    and worked, and only the pipeline-level enable_vae_slicing() was
+    absent. It is covered so a future build missing both APIs still
+    loads: VAE slicing is optional, so loading must still succeed with
+    attention slicing enabled."""
+
+
+def test_load_pipeline_prefers_the_current_vae_level_slicing_api(monkeypatch):
+    # Current diffusers exposes VAE slicing as pipe.vae.enable_slicing();
+    # it must be used, and the legacy pipeline-level method must NOT also
+    # be called.
+    fake = _FakePipelineCurrentVaeApi()
+    _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
+
+    pipeline.load_pipeline(FakeSettings())
+
+    assert pipeline._pipeline is fake
+    assert fake.sliced == ["attention", "vae.enable_slicing"]
+
+
+def test_load_pipeline_falls_back_to_legacy_enable_vae_slicing(monkeypatch):
+    # When the current pipe.vae.enable_slicing() API is unavailable, the
+    # legacy pipeline-level enable_vae_slicing() is used instead.
+    fake = _FakePipelineLegacyVaeApi()
+    _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
+
+    pipeline.load_pipeline(FakeSettings())
+
+    assert pipeline._pipeline is fake
+    assert fake.sliced == ["attention", "legacy.enable_vae_slicing"]
+
+
+def test_load_pipeline_without_any_vae_slicing_api_still_loads(monkeypatch):
+    # DEFENSIVE case, not the observed diffusers 0.40.0 shape: a pipeline
+    # exposing neither pipe.vae.enable_slicing() nor
+    # pipe.enable_vae_slicing(). (In the verified 0.40.0 runtime
+    # pipe.vae.enable_slicing() existed and worked; only the
+    # pipeline-level method was absent.) Loading must still succeed with
+    # attention slicing enabled.
     fake = _FakePipelineNoVaeSlicing()
     _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
 
@@ -254,17 +320,30 @@ def test_load_pipeline_without_enable_vae_slicing_still_loads(monkeypatch):
     assert pipeline._pipeline is fake
     assert fake.to_calls == ["cuda"]
     assert fake.sliced == ["attention"]
+    assert not hasattr(fake, "vae")
     assert not hasattr(fake, "enable_vae_slicing")
 
 
-def test_load_pipeline_does_not_swallow_a_failing_enable_vae_slicing(monkeypatch):
-    # A method that DOES exist but raises is a real problem, not a
-    # compatibility gap: it must propagate, and no half-initialised
-    # pipeline may be cached as loaded.
-    fake = _FakePipelineVaeSlicingRaises()
+def test_load_pipeline_does_not_swallow_a_failing_current_vae_slicing_call(monkeypatch):
+    # The SELECTED API (here the preferred pipe.vae.enable_slicing()) is
+    # invoked directly: a genuine error inside it must propagate, and no
+    # partially initialised pipeline may be cached as loaded.
+    fake = _FakePipelineCurrentVaeApi(vae_raises=True)
     _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
 
-    with pytest.raises(RuntimeError, match="enable_vae_slicing blew up"):
+    with pytest.raises(RuntimeError, match="vae.enable_slicing blew up"):
+        pipeline.load_pipeline(FakeSettings())
+
+    assert pipeline._pipeline is None
+
+
+def test_load_pipeline_does_not_swallow_a_failing_legacy_vae_slicing_call(monkeypatch):
+    # Same rule for the fallback path: a legacy enable_vae_slicing() that
+    # exists but raises must propagate, leaving no cached pipeline.
+    fake = _FakePipelineLegacyVaeApi(raises=True)
+    _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
+
+    with pytest.raises(RuntimeError, match="legacy enable_vae_slicing blew up"):
         pipeline.load_pipeline(FakeSettings())
 
     assert pipeline._pipeline is None
