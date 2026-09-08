@@ -206,6 +206,71 @@ def test_load_pipeline_is_idempotent(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# load_pipeline — optional VAE slicing (diffusers 0.40.0 compatibility)
+# ---------------------------------------------------------------------------
+
+
+class _FakePipelineNoVaeSlicing:
+    """Mirrors what was observed of StableDiffusionControlNetImg2ImgPipeline
+    in the installed diffusers 0.40.0 runtime: it has
+    enable_attention_slicing() but did not expose enable_vae_slicing()."""
+
+    def __init__(self) -> None:
+        self.to_calls: list[str] = []
+        self.sliced: list[str] = []
+
+    def to(self, device: str) -> "_FakePipelineNoVaeSlicing":
+        self.to_calls.append(device)
+        return self
+
+    def enable_attention_slicing(self) -> None:
+        self.sliced.append("attention")
+
+
+class _FakePipelineVaeSlicingRaises(_FakePipelineNoVaeSlicing):
+    """Has enable_vae_slicing(), but calling it genuinely fails — the
+    optional-call guard must NOT hide that."""
+
+    def enable_vae_slicing(self) -> None:
+        raise RuntimeError("enable_vae_slicing blew up for a real reason")
+
+
+def test_load_pipeline_enables_vae_slicing_when_the_method_exists(monkeypatch):
+    fake = _load_with_fake_pipeline(monkeypatch)
+    # Attention slicing first, then VAE slicing — unchanged from before
+    # the compatibility guard, for a pipeline that exposes it.
+    assert fake.sliced == ["attention", "vae"]
+
+
+def test_load_pipeline_without_enable_vae_slicing_still_loads(monkeypatch):
+    # StableDiffusionControlNetImg2ImgPipeline in the installed diffusers
+    # 0.40.0 runtime did not expose enable_vae_slicing() — loading must
+    # succeed and attention slicing must still have been enabled.
+    fake = _FakePipelineNoVaeSlicing()
+    _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
+
+    pipeline.load_pipeline(FakeSettings())  # must not raise
+
+    assert pipeline._pipeline is fake
+    assert fake.to_calls == ["cuda"]
+    assert fake.sliced == ["attention"]
+    assert not hasattr(fake, "enable_vae_slicing")
+
+
+def test_load_pipeline_does_not_swallow_a_failing_enable_vae_slicing(monkeypatch):
+    # A method that DOES exist but raises is a real problem, not a
+    # compatibility gap: it must propagate, and no half-initialised
+    # pipeline may be cached as loaded.
+    fake = _FakePipelineVaeSlicingRaises()
+    _install_fake_torch_and_diffusers(monkeypatch, sd_pipeline_instance=fake)
+
+    with pytest.raises(RuntimeError, match="enable_vae_slicing blew up"):
+        pipeline.load_pipeline(FakeSettings())
+
+    assert pipeline._pipeline is None
+
+
+# ---------------------------------------------------------------------------
 # run_generation — exact forwarding
 # ---------------------------------------------------------------------------
 

@@ -193,7 +193,12 @@ except where a specific real-run finding is noted:
 - **The 512×512-pixel resolution budget** and the memory-saving settings
   (`enable_attention_slicing`/`enable_vae_slicing`) — tuned against
   whatever VRAM headroom Phase 2 actually measures, not assumed correct
-  now.
+  now. `StableDiffusionControlNetImg2ImgPipeline` in the installed
+  `diffusers` 0.40.0 runtime did not expose `enable_vae_slicing()`
+  (verified on a real Colab runtime), so `load_pipeline()` now calls it
+  only when the installed `diffusers` provides it and continues normally
+  otherwise — a compatibility guard, not a version pin; attention
+  slicing and the retained safety checker are unchanged.
 - **`num_inference_steps` (30) and `guidance_scale` (7.5)**
   (`config.py`) — standard SD1.5 starting points, not yet evidence-backed
   for this specific checkpoint/ControlNet combination. Internal service
