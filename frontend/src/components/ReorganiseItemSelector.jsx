@@ -1,21 +1,8 @@
 import { useRef, useState } from "react";
 import { formatConfidence, itemNumberLabel } from "../utils/format";
 import AnalysedRoomPanel from "./AnalysedRoomPanel";
+import BackToTopButton from "./BackToTopButton";
 
-// Direct Reorganise's post-analysis screen, analogous to DeclutterReview
-// in file role only, genuinely different in UX: this is NOT a "choose
-// what to keep" step. useReorganiseFlow.submit() already auto-selects
-// every actionable item, so Generate is available immediately after
-// analysis with no required interaction here. Reviewing/excluding
-// individual detections is an OPTIONAL correction, tucked behind a
-// collapsed-by-default <details> disclosure, not a second Declutter-
-// style mandatory decision screen. Selection itself is still a plain
-// boolean (selected/not), keyed only by item_id, duplicate labels
-// render as fully independent rows/boxes, exactly like Declutter's own
-// established precedent.
-//
-// Reuses AnalysedRoomPanel via its generalised getBoxClassName prop
-// (R5) rather than duplicating the box-geometry/list-linking logic.
 function reorganiseBoxClassName(item, isActive, isQuiet, selectedSet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = selectedSet.has(item.item_id)
@@ -29,34 +16,29 @@ function reorganiseBoxClassName(item, isActive, isQuiet, selectedSet) {
   return `${base} ${category} ${state}`;
 }
 
+// Direct Reorganise's dedicated Review screen. Every actionable detection
+// starts included; the user may exclude false detections before moving to
+// the separate Generate screen. Its layout and long-list navigation match
+// DeclutterReviewSection while its binary interaction stays workflow-specific.
 export default function ReorganiseItemSelector({
   items,
   selectedItemIds,
   onToggleItem,
   imageUrl,
-  phase,
-  onGenerate,
-  generateError,
-  healthStatus,
+  selectionDisabled = false,
+  enableBackToTop = false,
 }) {
-  const isGenerating = phase === "generating";
   const selectedSet = new Set(selectedItemIds);
-
   const [activeItemId, setActiveItemId] = useState(null);
   const [showAllBoxes, setShowAllBoxes] = useState(true);
   const itemRefs = useRef(new Map());
+  const workspaceRef = useRef(null);
+  const topSentinelRef = useRef(null);
+  const bottomSentinelRef = useRef(null);
 
   function registerItemRef(itemId, el) {
     if (el) itemRefs.current.set(itemId, el);
     else itemRefs.current.delete(itemId);
-  }
-
-  function activateItem(itemId) {
-    setActiveItemId(itemId);
-  }
-
-  function deactivateItem(itemId) {
-    setActiveItemId((current) => (current === itemId ? null : current));
   }
 
   function focusItem(itemId) {
@@ -66,171 +48,143 @@ export default function ReorganiseItemSelector({
     el.focus();
   }
 
+  function activate(itemId) {
+    setActiveItemId(itemId);
+  }
+
+  function deactivate(itemId) {
+    setActiveItemId((current) => (current === itemId ? null : current));
+  }
+
   const actionableItems = items.filter((item) => item.item_role === "actionable");
   const contextualItems = items.filter((item) => item.item_role !== "actionable");
 
-  const generateDisabled = selectedItemIds.length === 0 || isGenerating;
-
   return (
-    <div className="mt-6 space-y-6">
-      <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-lg font-medium text-stone-900">2. Generate room plan</h2>
-        <p className="mb-4 text-sm text-stone-600">
-          All {actionableItems.length} detected item{actionableItems.length === 1 ? "" : "s"} are automatically
-          included in your plan and requested in the visual preview, the generated image is an AI impression, not
-          a guarantee every object appears exactly as shown.
+    <div ref={workspaceRef} tabIndex={-1} className="space-y-6 scroll-mt-4 focus:outline-none">
+      {enableBackToTop && <span ref={topSentinelRef} aria-hidden="true" className="block h-px w-full" />}
+
+      <header>
+        <h2 className="text-title font-semibold tracking-tight text-foreground">Review items for your room plan</h2>
+        <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+          All {actionableItems.length} actionable detection{actionableItems.length === 1 ? " is" : "s are"} included
+          by default. Exclude anything detected incorrectly or anything that should not be part of the plan.
         </p>
+        <p className="mt-3 inline-flex rounded-pill bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">
+          {selectedItemIds.length} of {actionableItems.length} included
+        </p>
+      </header>
 
-        {healthStatus === "unavailable" && (
-          // Deliberately distinct wording from ImageGenStatusBanner's own
-          // message (mounted once, above this screen, in ReorganisePage)
-          // this is a short, button-adjacent reminder, not a repeat of
-          // the same sentence twice on one page.
-          <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-            Note: the image service is offline right now, so this run will produce a plan without a visual preview.
-          </p>
-        )}
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <div className="lg:sticky lg:top-4 lg:w-[40%] lg:flex-shrink-0">
+          <AnalysedRoomPanel
+            imageUrl={imageUrl}
+            items={items}
+            activeItemId={activeItemId}
+            onBoxClick={focusItem}
+            showAllBoxes={showAllBoxes}
+            onToggleShowAllBoxes={setShowAllBoxes}
+            getBoxClassName={(item, isActive, isQuiet) =>
+              reorganiseBoxClassName(item, isActive, isQuiet, selectedSet)
+            }
+          />
+        </div>
 
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={generateDisabled}
-          className="rounded-md bg-green-800 px-4 py-2 text-sm font-medium text-white hover:bg-green-900 disabled:cursor-not-allowed disabled:bg-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
-        >
-          {isGenerating ? "Generating…" : "Generate room plan"}
-        </button>
+        <div className="min-w-0 flex-1 space-y-4">
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-foreground">Actionable items</h3>
+            {actionableItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No actionable items were detected.</p>
+            ) : (
+              <ul className="space-y-2">
+                {actionableItems.map((item) => {
+                  const isSelected = selectedSet.has(item.item_id);
+                  const isActive = item.item_id === activeItemId;
+                  return (
+                    <li
+                      key={item.item_id}
+                      ref={(el) => registerItemRef(item.item_id, el)}
+                      tabIndex={-1}
+                      aria-current={isActive ? "true" : undefined}
+                      onMouseEnter={() => activate(item.item_id)}
+                      onMouseLeave={() => deactivate(item.item_id)}
+                      onFocus={() => activate(item.item_id)}
+                      onBlur={() => deactivate(item.item_id)}
+                      className={`flex items-start gap-3 rounded-card border bg-surface p-3 shadow-card ${
+                        isActive ? "border-primary ring-1 ring-primary" : "border-border"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        id={`reorganise-item-${item.item_id}`}
+                        checked={isSelected}
+                        disabled={selectionDisabled}
+                        onChange={() => onToggleItem(item.item_id)}
+                        className="mt-1 h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      <label htmlFor={`reorganise-item-${item.item_id}`} className="min-w-0 flex-1 cursor-pointer">
+                        <p className="font-medium text-foreground">
+                          <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-stone-800 text-[11px] font-semibold text-white">
+                            {itemNumberLabel(item.item_id)}
+                          </span>
+                          {item.effective_label}
+                          <span
+                            className={`ml-2 rounded-pill border px-2 py-0.5 text-xs font-medium ${
+                              isSelected
+                                ? "border-success/40 bg-success/10 text-success"
+                                : "border-border bg-surface-muted text-muted-foreground"
+                            }`}
+                          >
+                            {isSelected ? "Included in plan" : "Excluded from plan"}
+                          </span>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
+                          {formatConfidence(item.confidence)} detection confidence
+                        </p>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
 
-        {isGenerating && (
-          <p role="status" className="mt-3 flex items-center gap-2 text-sm text-stone-600">
-            <span aria-hidden="true" className="h-3 w-3 animate-pulse rounded-full bg-green-700" />
-            Creating your room plan and visual preview. This may take several minutes.
-          </p>
-        )}
+          {contextualItems.length > 0 && (
+            <section className="rounded-card border border-border bg-surface-muted p-3">
+              <h3 className="mb-1 text-sm font-semibold text-foreground">Contextual items ({contextualItems.length})</h3>
+              <p className="mb-2 text-xs text-muted-foreground">Shown for context and not included in the plan.</p>
+              <ul className="space-y-1">
+                {contextualItems.map((item) => (
+                  <li
+                    key={item.item_id}
+                    ref={(el) => registerItemRef(item.item_id, el)}
+                    tabIndex={0}
+                    aria-current={item.item_id === activeItemId ? "true" : undefined}
+                    onMouseEnter={() => activate(item.item_id)}
+                    onMouseLeave={() => deactivate(item.item_id)}
+                    onFocus={() => activate(item.item_id)}
+                    onBlur={() => deactivate(item.item_id)}
+                    className="rounded-control border border-border bg-surface p-2 text-xs text-muted-foreground"
+                  >
+                    {item.effective_label} <code>{item.item_id}</code>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      </div>
 
-        {selectedItemIds.length === 0 && !isGenerating && (
-          <p className="mt-2 text-xs text-stone-500">
-            At least one detected item must be included to generate a plan. Reopen the review below to include one.
-          </p>
-        )}
-
-        {generateError && (
-          <p role="alert" className="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-            {generateError} Your selection is unchanged. You can try again.
-          </p>
-        )}
-
-        <details className="mt-5 rounded-md border border-stone-200 bg-stone-50">
-          <summary className="cursor-pointer select-none rounded-md px-4 py-3 text-sm font-medium text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700">
-            Review detected items (optional)
-          </summary>
-
-          <div className="border-t border-stone-200 p-4">
-            <p className="mb-4 text-sm text-stone-600">
-              Exclude anything detected incorrectly, or a fixture that shouldn't be part of the plan.
-            </p>
-
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-              <div className="lg:sticky lg:top-4 lg:w-[42%] lg:flex-shrink-0">
-                <AnalysedRoomPanel
-                  imageUrl={imageUrl}
-                  items={items}
-                  activeItemId={activeItemId}
-                  onBoxClick={focusItem}
-                  showAllBoxes={showAllBoxes}
-                  onToggleShowAllBoxes={setShowAllBoxes}
-                  getBoxClassName={(item, isActive, isQuiet) =>
-                    reorganiseBoxClassName(item, isActive, isQuiet, selectedSet)
-                  }
-                />
-              </div>
-
-              <div className="min-w-0 flex-1">
-                {actionableItems.length === 0 ? (
-                  <p className="text-sm text-stone-500">No actionable items were detected.</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {actionableItems.map((item) => {
-                      const isSelected = selectedSet.has(item.item_id);
-                      const isActive = item.item_id === activeItemId;
-                      return (
-                        <li
-                          key={item.item_id}
-                          ref={(el) => registerItemRef(item.item_id, el)}
-                          tabIndex={-1}
-                          aria-current={isActive ? "true" : undefined}
-                          onMouseEnter={() => activateItem(item.item_id)}
-                          onMouseLeave={() => deactivateItem(item.item_id)}
-                          onFocus={() => activateItem(item.item_id)}
-                          onBlur={() => deactivateItem(item.item_id)}
-                          className={`flex items-start gap-3 rounded-lg border bg-white p-3 shadow-sm ${isActive ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-200"}`}
-                        >
-                          <input
-                            type="checkbox"
-                            id={`reorganise-item-${item.item_id}`}
-                            checked={isSelected}
-                            disabled={isGenerating}
-                            onChange={() => onToggleItem(item.item_id)}
-                            className="mt-1 h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
-                          />
-                          <label htmlFor={`reorganise-item-${item.item_id}`} className="min-w-0 flex-1 cursor-pointer">
-                            <p className="font-medium text-stone-900">
-                              <span className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-stone-800 text-[11px] font-semibold text-white">
-                                {itemNumberLabel(item.item_id)}
-                              </span>
-                              {item.effective_label}
-                              <span
-                                className={`ml-2 rounded-full border px-2 py-0.5 text-xs font-medium ${
-                                  isSelected
-                                    ? "border-green-300 bg-green-50 text-green-800"
-                                    : "border-stone-300 bg-stone-100 text-stone-600"
-                                }`}
-                              >
-                                {isSelected ? "Included in plan" : "Exclude from plan"}
-                              </span>
-                            </p>
-                            <p className="text-xs text-stone-500">
-                              item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
-                              {formatConfidence(item.confidence)} detection confidence
-                            </p>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-
-                {contextualItems.length > 0 && (
-                  <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3">
-                    <h3 className="mb-1 text-sm font-medium text-stone-700">
-                      Contextual items ({contextualItems.length})
-                    </h3>
-                    <p className="mb-2 text-xs text-stone-500">
-                      Detected as room context, not part of the plan.
-                    </p>
-                    <ul className="space-y-1">
-                      {contextualItems.map((item) => (
-                        <li
-                          key={item.item_id}
-                          ref={(el) => registerItemRef(item.item_id, el)}
-                          tabIndex={0}
-                          aria-current={item.item_id === activeItemId ? "true" : undefined}
-                          onMouseEnter={() => activateItem(item.item_id)}
-                          onMouseLeave={() => deactivateItem(item.item_id)}
-                          onFocus={() => activateItem(item.item_id)}
-                          onBlur={() => deactivateItem(item.item_id)}
-                          className="rounded-md border border-stone-200 bg-white p-2 text-xs text-stone-600"
-                        >
-                          {item.effective_label} <code>{item.item_id}</code>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </details>
-      </section>
+      {enableBackToTop && (
+        <>
+          <span ref={bottomSentinelRef} aria-hidden="true" className="block h-px w-full" />
+          <BackToTopButton
+            scrollTargetRef={workspaceRef}
+            topSentinelRef={topSentinelRef}
+            bottomSentinelRef={bottomSentinelRef}
+          />
+        </>
+      )}
     </div>
   );
 }

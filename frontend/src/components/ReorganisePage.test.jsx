@@ -91,116 +91,98 @@ function makeGeneratedResponse() {
   };
 }
 
-describe("ReorganisePage, health ownership", () => {
-  test("mounting the page issues exactly one health request", async () => {
+function stepper() {
+  return screen.getByRole("navigation", { name: /reorganise workflow progress/i });
+}
+
+function currentStep() {
+  return within(stepper())
+    .getAllByRole("listitem")
+    .find((item) => item.getAttribute("aria-current") === "step")
+    ?.textContent.replace(/\d+/g, "")
+    .trim();
+}
+
+async function analyseRoom() {
+  await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
+  await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
+}
+
+async function continueToGenerate() {
+  await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+  expect(screen.getByRole("heading", { name: /review items for your room plan/i })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /continue to generate/i }));
+  expect(screen.getByRole("heading", { name: /generate room plan/i })).toBeInTheDocument();
+}
+
+describe("ReorganisePage screen-by-screen flow", () => {
+  test("mounting owns exactly one image-health request", async () => {
     render(<ReorganisePage />);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
   });
 
-  test("an unavailable health status is shown via the banner, sourced from the one hook instance", async () => {
-    client.getImageGenHealth.mockResolvedValue({ available: false });
+  test("shows one step screen at a time and supports Back navigation", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
     render(<ReorganisePage />);
-    await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
-    expect(client.getImageGenHealth).toHaveBeenCalledTimes(1);
-  });
-});
 
-describe("ReorganisePage, end-to-end phase flow", () => {
-  test("upload -> select -> generate -> result, with health advisory shown but never blocking", async () => {
-    client.getImageGenHealth.mockResolvedValue({ available: false }); // unavailable throughout
+    expect(currentStep()).toBe("Upload");
+    expect(screen.queryByRole("heading", { name: /review items for your room plan/i })).not.toBeInTheDocument();
+
+    await analyseRoom();
+    expect(currentStep()).toBe("Analyse");
+    expect(screen.queryByRole("heading", { name: /review items for your room plan/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+    expect(currentStep()).toBe("Review");
+    expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /back to analyse/i }));
+    expect(currentStep()).toBe("Analyse");
+  });
+
+  test("Review requires an included item before Generate is unlocked", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+
+    await userEvent.click(document.getElementById("reorganise-item-item_001"));
+    expect(screen.getByRole("button", { name: /continue to generate/i })).toBeDisabled();
+  });
+
+  test("completes Upload → Analyse → Review → Generate without health blocking", async () => {
+    client.getImageGenHealth.mockResolvedValue({ available: false });
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     client.generateReorganisation.mockResolvedValue(makeGeneratedResponse());
-
     render(<ReorganisePage />);
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
-
-    await waitFor(() => expect(screen.getByRole("button", { name: /generate room plan/i })).toBeInTheDocument());
-    expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument(); // the banner
-    expect(screen.getByText(/image service is offline/i)).toBeInTheDocument(); // the item-selector's own advisory
-    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled(); // health never blocks it
+    await analyseRoom();
+    await continueToGenerate();
+    await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
 
     await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
-
-    await waitFor(() => expect(screen.getByText(/your room plan/i)).toBeInTheDocument());
-    expect(screen.getByText("Keep in place")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    expect(currentStep()).toBe("Generate");
+    expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
   });
 
-  // The "Back to workflows" control moved to AppShell; App.test.jsx covers
-  // that returning from Reorganise unmounts the workflow.
-});
-
-describe("ReorganisePage, workflow progress stepper", () => {
-  function stepper() {
-    return screen.getByRole("navigation", { name: /reorganise workflow progress/i });
-  }
-  function currentStep() {
-    return within(stepper())
-      .getAllByRole("listitem")
-      .find((li) => li.getAttribute("aria-current") === "step")
-      ?.textContent.replace(/\d+/g, "")
-      .trim();
-  }
-
-  test("maps every phase: upload → analysing → selecting → generating → result", async () => {
-    let resolveUpload;
-    let resolveGenerate;
-    client.uploadImage.mockImplementationOnce(
-      () => new Promise((r) => { resolveUpload = () => r(makeUploadResponse()); })
-    );
-    client.generateReorganisation.mockImplementationOnce(
-      () => new Promise((r) => { resolveGenerate = () => r(makeGeneratedResponse()); })
-    );
-    render(<ReorganisePage />);
-
-    expect(within(stepper()).getAllByRole("listitem").map((li) => li.textContent.replace(/\d+/g, "").trim())).toEqual([
-      "Upload",
-      "Analyse",
-      "Review",
-      "Generate",
-    ]);
-    expect(currentStep()).toBe("Upload");
-
-    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
-    await waitFor(() => expect(currentStep()).toBe("Analyse"));
-
-    resolveUpload();
-    await waitFor(() => expect(currentStep()).toBe("Review"));
-
-    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
-    await waitFor(() => expect(currentStep()).toBe("Generate"));
-    expect(within(stepper()).getByText(/planning the room/i)).toBeInTheDocument();
-
-    resolveGenerate();
-    await waitFor(() =>
-      expect(within(stepper()).getAllByRole("listitem").every((li) => li.getAttribute("aria-current") !== "step")).toBe(true)
-    );
-    // final step completed
-    const generateCircle = within(stepper()).getAllByRole("listitem")[3].querySelector(".rounded-full");
-    expect(generateCircle.className).toMatch(/border-success/);
-  });
-
-  test("a generation error keeps the stepper on Generate with retry guidance", async () => {
+  test("a generation error remains retryable on the Generate screen", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     client.generateReorganisation.mockRejectedValueOnce(new Error("plan service down"));
     render(<ReorganisePage />);
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /generate room plan/i })).toBeInTheDocument());
+    await analyseRoom();
+    await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
 
-    await waitFor(() => expect(currentStep()).toBe("Generate"));
-    expect(within(stepper()).getByText(/didn't finish/i)).toBeInTheDocument();
-    // still on a retryable stage, not shown complete
-    expect(
-      within(stepper()).getAllByRole("listitem")[3].querySelector(".rounded-full").className
-    ).not.toMatch(/border-success/);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
+    expect(currentStep()).toBe("Generate");
+    expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
   });
 
-  test("an unavailable-preview but successful plan still completes the Generate step", async () => {
+  test("a successful plan still completes when the visual preview is unavailable", async () => {
     const unavailable = makeGeneratedResponse();
     unavailable.image_status = "unavailable";
     unavailable.image = null;
@@ -209,16 +191,11 @@ describe("ReorganisePage, workflow progress stepper", () => {
     client.generateReorganisation.mockResolvedValue(unavailable);
     render(<ReorganisePage />);
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /generate room plan/i })).toBeInTheDocument());
+    await analyseRoom();
+    await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
 
-    await waitFor(() =>
-      expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument()
-    );
-    expect(
-      within(stepper()).getAllByRole("listitem")[3].querySelector(".rounded-full").className
-    ).toMatch(/border-success/);
+    await waitFor(() => expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument());
+    expect(screen.getByText("Keep in place")).toBeInTheDocument();
   });
 });

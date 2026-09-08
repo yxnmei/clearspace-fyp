@@ -105,7 +105,7 @@ describe("deriveBothProgress", () => {
     const p = deriveBothProgress({ ...analysed, confirmationStatus: "error", confirmation: null });
     expect(p.currentStepId).toBe("confirm");
     expect(p.processing).toBe(false);
-    expect(p.nextActionText).toMatch(/retry/i);
+    expect(p.nextActionText).toMatch(/try again/i);
   });
 
   test("confirmed Keep set with ≥1 item → Reorganise current (ready to continue), not complete", () => {
@@ -115,12 +115,13 @@ describe("deriveBothProgress", () => {
     expect(p.processing).toBe(false);
   });
 
-  test("confirmed with ZERO Keep items → stays at Confirm; Reorganise never active or complete", () => {
+  test("confirmed with ZERO Keep items unlocks the final actions screen for possible Sell listings", () => {
     const p = deriveBothProgress({ ...analysed, confirmationStatus: "confirmed", confirmation: { confirmedKeepIds: [] } });
-    expect(p.currentStepId).toBe("confirm");
+    expect(p.currentStepId).toBe("reorganise");
+    expect(p.unlockedStepIds).toContain("reorganise");
     expect(p.isComplete).toBe(false);
     expect(p.processing).toBe(false);
-    expect(p.statusText + " " + p.nextActionText).toMatch(/at least one item.*keep/i);
+    expect(p.nextActionText).toMatch(/independently/i);
   });
 
   test("generating → Reorganise and processing", () => {
@@ -135,7 +136,7 @@ describe("deriveBothProgress", () => {
     expect(p.currentStepId).toBe("reorganise");
     expect(p.processing).toBe(false);
     expect(p.isComplete).toBe(false);
-    expect(p.nextActionText).toMatch(/retry/i);
+    expect(p.nextActionText).toMatch(/try again/i);
   });
 
   test("generated result → Reorganise completed and workflow complete", () => {

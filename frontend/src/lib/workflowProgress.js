@@ -1,22 +1,6 @@
-// Pure, model-free derivation of progress-stepper presentation data from
-// the state each workflow page already owns. No React, no hooks, no side
-// effects, every function takes a plain state snapshot and returns the
-// exact shape <WorkflowProgress /> renders:
-//
-//   {
-//     workflowName,      // e.g. "Declutter", used for the nav label
-//     steps,             // ordered [{ id, label }]
-//     currentStepId,     // the step currently in progress
-//     isComplete,        // final step done and the workflow finished
-//     processing,        // work is actively in flight right now
-//     statusText,        // what ClearSpace is doing now
-//     nextActionText,    // what the user should do next
-//   }
-//
-// The three step sequences are each workflow's real state machine, never
-// one shared sequence. "Review" is the existing optional detected-item
-// review; a successful result completes the final step (Generate /
-// Reorganise) rather than adding a separate "Result" step.
+// Pure, model-free progress and wizard-navigation derivation for the
+// three workflows. Declutter has additional listing-specific rules in
+// declutterWizard.js; Direct Reorganise and Both use the helpers here.
 
 const DECLUTTER_STEPS = [
   { id: "upload", label: "Upload" },
@@ -47,221 +31,266 @@ export const WORKFLOW_STEPS = {
   both: BOTH_STEPS,
 };
 
-const READY_STATUS = "Ready when you are.";
-const READY_NEXT = "Add a room photo (and optional context), then start the analysis.";
-const UPLOAD_ERROR_STATUS = "That upload didn't go through.";
-const UPLOAD_ERROR_NEXT = "Your photo and context are still here. Submit again to retry.";
-const NO_ACTION_WAIT = "This can take up to two minutes, no action needed yet.";
+function navigationModel({ steps, viewedStep, unlockedStepIds, completedStepIds, navigationLocked }) {
+  const viewedStepId = unlockedStepIds.includes(viewedStep)
+    ? viewedStep
+    : unlockedStepIds[unlockedStepIds.length - 1];
+  const viewedIndex = steps.findIndex((step) => step.id === viewedStepId);
+  const backTargetId = viewedIndex > 0 ? steps[viewedIndex - 1].id : null;
+  return {
+    viewedStepId,
+    completedStepIds,
+    unlockedStepIds,
+    navigationLocked,
+    backTargetId,
+    canGoBack: !navigationLocked && backTargetId !== null,
+  };
+}
 
-// Declutter is no longer derived here. Its five-view wizard owns its own
-// presentation + navigation model in lib/declutterWizard.js
-// (deriveDeclutterWizard), which is the single Declutter source of truth.
-// WORKFLOW_STEPS.declutter is still exported above and consumed there.
-
-// Direct Reorganise: Upload → Analyse → Review → Generate.
-// Derived from flow.phase, with uploadError / generateError as the
-// recoverable-error side fields on their own step.
-export function deriveReorganiseProgress({ phase, uploadError, generateError } = {}) {
-  const base = { workflowName: "Reorganise", steps: REORGANISE_STEPS };
-
-  switch (phase) {
-    case "result":
-      return {
-        ...base,
-        currentStepId: "generate",
-        isComplete: true,
-        processing: false,
-        statusText: "Your reorganisation is complete.",
-        nextActionText: "The plan and preview are below. Start over to run it again.",
-      };
-    case "generating":
-      return {
-        ...base,
-        currentStepId: "generate",
-        isComplete: false,
-        processing: true,
-        statusText: "Planning the room and generating a preview…",
-        nextActionText: NO_ACTION_WAIT,
-      };
-    case "selecting":
-      if (generateError) {
-        return {
-          ...base,
-          currentStepId: "generate",
-          isComplete: false,
-          processing: false,
-          statusText: "The room-plan generation didn't finish.",
-          nextActionText: "Your selection is unchanged. Adjust it if you like, then generate again.",
-        };
-      }
-      return {
-        ...base,
-        currentStepId: "review",
-        isComplete: false,
-        processing: false,
-        statusText: "ClearSpace analysed your room. Actionable items are included by default.",
-        nextActionText: "Optionally exclude wrong detections, then generate your room plan.",
-      };
-    case "analysing":
-      return {
-        ...base,
-        currentStepId: "analyse",
-        isComplete: false,
-        processing: true,
-        statusText: "Analysing your room, scene and object detection.",
-        nextActionText: NO_ACTION_WAIT,
-      };
+function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis, selectedItemCount }) {
+  switch (viewedStepId) {
     case "upload":
+      if (uploadError) return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
+      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Review.", false];
+      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+    case "analyse":
+      if (phase === "analysing") return ["Analysing your room, scene and objects.", "This can take up to two minutes, no action needed yet.", true];
+      if (uploadError) return ["That analysis didn't go through.", "Go back to Upload and try again.", false];
+      if (hasAnalysis) return ["Analysis complete.", "Continue to Review to check the detected items.", false];
+      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+    case "review":
+      if (selectedItemCount === 0) return ["Nothing is included in the room plan.", "Include at least one actionable item to continue.", false];
+      return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Generate.", false];
+    case "generate":
+      if (phase === "generating") return ["Planning the room and generating a preview…", "This can take several minutes, no action needed yet.", true];
+      if (phase === "result") return ["Your reorganisation is complete.", "Review the room plan and visual preview below.", false];
+      if (phase === "selecting" && uploadError == null) return ["Ready to generate your room plan.", "Press Generate room plan when you are ready.", false];
+      return ["Room-plan generation is ready.", "Return to Review if you want to change the included items.", false];
     default:
-      if (uploadError) {
-        return {
-          ...base,
-          currentStepId: "upload",
-          isComplete: false,
-          processing: false,
-          statusText: UPLOAD_ERROR_STATUS,
-          nextActionText: UPLOAD_ERROR_NEXT,
-        };
-      }
-      return {
-        ...base,
-        currentStepId: "upload",
-        isComplete: false,
-        processing: false,
-        statusText: READY_STATUS,
-        nextActionText: READY_NEXT,
-      };
+      return ["", "", false];
   }
 }
 
-// Both: Upload → Analyse → Review → Confirm → Reorganise.
-// Derived only from useBothFlow state (the composed Declutter fields plus
-// this hook's own generationStatus / generateResult).
-//
-// Empty-Keep rule: if confirmation succeeds with zero confirmed Keep
-// items, the workflow stays on Confirm, Reorganise is never shown active
-// or complete, and the guidance says at least one item must be changed
-// to Keep and confirmed before reorganisation can begin.
-export function deriveBothProgress({
-  status,
-  analysis,
-  declutter,
-  confirmationStatus,
-  confirmation,
-  generationStatus,
-  generateResult,
+// Direct Reorganise as a navigable four-screen wizard. `viewedStep` is
+// presentation state; `phase` remains the hook-owned network state.
+export function deriveReorganiseProgress({
+  phase = "upload",
+  uploadError = null,
+  generateError = null,
+  hasAnalysis: suppliedHasAnalysis,
+  selectedItemCount = 0,
+  viewedStep,
+  reviewAcknowledged = false,
 } = {}) {
-  const base = { workflowName: "Both", steps: BOTH_STEPS };
+  const hasAnalysis = suppliedHasAnalysis ?? ["selecting", "generating", "result"].includes(phase);
+  const analysisAttempted = phase !== "upload" || uploadError !== null;
+  const reviewComplete = reviewAcknowledged || phase === "generating" || phase === "result" || generateError !== null;
+  const navigationLocked = phase === "analysing" || phase === "generating";
 
-  if (generationStatus === "done" || generateResult) {
-    return {
-      ...base,
-      currentStepId: "reorganise",
-      isComplete: true,
-      processing: false,
-      statusText: "Your reorganisation is complete.",
-      nextActionText: "The plan and preview are below. This run is complete.",
-    };
-  }
-  if (generationStatus === "generating") {
-    return {
-      ...base,
-      currentStepId: "reorganise",
-      isComplete: false,
-      processing: true,
-      statusText: "Planning the room and generating a preview…",
-      nextActionText: NO_ACTION_WAIT,
-    };
-  }
-  if (generationStatus === "error") {
-    return {
-      ...base,
-      currentStepId: "reorganise",
-      isComplete: false,
-      processing: false,
-      statusText: "The reorganisation didn't finish.",
-      nextActionText: "Your confirmed choices are unchanged. Press the reorganisation button again to retry.",
-    };
+  const unlockedStepIds = ["upload"];
+  if (analysisAttempted) unlockedStepIds.push("analyse");
+  if (hasAnalysis) unlockedStepIds.push("review");
+  if (hasAnalysis && reviewComplete) unlockedStepIds.push("generate");
+
+  const completedStepIds = [];
+  if (analysisAttempted) completedStepIds.push("upload");
+  if (hasAnalysis) completedStepIds.push("analyse");
+  if (hasAnalysis && reviewComplete) completedStepIds.push("review");
+  if (phase === "result") completedStepIds.push("generate");
+
+  const underlyingStep = phase === "analysing"
+    ? "analyse"
+    : phase === "generating" || phase === "result" || generateError
+      ? "generate"
+      : hasAnalysis
+        ? "review"
+        : "upload";
+  const navigation = navigationModel({
+    steps: REORGANISE_STEPS,
+    viewedStep: viewedStep ?? underlyingStep,
+    unlockedStepIds,
+    completedStepIds,
+    navigationLocked,
+  });
+
+  let canContinue = false;
+  let continueTargetId = null;
+  if (!navigationLocked && navigation.viewedStepId === "analyse" && hasAnalysis) {
+    canContinue = true;
+    continueTargetId = "review";
+  } else if (!navigationLocked && navigation.viewedStepId === "review" && selectedItemCount > 0) {
+    canContinue = true;
+    continueTargetId = "generate";
   }
 
-  const hasConfirmation = confirmationStatus === "confirmed" && confirmation;
-  if (hasConfirmation && confirmation.confirmedKeepIds.length > 0) {
-    return {
-      ...base,
-      currentStepId: "reorganise",
-      isComplete: false,
-      processing: false,
-      statusText: "Your Keep items are locked in.",
-      nextActionText: "Press the reorganisation button to plan the room using those Keep items.",
-    };
-  }
-  if (hasConfirmation && confirmation.confirmedKeepIds.length === 0) {
-    return {
-      ...base,
-      currentStepId: "confirm",
-      isComplete: false,
-      processing: false,
-      statusText: "Confirmed, but nothing is set to Keep yet.",
-      nextActionText:
-        "Change at least one item to Keep and confirm again before reorganisation can begin.",
-    };
-  }
-  if (confirmationStatus === "confirming") {
-    return {
-      ...base,
-      currentStepId: "confirm",
-      isComplete: false,
-      processing: true,
-      statusText: "Saving your Keep, Sell, Donate and Discard choices…",
-      nextActionText: NO_ACTION_WAIT,
-    };
-  }
-  if (confirmationStatus === "error") {
-    return {
-      ...base,
-      currentStepId: "confirm",
-      isComplete: false,
-      processing: false,
-      statusText: "That confirmation didn't go through.",
-      nextActionText: "Your review is unchanged. Press Confirm decisions again to retry.",
-    };
-  }
-  if (status === "uploading") {
-    return {
-      ...base,
-      currentStepId: "analyse",
-      isComplete: false,
-      processing: true,
-      statusText: "Analysing your room, scene, objects and item reasoning.",
-      nextActionText: NO_ACTION_WAIT,
-    };
-  }
-  if (analysis && declutter) {
-    return {
-      ...base,
-      currentStepId: "review",
-      isComplete: false,
-      processing: false,
-      statusText: "ClearSpace suggested an action for each item it found.",
-      nextActionText: "Review each item, then confirm the ones to Keep for reorganisation.",
-    };
-  }
-  if (status === "error") {
-    return {
-      ...base,
-      currentStepId: "upload",
-      isComplete: false,
-      processing: false,
-      statusText: UPLOAD_ERROR_STATUS,
-      nextActionText: UPLOAD_ERROR_NEXT,
-    };
-  }
+  const [statusText, nextActionText, processing] = describeReorganiseStep({
+    viewedStepId: navigation.viewedStepId,
+    phase,
+    uploadError,
+    hasAnalysis,
+    selectedItemCount,
+  });
+  const finalStatusText = generateError && navigation.viewedStepId === "generate"
+    ? "The room-plan generation didn't finish."
+    : statusText;
+  const finalNextActionText = generateError && navigation.viewedStepId === "generate"
+    ? "Your selection is unchanged. Press Generate room plan to try again."
+    : nextActionText;
+
   return {
-    ...base,
-    currentStepId: "upload",
-    isComplete: false,
-    processing: false,
-    statusText: READY_STATUS,
-    nextActionText: READY_NEXT,
+    workflowName: "Reorganise",
+    steps: REORGANISE_STEPS,
+    currentStepId: underlyingStep,
+    isComplete: phase === "result",
+    ...navigation,
+    processing,
+    statusText: finalStatusText,
+    nextActionText: finalNextActionText,
+    canContinue,
+    continueTargetId,
+  };
+}
+
+function describeBothStep({
+  viewedStepId,
+  status,
+  hasAnalysis,
+  confirmationStatus,
+  hasConfirmation,
+  generationStatus,
+  listingStatus,
+  regeneratingItemId,
+  unresolvedCount,
+  correctingItemId,
+}) {
+  switch (viewedStepId) {
+    case "upload":
+      if (status === "error") return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
+      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Review.", false];
+      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+    case "analyse":
+      if (status === "uploading") return ["Analysing your room, scene, objects and item reasoning.", "This can take up to two minutes, no action needed yet.", true];
+      if (status === "error") return ["That analysis didn't go through.", "Go back to Upload and try again.", false];
+      return hasAnalysis
+        ? ["Analysis complete.", "Continue to Review to check each item.", false]
+        : ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+    case "review":
+      if (correctingItemId !== null) return ["A label correction is in progress.", "Continue becomes available once it finishes.", false];
+      if (unresolvedCount > 0) return ["Some items still need a valid decision.", "Resolve every item before continuing.", false];
+      return ["ClearSpace suggested an action for each item.", "Change anything you want, then continue to Confirm.", false];
+    case "confirm":
+      if (confirmationStatus === "confirming") return ["Confirming your decisions…", "This finishes in a moment.", true];
+      if (confirmationStatus === "error") return ["That confirmation didn't go through.", "Your review is unchanged. Try again below.", false];
+      if (hasConfirmation) return ["Your decisions are locked in.", "Continue to the final actions when you are ready.", false];
+      return ["Ready to confirm.", "Press Confirm decisions when your review is ready.", false];
+    case "reorganise":
+      if (generationStatus === "generating") return ["Planning the room and generating a preview…", "Listings remain independently available on this screen.", true];
+      if (listingStatus === "generating") return ["Generating your listing drafts…", "Reorganisation remains independently available on this screen.", true];
+      if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "The room plan and other drafts are unaffected.", true];
+      if (generationStatus === "error") return ["The reorganisation didn't finish.", "Your confirmed choices are unchanged. Try again below.", false];
+      if (generationStatus === "done") return ["Your reorganisation is complete.", "Your room plan, preview and listing actions are below.", false];
+      return ["Choose your next action.", "Generate listings and a reorganisation independently, in either order.", false];
+    default:
+      return ["", "", false];
+  }
+}
+
+// Both follows the same screen-by-screen pattern while keeping Listings
+// and Reorganise as independent actions on the final screen.
+export function deriveBothProgress({
+  status = "idle",
+  analysis = null,
+  declutter = null,
+  confirmationStatus = "idle",
+  confirmation = null,
+  generationStatus = "idle",
+  generateResult = null,
+  listingStatus = "idle",
+  regeneratingItemId = null,
+  unresolvedCount = 0,
+  correctingItemId = null,
+  viewedStep,
+  reviewAcknowledged = false,
+} = {}) {
+  const hasAnalysis = Boolean(analysis && declutter);
+  const hasConfirmation = confirmationStatus === "confirmed" && confirmation !== null;
+  const analysisAttempted = status !== "idle";
+  const reviewComplete = reviewAcknowledged || confirmationStatus !== "idle" || hasConfirmation;
+  const navigationLocked =
+    status === "uploading" ||
+    confirmationStatus === "confirming" ||
+    generationStatus === "generating" ||
+    listingStatus === "generating" ||
+    regeneratingItemId !== null;
+
+  const unlockedStepIds = ["upload"];
+  if (analysisAttempted) unlockedStepIds.push("analyse");
+  if (hasAnalysis) unlockedStepIds.push("review");
+  if (hasAnalysis && reviewComplete) unlockedStepIds.push("confirm");
+  if (hasConfirmation) unlockedStepIds.push("reorganise");
+
+  const completedStepIds = [];
+  if (analysisAttempted) completedStepIds.push("upload");
+  if (hasAnalysis) completedStepIds.push("analyse");
+  if (hasAnalysis && reviewComplete) completedStepIds.push("review");
+  if (hasConfirmation) completedStepIds.push("confirm");
+  if (generationStatus === "done" || generateResult) completedStepIds.push("reorganise");
+
+  const underlyingStep = generationStatus !== "idle" || generateResult || hasConfirmation
+    ? "reorganise"
+    : confirmationStatus !== "idle"
+      ? "confirm"
+      : hasAnalysis
+        ? "review"
+        : status === "uploading"
+          ? "analyse"
+          : "upload";
+  const navigation = navigationModel({
+    steps: BOTH_STEPS,
+    viewedStep: viewedStep ?? underlyingStep,
+    unlockedStepIds,
+    completedStepIds,
+    navigationLocked,
+  });
+
+  const canContinueFromReview = hasAnalysis && unresolvedCount === 0 && correctingItemId === null;
+  let canContinue = false;
+  let continueTargetId = null;
+  if (!navigationLocked && navigation.viewedStepId === "analyse" && hasAnalysis) {
+    canContinue = true;
+    continueTargetId = "review";
+  } else if (!navigationLocked && navigation.viewedStepId === "review" && canContinueFromReview) {
+    canContinue = true;
+    continueTargetId = "confirm";
+  } else if (!navigationLocked && navigation.viewedStepId === "confirm" && hasConfirmation) {
+    canContinue = true;
+    continueTargetId = "reorganise";
+  }
+
+  const [statusText, nextActionText, processing] = describeBothStep({
+    viewedStepId: navigation.viewedStepId,
+    status,
+    hasAnalysis,
+    confirmationStatus,
+    hasConfirmation,
+    generationStatus,
+    listingStatus,
+    regeneratingItemId,
+    unresolvedCount,
+    correctingItemId,
+  });
+
+  return {
+    workflowName: "Both",
+    steps: BOTH_STEPS,
+    currentStepId: underlyingStep,
+    isComplete: generationStatus === "done" || Boolean(generateResult),
+    ...navigation,
+    processing,
+    statusText,
+    nextActionText,
+    canContinue,
+    continueTargetId,
+    canContinueFromReview,
   };
 }
