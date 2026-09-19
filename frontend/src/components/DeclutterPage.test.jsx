@@ -772,12 +772,16 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
     await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
 
-    // The card names item_001 and shows a thumbnail cropped from the same
-    // analysed-room object URL used on Review. Scoped to the listing card
-    // (an <article>), the hidden Review view renders the same item_id and
-    // a thumbnail of its own that would otherwise collide with this query.
-    const card = within(screen.getByRole("article"));
-    expect(card.getByText("item_001")).toBeInTheDocument();
+    // The card is keyed by item_001 (data-item-id, never visible text) and
+    // shows a thumbnail cropped from the same analysed-room object URL
+    // used on Review. Scoped to the listing card (an <article>), the
+    // hidden Review view renders a thumbnail of its own that would
+    // otherwise collide with this query.
+    const article = screen.getByRole("article");
+    expect(article).toHaveAttribute("data-item-id", "item_001");
+    const card = within(article);
+    expect(card.queryByText("item_001")).not.toBeInTheDocument();
+    expect(card.getByRole("heading", { name: "lamp" })).toBeInTheDocument();
     expect(card.getByTestId("item-crop-thumbnail")).toHaveAttribute(
       "style",
       expect.stringContaining(analysedSrc)
@@ -804,7 +808,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
 
     // Discard/restore are local, no request.
     await user.click(screen.getByRole("button", { name: /discard draft/i }));
-    expect(screen.getByText(/discarded locally/i)).toBeInTheDocument();
+    expect(screen.getByText("Discarded")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /restore draft/i }));
     expect(screen.getByLabelText(/listing title for/i)).toHaveValue("Edited title");
 

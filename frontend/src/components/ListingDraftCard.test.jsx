@@ -115,25 +115,32 @@ function EditableCard({ draft: initialDraft, onEditSpy, ...rest }) {
 
 describe("ListingDraftCard", () => {
   describe("identity and metadata join", () => {
-    test("uses item_id for field ids and joins location metadata by item_id, not label", () => {
-      render(
+    test("uses item_id for the article key and every field id, but never shows it or the location metadata", () => {
+      const { container } = render(
         <ListingDraftCard
           draft={makeGeneratedDraft({ item_id: "item_007" })}
           reviewItem={makeReviewItem({ item_id: "item_007", position: "upper-right", relative_size: "small" })}
         />
       );
+      expect(screen.getByRole("article")).toHaveAttribute("data-item-id", "item_007");
       expect(screen.getByLabelText(/listing title for dining table/i)).toHaveAttribute(
         "id",
         "listing-title-item_007"
       );
-      expect(screen.getByText("item_007")).toBeInTheDocument();
-      expect(screen.getByText(/upper-right, small/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/listing description for dining table/i)).toHaveAttribute(
+        "id",
+        "listing-description-item_007"
+      );
+      expect(container.textContent).not.toMatch(/item_007|item_id|upper-right|small/i);
+      expect(container.querySelector("code")).toBeNull();
     });
 
-    test("does not invent location metadata when there is no matching review item", () => {
-      render(<ListingDraftCard draft={makeGeneratedDraft()} reviewItem={null} />);
-      expect(screen.getByText("item_001")).toBeInTheDocument();
-      expect(screen.queryByText(/center/i)).not.toBeInTheDocument();
+    test("shows no technical metadata: attempts, repair flag, status, run or model details", () => {
+      const { container } = render(
+        <ListingDraftCard draft={makeGeneratedDraft({ attempts: 3, was_repaired: true })} reviewItem={null} />
+      );
+      expect(screen.getByText("dining table")).toBeInTheDocument();
+      expect(container.textContent).not.toMatch(/item_001|attempt|repair|generated|status|run|model|prompt|sha|center/i);
     });
   });
 
@@ -186,9 +193,26 @@ describe("ListingDraftCard", () => {
       expect(screen.getByText("Edited")).toBeInTheDocument();
     });
 
-    test("makes clear that edits are local and nothing is published", () => {
+    test("does not repeat the section-level reassurance on every card", () => {
       render(<ListingDraftCard draft={makeGeneratedDraft()} />);
-      expect(screen.getByText(/nothing is published/i)).toBeInTheDocument();
+      expect(screen.queryByText(/nothing is published/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/editable suggestions/i)).not.toBeInTheDocument();
+    });
+
+    test("the header keeps thumbnail and item name together, with a subtle Edited badge when edited", () => {
+      const { rerender } = render(
+        <ListingDraftCard draft={makeGeneratedDraft()} reviewItem={makeReviewItem()} imageUrl="blob:room-1" />
+      );
+      const heading = screen.getByRole("heading", { name: "dining table" });
+      const header = heading.closest("article").firstElementChild;
+      expect(header).toContainElement(screen.getByTestId("item-crop-thumbnail"));
+      expect(header).toContainElement(heading);
+      expect(screen.queryByText("Edited")).not.toBeInTheDocument();
+
+      rerender(<ListingDraftCard draft={makeGeneratedDraft({ is_edited: true })} reviewItem={makeReviewItem()} imageUrl="blob:room-1" />);
+      const edited = screen.getByText("Edited");
+      expect(header).toContainElement(edited);
+      expect(edited.className).toMatch(/border-border/); // outline badge, not a loud warning
     });
   });
 
@@ -440,10 +464,14 @@ describe("ListingDraftCard", () => {
     test("a discarded card stays visible in a compact state with identity, wording, and Restore", () => {
       render(<ListingDraftCard draft={makeGeneratedDraft({ is_discarded: true })} reviewItem={makeReviewItem()} />);
       expect(screen.getByText("dining table")).toBeInTheDocument();
-      expect(screen.getByText(/discarded locally/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /restore draft/i })).toBeInTheDocument();
-      // no editing surface while discarded
+      expect(screen.getByText("Discarded")).toBeInTheDocument();
+      const restore = screen.getByRole("button", { name: /restore draft/i });
+      expect(restore).toBeInTheDocument();
+      // low-emphasis restore, compact card, no editing surface, no raw id
+      expect(restore.className).not.toMatch(/bg-primary|border-input/);
       expect(screen.queryByLabelText(/listing title/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("article").textContent).not.toMatch(/item_001|item_id/);
+      expect(screen.getByRole("article").className).toMatch(/border-dashed/);
     });
 
     test("Restore calls restoreListingDraft only", async () => {
@@ -695,6 +723,60 @@ describe("ListingDraftCard", () => {
 
       rerender(<ListingDraftCard draft={makeGeneratedDraft({ is_edited: true })} isRegenerating={true} />);
       expect(screen.queryByText(/will replace your local edits/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("action hierarchy and responsive layout", () => {
+    test("Copy is the single primary action, Regenerate secondary (outline) and Discard tertiary (ghost, muted)", () => {
+      render(<ListingDraftCard draft={makeGeneratedDraft()} />);
+      const copy = screen.getByRole("button", { name: /copy listing/i });
+      const regenerate = screen.getByRole("button", { name: /regenerate draft/i });
+      const discard = screen.getByRole("button", { name: /discard draft/i });
+
+      expect(copy.className).toMatch(/\bbg-primary\b/);
+      expect(regenerate.className).toMatch(/\bborder-input\b/);
+      expect(regenerate.className).not.toMatch(/\bbg-primary\b/);
+      expect(discard.className).not.toMatch(/\bbg-primary\b|\bborder-input\b/);
+      expect(discard.className).toMatch(/text-muted-foreground/);
+      // only one primary-styled button on the card
+      expect(screen.getAllByRole("button").filter((b) => /\bbg-primary\b/.test(b.className))).toHaveLength(1);
+    });
+
+    test("Copy is full width with a 44px target on mobile and natural width from sm; the secondary actions wrap beneath it without overflow classes", () => {
+      render(<ListingDraftCard draft={makeGeneratedDraft()} />);
+      const copy = screen.getByRole("button", { name: /copy listing/i });
+      const classes = copy.className.split(/\s+/);
+      for (const cls of ["w-full", "min-h-11", "sm:w-auto"]) expect(classes).toContain(cls);
+
+      const actions = copy.parentElement;
+      expect(actions.className).toMatch(/\bflex-col\b/);
+      expect(actions.className).toMatch(/\bsm:flex-row\b/);
+      const secondary = screen.getByRole("button", { name: /regenerate draft/i }).parentElement;
+      expect(secondary.className).toMatch(/\bflex-wrap\b/);
+      expect(secondary).toContainElement(screen.getByRole("button", { name: /discard draft/i }));
+      expect(screen.getByRole("article").className).not.toMatch(/overflow-x|whitespace-nowrap|w-screen/);
+    });
+
+    test("copy feedback sits directly under the actions and is described by the Copy button", async () => {
+      const user = userEvent.setup();
+      render(<ListingDraftCard draft={makeGeneratedDraft()} clipboardWriter={vi.fn().mockResolvedValue()} />);
+      const copy = screen.getByRole("button", { name: /copy listing/i });
+      await user.click(copy);
+      const status = await screen.findByText(/copied to your clipboard/i);
+      expect(status.closest("p")).toHaveAttribute("id", copy.getAttribute("aria-describedby"));
+      expect(copy.parentElement.nextElementSibling).toBe(status.closest("p"));
+    });
+
+    test("an unavailable draft keeps its identity, the safe reason, Regenerate as recovery and a tertiary Discard, with no internal codes", () => {
+      const { container } = render(
+        <ListingDraftCard draft={makeUnavailableDraft({ unavailable_reason: "service_unavailable" })} reviewItem={makeReviewItem()} />
+      );
+      expect(screen.getByRole("heading", { name: "table lamp" })).toBeInTheDocument();
+      expect(screen.getByText(/service was unavailable/i)).toBeInTheDocument();
+      expect(container.textContent).not.toMatch(/service_unavailable|unavailable_reason|item_00\d|status/i);
+      expect(screen.getByRole("button", { name: /regenerate draft/i }).className).toMatch(/\bborder-input\b/);
+      expect(screen.getByRole("button", { name: /discard draft/i }).className).toMatch(/text-muted-foreground/);
+      expect(screen.queryByRole("button", { name: /copy listing/i })).not.toBeInTheDocument();
     });
   });
 });

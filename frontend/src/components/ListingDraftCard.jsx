@@ -27,8 +27,10 @@ import { cn } from "../lib/cn";
 // (edited_title, edited_description, is_edited, is_discarded).
 //
 // reviewItem is the current review item with the same item_id, or null:
-// it supplies the decorative crop box and the location metadata. Missing
-// values are simply not shown, never invented.
+// it supplies only the decorative crop box for the thumbnail. Raw
+// item_id, position/size, attempts, repair flags and statuses are never
+// rendered; item_id still keys the article (data-item-id), every field
+// id and every callback.
 //
 // clipboardWriter(text) -> Promise is an injectable seam. The production
 // default calls navigator.clipboard.writeText, but only ever in direct
@@ -132,26 +134,16 @@ export default function ListingDraftCard({
     regenStatus: `listing-regen-${itemId}-status`,
   };
 
+  // Number badge + item name: the card's header in every state.
   const identityHeader = (
     <div className="flex min-w-0 items-center gap-2">
       <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
         {itemNumberLabel(itemId)}
       </span>
-      <h3 id={ids.heading} className="truncate text-sm font-medium text-foreground">
+      <h3 id={ids.heading} className="truncate text-sm font-semibold text-foreground">
         {label}
       </h3>
     </div>
-  );
-
-  const locationBits = reviewItem
-    ? [reviewItem.position, reviewItem.relative_size].filter((v) => typeof v === "string" && v !== "")
-    : [];
-
-  const metaLine = (
-    <p className="mt-0.5 text-xs text-muted-foreground">
-      item_id: <code>{itemId}</code>
-      {locationBits.length > 0 && <> · {locationBits.join(", ")}</>}
-    </p>
   );
 
   // ---------------------------------------------------------------- discarded
@@ -159,27 +151,24 @@ export default function ListingDraftCard({
     return (
       <article
         aria-labelledby={ids.heading}
+        data-item-id={itemId}
         className="rounded-card border border-dashed border-border bg-surface-muted p-3"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="h-8 w-8" />
-              {identityHeader}
-              <Badge variant="outline">Discarded locally</Badge>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              item_id: <code>{itemId}</code>
-            </p>
+          <div className="flex min-w-0 items-center gap-2">
+            <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="h-8 w-8" />
+            {identityHeader}
+            <Badge variant="outline">Discarded</Badge>
           </div>
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => {
               invalidateCopy();
               onRestore(itemId);
             }}
+            className="text-muted-foreground"
           >
             <Undo2 aria-hidden="true" width={14} height={14} />
             Restore draft
@@ -207,13 +196,13 @@ export default function ListingDraftCard({
     return (
       <article
         aria-labelledby={ids.heading}
-        className="rounded-card border border-border bg-surface p-4 shadow-card"
+        data-item-id={itemId}
+        className="rounded-card border border-border bg-surface p-3 shadow-card sm:p-4"
       >
         <div className="flex items-start gap-3">
           <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="mt-0.5" />
           <div className="min-w-0 flex-1">
             {identityHeader}
-            {metaLine}
 
             <p className="mt-2 flex items-start gap-2 text-sm text-foreground">
               <PackageX aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-muted-foreground" />
@@ -247,6 +236,7 @@ export default function ListingDraftCard({
                   invalidateCopy();
                   onDiscard(itemId);
                 }}
+                className="text-muted-foreground"
               >
                 <Trash2 aria-hidden="true" width={14} height={14} />
                 Discard draft
@@ -329,24 +319,22 @@ export default function ListingDraftCard({
   return (
     <article
       aria-labelledby={ids.heading}
-      className="rounded-card border border-border bg-surface p-4 shadow-card"
+      data-item-id={itemId}
+      className="rounded-card border border-border bg-surface p-3 shadow-card sm:p-4"
     >
-      <div className="flex items-start gap-3">
-        <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="mt-0.5" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
-            {identityHeader}
-            {draft.is_edited && <Badge variant="warning">Edited</Badge>}
-          </div>
-          {metaLine}
+      {/* header: thumbnail and name together, Edited kept subtle on the right */}
+      <div className="flex items-center gap-3">
+        <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} />
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          {identityHeader}
+          {draft.is_edited && <Badge variant="outline">Edited</Badge>}
+        </div>
+      </div>
 
-          <p className="mt-2 text-xs text-muted-foreground">
-            These are editable suggestions. Nothing is published, and editing here changes only your
-            local copy.
-          </p>
-
+      {/* the editable draft spans the full card width */}
+      <div className="mt-3">
           {/* title */}
-          <div className="mt-3">
+          <div>
             <div className="flex items-baseline justify-between gap-2">
               <label htmlFor={ids.title} className="text-xs font-medium text-foreground">
                 Listing title for {label}
@@ -411,48 +399,54 @@ export default function ListingDraftCard({
             )}
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          {/* actions: Copy is the one primary control, full width on narrow
+              screens; Regenerate (secondary) and Discard (tertiary) wrap
+              beneath it there and sit beside it from sm up. */}
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Button
               type="button"
-              size="sm"
               onClick={handleCopy}
               disabled={copyDisabled}
               aria-describedby={ids.copyStatus}
+              className="min-h-11 w-full sm:min-h-0 sm:w-auto"
             >
-              <Copy aria-hidden="true" width={14} height={14} />
+              <Copy aria-hidden="true" width={16} height={16} />
               Copy listing
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleRegenerateClick}
-              disabled={isRegenerating || listingBusy}
-              aria-busy={isRegenerating || undefined}
-            >
-              {isRegenerating ? (
-                <Loader2 aria-hidden="true" width={14} height={14} className="animate-spin" />
-              ) : (
-                <RefreshCw aria-hidden="true" width={14} height={14} />
-              )}
-              {isRegenerating ? "Regenerating…" : "Regenerate draft"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                invalidateCopy();
-                onDiscard(itemId);
-              }}
-            >
-              <Trash2 aria-hidden="true" width={14} height={14} />
-              Discard draft
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRegenerateClick}
+                disabled={isRegenerating || listingBusy}
+                aria-busy={isRegenerating || undefined}
+              >
+                {isRegenerating ? (
+                  <Loader2 aria-hidden="true" width={14} height={14} className="animate-spin" />
+                ) : (
+                  <RefreshCw aria-hidden="true" width={14} height={14} />
+                )}
+                {isRegenerating ? "Regenerating…" : "Regenerate draft"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  invalidateCopy();
+                  onDiscard(itemId);
+                }}
+                className="text-muted-foreground"
+              >
+                <Trash2 aria-hidden="true" width={14} height={14} />
+                Discard draft
+              </Button>
+            </div>
           </div>
 
-          {/* copy feedback, scoped to this card */}
-          <p id={ids.copyStatus} role="status" className="mt-2 min-h-[1rem] text-xs">
+          {/* copy feedback, scoped to this card, right under the actions */}
+          <p id={ids.copyStatus} role="status" className="mt-2 min-h-4 text-xs">
             {copyState === "copied" && (
               <span className="text-success">Listing copied to your clipboard.</span>
             )}
@@ -487,7 +481,6 @@ export default function ListingDraftCard({
 
           {regenProgress}
           {regenError}
-        </div>
       </div>
     </article>
   );

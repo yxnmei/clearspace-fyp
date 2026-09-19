@@ -214,7 +214,7 @@ async function reachActions(user, scenario = { decisions: [{ itemId: "item_001",
   expect(client.generateListings).not.toHaveBeenCalled();
   expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: /continue to results/i }));
-  await waitFor(() => expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument());
 }
 
 describe("BothPage screen-by-screen flow", () => {
@@ -291,7 +291,7 @@ describe("BothPage screen-by-screen flow", () => {
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
-    expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
   });
 
   test("Start over resets the whole flow", async () => {
@@ -417,7 +417,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     expect(headings.indexOf("Your reorganisation checklist")).toBeLessThan(headings.indexOf("Areas to focus on"));
     expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
     // listings stay available after the visual, and navigation is unchanged
-    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Marketplace listing drafts"));
+    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Marketplace listings"));
     expect(currentStep()).toBe("Results");
     expect(screen.getByRole("button", { name: /back to confirm/i })).toBeEnabled();
   });
@@ -453,7 +453,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
     expect(screen.queryByRole("heading", { name: /your reorganisation checklist/i })).not.toBeInTheDocument();
     // listings remain independently available regardless
-    expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
   });
 
   test("the production response shows zero checklist model calls and deterministic_direct, truthfully", async () => {
@@ -486,7 +486,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     expect(details).not.toHaveTextContent("phi4-mini");
     // listings and the visual are unaffected
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
   });
 });
 

@@ -1,12 +1,12 @@
-import { Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import { Loader2, PackageX, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 import ListingDraftCard from "./ListingDraftCard";
 import { deriveEligibleSellItemIds } from "../lib/listingDrafts";
 
-// The marketplace-listing review surface. Presentational: it takes the
-// Stage 3 listing state and actions as props and never calls
-// useDeclutterFlow / useBothFlow itself. Stage 4B wires it into the
-// Declutter wizard and the Both page.
+// The marketplace-listing surface, shared by the Declutter wizard's
+// Listing drafts screen and Both's Results screen. Presentational: it
+// takes the listing state and actions as props and never calls
+// useDeclutterFlow / useBothFlow itself.
 //
 // Eligibility (which items get a draft) is derived STRICTLY from
 // confirmation.confirmedDecisions: confirmed_decision === "sell" and
@@ -15,8 +15,10 @@ import { deriveEligibleSellItemIds } from "../lib/listingDrafts";
 //
 // Nothing here auto-generates. generateListingDrafts runs only from the
 // explicit button (and its retry). A confirmation with zero eligible
-// Sell items shows a truthful empty state and offers no pointless
-// Generate button.
+// Sell items shows a calm empty state and offers no pointless Generate
+// button. One section, one heading, state-specific content inside it;
+// the "editable, never published" reassurance is said once per state at
+// section level, not repeated on every card.
 
 const HEADING_ID = "listings-view-heading";
 
@@ -27,10 +29,10 @@ function Frame({ children }) {
   return (
     <section
       aria-labelledby={HEADING_ID}
-      className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6"
+      className="rounded-card border border-border bg-surface p-4 shadow-card sm:p-6"
     >
       <h2 id={HEADING_ID} className="text-lg font-semibold text-foreground">
-        Marketplace listing drafts
+        Marketplace listings
       </h2>
       {children}
     </section>
@@ -67,39 +69,47 @@ export default function ListingsView({
 
   const eligibleItemIds = deriveEligibleSellItemIds(confirmation);
 
-  // 2. Confirmed, but nothing was marked Sell: truthful empty state, no
+  // 2. Confirmed, but nothing was marked Sell: calm empty state, no
   // loading/error, no Generate button.
   if (eligibleItemIds.length === 0) {
     return (
       <Frame>
-        <p className="mt-2 text-sm text-foreground">
-          You did not confirm any items as Sell, so there are no marketplace listing drafts to
-          generate.
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          If you want listing drafts, go back to Decide items and change an item's decision to Sell, then
-          confirm again.
-        </p>
+        <div className="mt-3 flex items-start gap-3 rounded-control border border-border bg-surface-muted p-3">
+          <PackageX aria-hidden="true" width={18} height={18} className="mt-0.5 shrink-0 text-muted-foreground" />
+          <div className="text-sm">
+            <p className="font-medium text-foreground">
+              You did not confirm any items as Sell, so there are no listing drafts to generate.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              If you want listing drafts, go back to Decide items and change an item's decision to Sell, then
+              confirm again.
+            </p>
+          </div>
+        </div>
       </Frame>
     );
   }
 
   const reviewItemsById = new Map(reviewItems.map((item) => [item.item_id, item]));
-  const eligibleCountLabel = `${eligibleItemIds.length} item${eligibleItemIds.length === 1 ? "" : "s"}`;
+  const eligibleCount = eligibleItemIds.length;
+  const eligibleCountLabel = `${eligibleCount} item${eligibleCount === 1 ? "" : "s"}`;
   const listingBusy = listingStatus === "generating" || regeneratingItemId !== null;
 
-  // 3. Eligible items, not generated yet: explain, then an explicit action.
+  // 3. Eligible items, not generated yet: explain once, then one explicit action.
   if (listingStatus === "idle") {
     return (
       <Frame>
         <p className="mt-2 text-sm text-foreground">
-          You confirmed {eligibleCountLabel} to sell. Generate a draft title and description for each
-          one.
+          You confirmed {eligibleCountLabel} to sell. Generate a draft title and description for each one.
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
           Drafts are editable suggestions. Nothing is published, listed, or sent to any marketplace.
         </p>
-        <Button type="button" className="mt-4" onClick={() => generateListingDrafts()}>
+        <Button
+          type="button"
+          className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
+          onClick={() => generateListingDrafts()}
+        >
           <Sparkles aria-hidden="true" width={16} height={16} />
           Generate listing drafts
         </Button>
@@ -107,40 +117,36 @@ export default function ListingsView({
     );
   }
 
-  // 4. Generating: accessible progress, duplicate generation disabled.
+  // 4. Generating: one accessible progress line, the action held disabled
+  // so a second request cannot be started; layout matches the idle state.
   if (listingStatus === "generating") {
     return (
       <Frame>
-        <p
-          className="mt-2 flex items-center gap-2 text-sm text-foreground"
-          role="status"
-          aria-live="polite"
-        >
-          <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin text-primary" />
-          Generating {eligibleCountLabel} of listing drafts…
+        <p className="mt-2 flex items-center gap-2 text-sm text-foreground" role="status" aria-live="polite">
+          <Loader2 aria-hidden="true" width={16} height={16} className="shrink-0 animate-spin text-primary" />
+          Generating listing drafts for {eligibleCountLabel}…
         </p>
         <p className="mt-1 text-sm text-muted-foreground">Nothing is being published.</p>
         <Button
           type="button"
-          className="mt-4"
+          className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
           disabled
           aria-busy="true"
           onClick={() => generateListingDrafts()}
         >
-          <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />
           Generating…
         </Button>
       </Frame>
     );
   }
 
-  // 5. Error: concise message, decisions unchanged, explicit retry.
+  // 5. Error: concise message, decisions unchanged, one explicit retry.
   if (listingStatus === "error") {
     return (
       <Frame>
         <p
           role="alert"
-          className="mt-2 flex items-start gap-2 rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error"
+          className="mt-3 flex items-start gap-2 rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error"
         >
           <TriangleAlert aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0" />
           <span>
@@ -148,7 +154,11 @@ export default function ListingsView({
             are unchanged.
           </span>
         </p>
-        <Button type="button" className="mt-4" onClick={() => generateListingDrafts()}>
+        <Button
+          type="button"
+          className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
+          onClick={() => generateListingDrafts()}
+        >
           <Sparkles aria-hidden="true" width={16} height={16} />
           Try again
         </Button>
@@ -163,7 +173,11 @@ export default function ListingsView({
     return (
       <Frame>
         <p className="mt-2 text-sm text-foreground">No listing drafts were returned.</p>
-        <Button type="button" className="mt-4" onClick={() => generateListingDrafts()}>
+        <Button
+          type="button"
+          className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
+          onClick={() => generateListingDrafts()}
+        >
           <Sparkles aria-hidden="true" width={16} height={16} />
           Generate listing drafts
         </Button>
@@ -171,13 +185,17 @@ export default function ListingsView({
     );
   }
 
+  const draftCount = listingDrafts.length;
   return (
     <Frame>
-      <p className="mt-2 text-sm text-muted-foreground">
-        {listingDrafts.length} draft{listingDrafts.length === 1 ? "" : "s"}. Edits are local, and
-        nothing is published automatically. Use Copy listing to paste a draft wherever you want it.
+      <p className="mt-2 text-sm font-medium text-foreground">
+        {draftCount} listing draft{draftCount === 1 ? "" : "s"} ready
       </p>
-      <ul className="mt-4 space-y-4">
+      <p className="mt-1 text-sm text-muted-foreground">
+        Edit any draft, then use Copy listing to paste it wherever you want. Edits stay on this device and
+        nothing is published.
+      </p>
+      <ul className="mt-4 space-y-3">
         {listingDrafts.map((draft) => (
           <li key={draft.item_id}>
             <ListingDraftCard

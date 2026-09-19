@@ -92,10 +92,9 @@ function renderView(props = {}) {
   return { ...utils, ...actions };
 }
 
+// Cards never show their raw item_id; they carry it as data-item-id.
 function articleFor(itemId) {
-  return screen
-    .getAllByRole("article")
-    .find((el) => within(el).queryByText(itemId) !== null);
+  return document.querySelector(`article[data-item-id="${itemId}"]`);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,25 +196,42 @@ describe("ListingsView", () => {
       const listingDrafts = [genDraft("item_003"), genDraft("item_001"), genDraft("item_002")];
       renderView({ confirmation, listingStatus: "ready", listingDrafts });
 
-      const ids = screen.getAllByText(/^item_00\d$/).map((el) => el.textContent);
+      const ids = Array.from(document.querySelectorAll("article[data-item-id]")).map((el) => el.dataset.itemId);
       expect(ids).toEqual(["item_003", "item_001", "item_002"]);
+      expect(screen.getAllByRole("article")).toHaveLength(3);
     });
 
-    test("joins metadata strictly by item_id even when labels are identical", () => {
+    test("joins the thumbnail strictly by item_id even when labels are identical, and shows no location text", () => {
       const confirmation = makeConfirmation([decision("item_001", "sell"), decision("item_002", "sell")]);
       const reviewItems = [
-        reviewItem("item_001", { effective_label: "lamp", position: "upper-left" }),
-        reviewItem("item_002", { effective_label: "lamp", position: "lower-right" }),
+        { ...reviewItem("item_001", { effective_label: "lamp", position: "upper-left" }), box: { x1: 0.0, y1: 0.0, x2: 0.2, y2: 0.2 } },
+        { ...reviewItem("item_002", { effective_label: "lamp", position: "lower-right" }), box: { x1: 0.7, y1: 0.7, x2: 0.9, y2: 0.9 } },
       ];
       const listingDrafts = [
         genDraft("item_001", { effective_label: "lamp" }),
         genDraft("item_002", { effective_label: "lamp" }),
       ];
-      renderView({ confirmation, listingStatus: "ready", listingDrafts, reviewItems });
+      renderView({ confirmation, listingStatus: "ready", listingDrafts, reviewItems, imageUrl: "blob:room" });
 
-      expect(within(articleFor("item_001")).getByText(/upper-left/i)).toBeInTheDocument();
-      expect(within(articleFor("item_002")).getByText(/lower-right/i)).toBeInTheDocument();
-      expect(within(articleFor("item_001")).queryByText(/lower-right/i)).not.toBeInTheDocument();
+      const thumb1 = within(articleFor("item_001")).getByTestId("item-crop-thumbnail");
+      const thumb2 = within(articleFor("item_002")).getByTestId("item-crop-thumbnail");
+      expect(thumb1.style.backgroundPosition).not.toBe(thumb2.style.backgroundPosition);
+      expect(within(articleFor("item_001")).getByLabelText(/listing title for lamp/i)).toHaveAttribute("id", "listing-title-item_001");
+      expect(within(articleFor("item_002")).getByLabelText(/listing title for lamp/i)).toHaveAttribute("id", "listing-title-item_002");
+      // no raw ids or position/size metadata anywhere in the section
+      expect(screen.queryByText(/upper-left|lower-right|item_00\d|item_id/i)).not.toBeInTheDocument();
+    });
+
+    test("the ready state introduces the drafts once, with the reassurance said once at section level, and hides technical metadata", () => {
+      const confirmation = makeConfirmation([decision("item_001", "sell"), decision("item_002", "sell")]);
+      const listingDrafts = [genDraft("item_001", { effective_label: "lamp" }), genDraft("item_002", { effective_label: "chair" })];
+      const { container } = renderView({ confirmation, listingStatus: "ready", listingDrafts });
+
+      expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
+      expect(screen.getByText("2 listing drafts ready")).toBeInTheDocument();
+      expect(screen.getAllByText(/nothing is published/i)).toHaveLength(1);
+      expect(container.textContent).not.toMatch(/item_00\d|item_id|run_1|attempts|repaired|generated|phi|prompt|sha/i);
+      expect(container.querySelector("code")).toBeNull();
     });
 
     test("renders generated and unavailable cards, and does not filter unavailable drafts out", () => {
@@ -234,7 +250,7 @@ describe("ListingsView", () => {
       const listingDrafts = [genDraft("item_001", { is_discarded: true })];
       renderView({ confirmation, listingStatus: "ready", listingDrafts });
 
-      expect(screen.getByText(/discarded locally/i)).toBeInTheDocument();
+      expect(screen.getByText("Discarded")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /restore draft/i })).toBeInTheDocument();
     });
 
@@ -331,11 +347,42 @@ describe("ListingsView", () => {
   describe("accessibility", () => {
     test("the listing surface has an accessible name in every state", () => {
       const { rerender } = render(<ListingsView confirmation={null} />);
-      expect(screen.getByRole("region", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Marketplace listings" })).toBeInTheDocument();
 
       const confirmation = makeConfirmation([decision("item_001", "sell")]);
       rerender(<ListingsView confirmation={confirmation} listingStatus="idle" />);
-      expect(screen.getByRole("region", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Marketplace listings" })).toBeInTheDocument();
+    });
+  });
+
+  describe("layout contracts", () => {
+    test("the eligible state names the count once and its single primary action is full width on mobile, natural width from sm", () => {
+      const confirmation = makeConfirmation([decision("item_001", "sell"), decision("item_002", "sell")]);
+      renderView({ confirmation, listingStatus: "idle" });
+      expect(screen.getByText(/you confirmed 2 items to sell/i)).toBeInTheDocument();
+      const buttons = screen.getAllByRole("button");
+      expect(buttons).toHaveLength(1);
+      const classes = buttons[0].className.split(/\s+/);
+      for (const cls of ["w-full", "min-h-11", "sm:w-auto", "bg-primary"]) expect(classes).toContain(cls);
+    });
+
+    test("the generating state has exactly one live status, one spinner and one held-disabled control", () => {
+      const confirmation = makeConfirmation([decision("item_001", "sell")]);
+      const { container } = renderView({ confirmation, listingStatus: "generating" });
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(container.querySelectorAll(".animate-spin")).toHaveLength(1);
+      const buttons = screen.getAllByRole("button");
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]).toBeDisabled();
+      expect(buttons[0]).toHaveAttribute("aria-busy", "true");
+    });
+
+    test("the empty Sell state is a compact calm panel with no controls", () => {
+      const confirmation = makeConfirmation([decision("item_001", "keep")]);
+      const { container } = renderView({ confirmation, listingStatus: "idle" });
+      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(container.querySelector(".bg-surface-muted")).toBeTruthy();
+      expect(container.className).not.toMatch(/overflow-x/);
     });
   });
 });
