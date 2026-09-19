@@ -31,7 +31,7 @@ const WORKFLOWS = [
     title: "Reorganise",
     iconSrc: reorganiseIcon,
     description:
-      "Actionable items are included automatically. Optionally review the list to exclude items before generating a structured room plan and an AI visual preview.",
+      "Actionable items are included automatically. Optionally review the list to exclude items before generating a prioritised reorganisation checklist and an AI visual preview.",
     footnote: "Best for space planning",
   },
   {

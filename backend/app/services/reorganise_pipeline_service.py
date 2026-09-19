@@ -1,51 +1,63 @@
 """
-Orchestration for the Reorganise GENERATION boundary (R4) — selection
-validation, image-correlation, R2 planning, and exactly one R3 image-
-generation call, composed into one internal result. This is the pipeline
-Direct Reorganise's /generate route calls, and the SAME pipeline Both
-(R6) will call later — differing only in how selected_item_ids is
-derived (client-supplied here; server-derived from
-confirm_declutter_result()/confirmed_keep_ids() for Both), never a
-second implementation.
+Orchestration for the Reorganise GENERATION boundary (R4): selection
+validation, image-correlation, the action checklist, the deterministic
+focus areas and storage suggestions, and exactly one R3 image-generation
+call, composed into one internal result. This is the pipeline Direct
+Reorganise's /generate route calls, and the SAME pipeline Both calls,
+differing only in how selected_item_ids is derived (client-supplied
+here; server-derived from confirm_declutter_result()/confirmed_keep_ids()
+for Both), never a second implementation.
+
+What a result contains, and where each part comes from:
+  action_plan         app.services.reorganise_actions_service. In
+                      production the deterministic checklist, zero model
+                      calls (provenance deterministic_direct); the
+                      at-most-one-call model path is research-only.
+                      Truthful provenance either way.
+  focus_areas         app.core.reorganise_focus_areas: deterministic,
+                      from the detected `position` descriptors only.
+  storage_suggestions app.core.reorganise_storage: deterministic, from
+                      the selected labels and sizes only, at most three.
+  image_prompt        app.core.reorganise_image_prompt: deterministic,
+                      from the room type, selected items and user
+                      context. The checklist model never writes it.
+  generation          the single image_generator call, or an unavailable
+                      reason. The checklist, focus areas and suggestions
+                      are always present regardless of image_status.
 
 Service/API boundary (binding, not a style preference): this module
-returns raw internal domain data only — ReorganisePipelineResult holds a
+returns raw internal domain data only: ReorganisePipelineResult holds a
 real GenerationResult with real image_bytes, never a base64 string,
 never an HTTP-facing DTO, and never imports fastapi. Only app/api/
 routes.py may base64-encode image bytes for the browser or construct a
-GenerateResponse — see that module's GeneratedImagePayload/
-GenerateResponse. This keeps run_reorganise_pipeline() reachable from a
-future evaluation script exactly like every other services/ function
-(PROJECT_SPEC.md §4), not only from HTTP.
+GenerateResponse. This keeps run_reorganise_pipeline() reachable from an
+evaluation script exactly like every other services/ function, not only
+from HTTP.
 
 Health-check discipline (binding): this module NEVER injects or calls a
 separate health-check callable. app/models/image_gen_client.generate()
-already performs its own check_health() call internally before POSTing
-(see that module's own docstring) — calling health twice per generation
-would be redundant HTTP work and introduces a race where the first
-health call succeeds and the second (or generate()'s own internal one)
-fails. image_generator is called EXACTLY ONCE per
-run_reorganise_pipeline() invocation. GET /image-gen/health (routes.py)
-uses a completely separate injected health-check callable, never shared
-with this module.
+already performs its own check_health() call internally before POSTing;
+calling health twice per generation would be redundant HTTP work and a
+race. image_generator is called EXACTLY ONCE per run_reorganise_pipeline()
+invocation. GET /image-gen/health (routes.py) uses a completely separate
+injected health-check callable, never shared with this module.
 
-Image validation and hash correlation both happen HERE, before
-plan_reorganisation() is ever called — never delegated to R3's generate()
-(which only runs, if at all, well after planning) and never only checked
-by the API-layer request schema (whose checks this module deliberately
+Image validation and hash correlation both happen HERE, before any model
+is called: never delegated to R3's generate() and never only checked by
+the API-layer request schema (whose checks this module deliberately
 duplicates, so this function stays safe to call directly, outside
 FastAPI, with no schema validation having run at all).
 
-Image-correlation hash — honest limitation, stated directly: comparing a
+Image-correlation hash, honest limitation, stated directly: comparing a
 freshly-recomputed SHA-256 of the resubmitted image against the hash the
 original /upload response reported detects accidental image/analysis
 desynchronisation (a stale tab, the wrong file re-selected, a frontend
-state bug). It is NOT cryptographic authentication — a client controlling
+state bug). It is NOT cryptographic authentication: a client controlling
 both the image and the claimed hash can always compute a matching hash
 for altered data. Appropriate as a correlation invariant for this
-project's actual scale (a single local user, no other party's data at
-risk, no auth/session/database anywhere else in this codebase by
-explicit design) — not a substitute for real authentication.
+project's actual scale (a single local user, no auth/session/database
+anywhere else in this codebase by explicit design), not a substitute for
+real authentication.
 """
 
 from __future__ import annotations
@@ -54,10 +66,13 @@ import hashlib
 import re
 from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, ValidationError, model_validator
 
 from app.core.image_validation import ImageValidationError, validate_image_bytes
-from app.core.schemas import AnalysisResult, DetectedItem, NonEmptyStr
+from app.core.reorganise_focus_areas import MAX_FOCUS_AREAS, FocusArea, derive_focus_areas
+from app.core.reorganise_image_prompt import build_reorganise_image_prompt
+from app.core.reorganise_storage import MAX_STORAGE_SUGGESTIONS, StorageSuggestion, derive_storage_suggestions
+from app.core.schemas import AnalysisResult, DetectedItem, ItemId, NonEmptyStr
 from app.models.image_gen_client import (
     GenerationResult,
     ImageGenRequestError,
@@ -66,16 +81,15 @@ from app.models.image_gen_client import (
     ImageGenTimeoutError,
     ImageGenUnavailableError,
 )
-from app.services.reorganise_service import (
-    ReorganisePlanner,
-    ReorganisePlanningResult,
-    plan_reorganisation,
-    plan_reorganisation_direct,
+from app.services.reorganise_actions_service import (
+    ReorganiseActionGenerator,
+    ReorganiseActionPlan,
+    plan_reorganise_actions,
 )
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
-# Shared, validated hash-format type — the one home both this module (for
+# Shared, validated hash-format type: the one home both this module (for
 # its own independent format check) and app/api/routes.py's request/
 # response schemas import from, rather than each defining their own copy.
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -88,28 +102,22 @@ ImageUnavailableReason = Literal[
 
 
 class ReorganisePipelineInputError(ValueError):
-    """Malformed caller input to the Reorganise generation pipeline —
+    """Malformed caller input to the Reorganise generation pipeline:
     empty/duplicate/unknown selected_item_ids, a run_id that doesn't
     match analysis.run_id, image bytes that fail
     app.core.image_validation.validate_image_bytes, or an
     input_image_sha256 that doesn't match the actually-supplied image
-    bytes. Never raised for a planning or image-generation OUTCOME —
+    bytes. Never raised for a checklist or image-generation OUTCOME;
     those are represented in the returned ReorganisePipelineResult, never
-    as an exception. Only for input that must never have reached
-    plan_reorganisation() or the image generator at all. A ValueError
-    subclass — same dual-catchability convention as
-    app.core.confirmation.ConfirmationInputError /
-    app.services.confirmation_service.IncompleteDeclutterError."""
+    as an exception. A ValueError subclass, same dual-catchability
+    convention as app.core.confirmation.ConfirmationInputError."""
 
 
 class ImageGenerator(Protocol):
     """Structural shape run_reorganise_pipeline() needs for image
-    generation — matches app.models.image_gen_client.generate()'s real
-    signature exactly. The real generate() satisfies this with zero
-    adapter code. Deliberately NOT a health-check callable, and this
-    Protocol carries no health-check method — see module docstring: the
-    real implementation already performs its own health check
-    internally; nothing here may call a second one."""
+    generation; matches app.models.image_gen_client.generate()'s real
+    signature exactly. Deliberately NOT a health-check callable, and this
+    Protocol carries no health-check method (see module docstring)."""
 
     def __call__(
         self,
@@ -125,35 +133,67 @@ class ImageGenerator(Protocol):
 
 
 class ReorganisePipelineResult(BaseModel):
-    """The complete, internal output of run_reorganise_pipeline() — raw
+    """The complete, internal output of run_reorganise_pipeline(): raw
     domain data only, never a browser-facing DTO. `generation` (when
     present) holds real image_bytes; base64 conversion is routes.py's job
-    alone (see module docstring). This class does not import fastapi and
-    is safe to construct/consume entirely outside HTTP.
+    alone. Safe to construct/consume entirely outside HTTP.
+
+    `selected_item_ids` is the server-ordered selection this result was
+    built for (for Both, the confirmed Keep set); it is what the identity
+    checks below join against and is not itself echoed by the API.
 
     Invariants (enforced below, not just documented):
-      - run_id == planning.run_id always.
-      - image_status == "generated" requires a real `generation`, whose
-        own run_id matches this result's run_id, and forbids
-        image_unavailable_reason.
+      - run_id == action_plan.run_id always.
+      - focus_areas: at most MAX_FOCUS_AREAS, every item_id selected, no
+        item_id in two areas, counts non-increasing.
+      - storage_suggestions: at most MAX_STORAGE_SUGGESTIONS, unique
+        names, every related_item_id selected.
+      - image_status == "generated" requires a real `generation` whose
+        run_id matches, and forbids image_unavailable_reason.
       - image_status == "unavailable" forbids `generation` and requires
         image_unavailable_reason.
-    A completed plan is ALWAYS present regardless of image_status — there
-    is no "no plan at all" outcome from this class, matching
-    ReorganisePlanningResult's own equivalent guarantee one layer down."""
+    A checklist, focus areas and suggestions are ALWAYS present regardless
+    of image_status."""
 
     model_config = ConfigDict(frozen=True)
 
     run_id: NonEmptyStr
-    planning: ReorganisePlanningResult
+    selected_item_ids: list[ItemId] = Field(min_length=1)
+    action_plan: ReorganiseActionPlan
+    focus_areas: list[FocusArea] = Field(min_length=1, max_length=MAX_FOCUS_AREAS)
+    storage_suggestions: list[StorageSuggestion] = Field(max_length=MAX_STORAGE_SUGGESTIONS)
+    image_prompt: NonEmptyStr
     image_status: Literal["generated", "unavailable"]
     generation: GenerationResult | None
     image_unavailable_reason: ImageUnavailableReason | None
 
     @model_validator(mode="after")
-    def _check_run_id_matches_planning(self) -> "ReorganisePipelineResult":
-        if self.run_id != self.planning.run_id:
-            raise ValueError("run_id must match planning.run_id")
+    def _check_identity(self) -> "ReorganisePipelineResult":
+        if self.run_id != self.action_plan.run_id:
+            raise ValueError("run_id must match action_plan.run_id")
+        selected = set(self.selected_item_ids)
+        if len(selected) != len(self.selected_item_ids):
+            raise ValueError("selected_item_ids contains duplicates")
+
+        seen: set[str] = set()
+        counts = [len(area.item_ids) for area in self.focus_areas]
+        if counts != sorted(counts, reverse=True):
+            raise ValueError("focus_areas must be ordered by item count, highest first")
+        for area in self.focus_areas:
+            for item_id in area.item_ids:
+                if item_id not in selected:
+                    raise ValueError(f"focus area {area.area_id!r} references unselected item_id {item_id!r}")
+                if item_id in seen:
+                    raise ValueError(f"item_id {item_id!r} appears in more than one focus area")
+                seen.add(item_id)
+
+        names = [suggestion.name.strip().lower() for suggestion in self.storage_suggestions]
+        if len(names) != len(set(names)):
+            raise ValueError("storage suggestion names must be unique")
+        for suggestion in self.storage_suggestions:
+            unknown = sorted(set(suggestion.related_item_ids) - selected)
+            if unknown:
+                raise ValueError(f"storage suggestion {suggestion.name!r} references unselected item_id(s): {unknown}")
         return self
 
     @model_validator(mode="after")
@@ -182,10 +222,10 @@ def _validate_run_id(run_id: Any) -> str:
 
 def _validate_and_order_selection(analysis: AnalysisResult, selected_item_ids: Any) -> list[DetectedItem]:
     """Rejects an empty selection, a duplicate id, or an id not present in
-    analysis.items — NEVER silently deduplicates or drops anything.
+    analysis.items; NEVER silently deduplicates or drops anything.
     Reorders only once every id is confirmed valid, into analysis.items'
     own deterministic spatial order (never the caller-supplied array
-    order), for reproducible planning prompts."""
+    order), for reproducible prompts."""
     if not isinstance(selected_item_ids, list):
         raise ReorganisePipelineInputError(
             f"selected_item_ids must be a list, got {type(selected_item_ids).__name__}"
@@ -230,21 +270,9 @@ def _check_image_hash(image_bytes: bytes, expected_input_image_sha256: Any) -> N
     actual = hashlib.sha256(image_bytes).hexdigest()
     if actual != expected_input_image_sha256:
         raise ReorganisePipelineInputError(
-            "input_image_sha256 does not match the supplied image bytes — the resubmitted image does not "
+            "input_image_sha256 does not match the supplied image bytes; the resubmitted image does not "
             "correlate with the analysis it was paired with"
         )
-
-
-def _unavailable_result(
-    run_id: str, planning: ReorganisePlanningResult, reason: ImageUnavailableReason
-) -> ReorganisePipelineResult:
-    return ReorganisePipelineResult(
-        run_id=run_id,
-        planning=planning,
-        image_status="unavailable",
-        generation=None,
-        image_unavailable_reason=reason,
-    )
 
 
 def run_reorganise_pipeline(
@@ -255,60 +283,45 @@ def run_reorganise_pipeline(
     image_media_type: str,
     expected_input_image_sha256: str,
     user_context: str | None,
-    llm_planner: ReorganisePlanner | None,
+    action_generator: ReorganiseActionGenerator | None,
     image_generator: ImageGenerator,
 ) -> ReorganisePipelineResult:
     """
-    `llm_planner` is REQUIRED and has no default — every caller must say
-    which planning path it wants, in writing:
+    `action_generator` is REQUIRED and has no default; every caller must
+    say which checklist path it wants, in writing:
 
-      None      -> plan_reorganisation_direct(): the deterministic plan is
-                   built immediately, no planner is called, no ollama
-                   import happens, provenance is DETERMINISTIC_DIRECT.
-                   This is what BOTH production routes pass.
-      a planner -> plan_reorganisation(): the retained LLM state machine
-                   (initial attempt, one bounded recovery, deterministic
-                   fallback). Used by unit tests and by
-                   evaluation/scripts/compare_reorganise_planning.py.
+      None        -> the deterministic checklist is built immediately, no
+                     model is called, no model module is imported,
+                     provenance DETERMINISTIC_DIRECT. This is what BOTH
+                     production routes pass.
+      a generator -> plan_reorganise_actions(): at most ONE checklist-
+                     model call, then the deterministic checklist.
+                     RESEARCH ONLY: both real phi4-mini checklist runs
+                     failed human review (backend/evaluation/README.md),
+                     so no production caller passes one. Used by unit
+                     tests and any future separately approved test.
 
-    No default is given deliberately. A default of None would let a new
-    caller silently opt out of the LLM without noticing; a default
-    planner would silently reintroduce the Ollama dependency this policy
-    removed. Making it explicit means the choice is always visible at the
-    call site.
-
-    Order of operations — every caller-input check below happens BEFORE
-    any planning is attempted, so a malformed request never costs a
-    planning call:
+    Order of operations: every caller-input check below happens BEFORE
+    any model is called, so a malformed request never costs a call:
 
       1. run_id validated, and checked against analysis.run_id.
       2. selected_item_ids validated (non-empty, unique, all present in
-         analysis.items) and reordered into analysis.items' own
-         deterministic order — see _validate_and_order_selection.
+         analysis.items) and reordered into analysis.items' own order.
       3. image_bytes validated against image_media_type (genuine Pillow
-         decode, actual format matches the claim) — see
-         app.core.image_validation.validate_image_bytes.
+         decode, actual format matches the claim).
       4. expected_input_image_sha256 format-checked, then compared
          against the ACTUAL recomputed hash of image_bytes.
 
-    Only once all four pass does planning run — either the direct
-    deterministic build (llm_planner=None; zero Ollama calls) or the
-    retained LLM state machine (a planner was supplied; at most two
-    Ollama calls internally). Both always return a real, trusted plan.
-    image_generator is then called EXACTLY ONCE — never a
-    second time, and this function never calls a separate health-check
-    callable at all (see module docstring). A typed ImageGenError
+    Only once all four pass do the deterministic derivations (focus
+    areas, storage suggestions, image prompt) and the checklist run.
+    image_generator is then called EXACTLY ONCE. A typed ImageGenError
     subclass from that one call is caught and mapped to
-    image_status="unavailable" with a specific reason, the completed plan
-    always preserved. Any OTHER (unexpected) exception from
-    image_generator propagates uncaught — it is a genuine failure this
-    pipeline doesn't understand, not something to silently disguise as
-    "image unavailable".
+    image_status="unavailable" with a specific reason, everything else
+    preserved. Any OTHER (unexpected) exception from image_generator
+    propagates uncaught.
 
     Raises ReorganisePipelineInputError for any of the four caller-input
-    checks above. Safe to call directly, outside FastAPI — every check
-    here is independent of whatever a route's own request schema may
-    already have validated.
+    checks above. Safe to call directly, outside FastAPI.
     """
     run_id = _validate_run_id(run_id)
     if run_id != analysis.run_id:
@@ -318,23 +331,30 @@ def run_reorganise_pipeline(
     _check_image(image_bytes, image_media_type)
     _check_image_hash(image_bytes, expected_input_image_sha256)
 
-    if llm_planner is None:
-        # Production path — see this function's own docstring. No planner
-        # is touched, so app.models.reorganise_llm (and therefore ollama)
-        # is never imported by this request.
-        planning = plan_reorganisation_direct(
+    scene_label = analysis.scene.label
+    ordered_ids = [item.item_id for item in selected_items]
+
+    focus_areas = derive_focus_areas(selected_items)
+    storage_suggestions = derive_storage_suggestions(selected_items)
+    image_prompt = build_reorganise_image_prompt(selected_items, scene_label, user_context)
+
+    action_plan = plan_reorganise_actions(
+        run_id=run_id,
+        selected_items=selected_items,
+        scene_label=scene_label,
+        user_context=user_context,
+        generator=action_generator,
+    )
+
+    def _result(**generation_fields: Any) -> ReorganisePipelineResult:
+        return ReorganisePipelineResult(
             run_id=run_id,
-            selected_items=selected_items,
-            scene_label=analysis.scene.label,
-            user_context=user_context,
-        )
-    else:
-        planning = plan_reorganisation(
-            run_id=run_id,
-            selected_items=selected_items,
-            scene_label=analysis.scene.label,
-            user_context=user_context,
-            llm_planner=llm_planner,
+            selected_item_ids=ordered_ids,
+            action_plan=action_plan,
+            focus_areas=focus_areas,
+            storage_suggestions=storage_suggestions,
+            image_prompt=image_prompt,
+            **generation_fields,
         )
 
     try:
@@ -342,24 +362,18 @@ def run_reorganise_pipeline(
             run_id=run_id,
             image_bytes=image_bytes,
             image_media_type=image_media_type,
-            prompt=planning.plan.image_prompt,
-            negative_prompt=planning.plan.negative_prompt,
+            prompt=image_prompt,
+            negative_prompt=None,
         )
     except ImageGenUnavailableError:
-        return _unavailable_result(run_id, planning, "service_unreachable")
+        return _result(image_status="unavailable", generation=None, image_unavailable_reason="service_unreachable")
     except ImageGenTimeoutError:
-        return _unavailable_result(run_id, planning, "timeout")
+        return _result(image_status="unavailable", generation=None, image_unavailable_reason="timeout")
     except ImageGenRequestError:
-        return _unavailable_result(run_id, planning, "request_failed")
+        return _result(image_status="unavailable", generation=None, image_unavailable_reason="request_failed")
     except ImageGenServiceError:
-        return _unavailable_result(run_id, planning, "service_error")
+        return _result(image_status="unavailable", generation=None, image_unavailable_reason="service_error")
     except ImageGenResponseError:
-        return _unavailable_result(run_id, planning, "invalid_response")
+        return _result(image_status="unavailable", generation=None, image_unavailable_reason="invalid_response")
 
-    return ReorganisePipelineResult(
-        run_id=run_id,
-        planning=planning,
-        image_status="generated",
-        generation=generation,
-        image_unavailable_reason=None,
-    )
+    return _result(image_status="generated", generation=generation, image_unavailable_reason=None)

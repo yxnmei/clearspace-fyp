@@ -641,3 +641,161 @@ All four live under `evaluation/results/` and share
 | Reviewer packet (original, blank) | `listing_drafts_prompt_first_20260907_105659.reviewer.json` | `913c223d992eaf50044096514b3b3b287656756b7153fb807ae604ba67a5cf6c` |
 | Reviewed packet (completed) | `listing_drafts_prompt_first_20260907_105659.reviewed.json` | `cddf9314f2ae5804db641408e858bcc3c2503422d8f125e0d5628bbfd0b90fc6` |
 | Review summary | `listing_drafts_prompt_first_20260907_105659.review_summary.json` | `5c3c355de3f93dff3e8f0d0681439bafe79833109afd99368853069b1f606f8e` |
+
+---
+
+## 2026-09-10/13 — Reorganise: semantic zone planning attempt NOT promoted; replaced by an action checklist
+
+Status note, not an evaluation result. Recorded so the Reorganise
+sections above stay readable as history and so the current production
+shape is stated in one place.
+
+### What was tried (2026-09-10, never committed)
+
+An uncommitted attempt rewired the existing whole-plan zone planner
+(`app/models/reorganise_llm.py`, prompt revised from `v1` to a `v1.1`
+asking for 2 to 5 broad functional zones) back into both production
+generation routes, with the same two-attempt state machine as before
+and a spatially grouped deterministic fallback.
+
+### Limited manual observation (not a controlled benchmark)
+
+One person ran it by hand on their own photos with the configured
+`phi4-mini`. No harness, no fixture, no seed control, no artefact, one
+machine, so nothing here is a measurement of the model. What was seen:
+
+- Both path: `deterministic_fallback`.
+- Direct Reorganise path: `deterministic_fallback`.
+- The detailed Direct Reorganise run (21 selected items): model
+  `phi4-mini`, prompt `v1.1`, attempts 2, initial result semantic
+  invalid, recovery result semantic invalid, planning duration
+  89.40 seconds, provenance `deterministic_fallback`.
+
+So on that run the planner added roughly 90 seconds and produced no
+accepted zone plan. This is consistent with the 2026-08-20 screen and
+the V2/V2.1 findings above (identity handling can be made exact; the
+semantic quality of a nested item-to-zone assignment is weak at this
+model size), and it was judged not worth further prompt tuning.
+
+### Decision
+
+The zone-planning wiring, the `v1.1` prompt change, the spatial-zone
+fallback and the zone-card UI were removed before any commit. Nothing
+about the research planner changed: `reorganise_llm.py`,
+`reorganise_service.py`, `reorganise_semantic_conversion.py`, the `v1`
+prompt and `compare_reorganise_planning.py` are as they were at
+`882bbba` and are now research-only (no production route imports them).
+
+### What production does instead (2026-09-13, stabilised 2026-09-17)
+
+Direct Reorganise (`/generate`) and Both (`/generate/confirmed`) share
+one pipeline (`app/services/reorganise_pipeline_service.py`) returning:
+
+- **`action_plan`**: a prioritised checklist of 1 to 5 `{priority,
+  title, instruction}` actions, built **deterministically with zero
+  model calls** from detected positions, labels and sizes
+  (`app/core/reorganise_actions.py`). Both routes pass no checklist
+  generator, so provenance is always `deterministic_direct` (attempts 0,
+  no model name, no prompt version, no issue) and neither route imports
+  or resolves a checklist model. The checklist starts with the busiest
+  photo area, then groups repeated labels and compatible categories,
+  then the remaining areas; it says a large item stays where it is but
+  never arranges other items around, on or beside it, and never names a
+  destination, surface or container.
+  The AI checklist was the original design and is **not promoted**: a
+  dedicated prompt (`app/models/reorganise_actions_llm.py`, currently
+  `reorganise-actions-v2`) with an at-most-one-call service path,
+  strict validation and the `llm_generated` / `deterministic_fallback`
+  provenances is retained as research code, reachable only by passing a
+  generator to the pipeline explicitly. The two real runs below are why.
+- **`focus_areas`**: at most three coarse photo areas (left / centre /
+  right / other) ranked by selected-item count, derived only from the
+  detector `position` descriptors, joined by `item_id`. A concentration
+  count, not a clutter measurement, not AI output, not a floor plan.
+- **`storage_suggestions`**: at most three generic suggestions from
+  five narrow compatible categories (technology accessories; toys and
+  games; books and papers; clothing, bags and shoes; jewellery, keys,
+  watches and glasses), each requiring at least two small or medium
+  matching items, never mixing categories and never using image
+  position as evidence. No brands, retailers, prices, links or
+  availability claims.
+- **`image_prompt`** and the existing image fields: the prompt is
+  built deterministically from room type, selected items and user
+  context; the Colab/ControlNet integration is unchanged and the visual
+  remains an impression that does not follow the checklist step by step.
+
+### One authorised real run of `reorganise-actions-v1` (2026-09-17)
+
+A single, separately authorised local call, not an evaluation: one
+fixture (`reorganise_bedroom02_28items.json`, 28 items, context "i want a
+neat room"), one call, no seed control, no repetition, no harness, no
+artefact in the repository. `plan_reorganise_actions()` was called
+directly with the real generator; no route, pipeline, image generation or
+retry was involved.
+
+- Model `phi4-mini`, prompt `reorganise-actions-v1`, 1 model call,
+  **24.97 s**.
+- **Passed structural validation**: five actions, provenance
+  `llm_generated`, no issue. The JSON arrived inside a markdown fence
+  despite the instruction, so it was accepted as mechanically repaired.
+- **Rejected on human review.** Four of the five actions told the user to
+  place items on an "upper-left", "upper-right", "lower-left" or
+  "lower-center" shelf. The fixture contains one shelf, detected at the
+  centre. The model had turned the detected photo positions in its
+  inventory into destinations and invented furniture there. The first
+  action placed the desk where it already was, the six picture frames and
+  other repeated items were largely ignored, and the ordering followed
+  the photo rather than usefulness. No shopping advice, brands, removal
+  or invented item labels appeared; the validator cannot catch an
+  invented shelf because "shelf" is a legitimate label.
+
+Consequence: prompt `reorganise-actions-v2` removes position descriptors
+from the model's inventory (labels, counts and sizes remain) and adds
+three short rules: group repeated or compatible items first, give no
+placement instruction naming a spot, and never assume a surface or
+container exists because an item is listed. Deterministic focus areas,
+the fallback checklist and the image prompt still use positions and are
+unchanged.
+
+### One authorised real run of `reorganise-actions-v2` (2026-09-17)
+
+Same conditions as the `v1` run: one separately authorised local call on
+the same 28-item fixture, no seed control, no repetition, no harness, no
+artefact in the repository, not an evaluation.
+
+- Model `phi4-mini`, prompt `reorganise-actions-v2`, 1 model call,
+  **24.91 s**.
+- **Passed structural validation**: five actions, provenance
+  `llm_generated`, no issue, again accepted as mechanically repaired
+  because the JSON was fenced.
+- **Rejected on human review.** The targeted defect was fixed: no action
+  named a photo position and no shelf was invented. But the first,
+  highest-priority action was about "books and papers", which are not in
+  the inventory; another told the user to store the plate, cup and mouse
+  in the bin; another put the mirror on the shelf or desk; one was
+  generic filler. One sensible group appeared (monitor, keyboard,
+  speaker). The six picture frames, two toys and two cups were still not
+  grouped.
+
+### Decision (2026-09-17): the AI checklist is not used in production
+
+Two real runs, two prompts, both structurally valid, both rejected by a
+human, with a different defect each time. This matches the planner
+history above: `phi4-mini` repairs the rule stated most forcefully and
+drifts elsewhere, and a structural validator cannot see invented nouns
+or bad advice. Prompt tuning stopped by decision, and no noun or
+groundedness validator was added. Direct Reorganise and Both now build
+the deterministic checklist directly (`deterministic_direct`, zero model
+calls). The `v1`/`v2` prompt, the one-call service path and their tests
+are retained unchanged as non-production research evidence.
+
+### Not established
+
+**No checklist prompt has validated quality, and none is in production.**
+The two runs show the call path, repair, validation and provenance
+working and give two latency observations of about 25 s; they do not
+show useful output, and two single calls on one fixture are not a
+general evaluation of the model or the prompts. The deterministic
+checklist has been reviewed by reading its output on the same fixture,
+not by a user study. The 90 s / 640-token bounds apply to the research
+path only and remain conservative ceilings, not tuned values.

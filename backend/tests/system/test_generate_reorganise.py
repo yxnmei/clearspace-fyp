@@ -91,10 +91,10 @@ def _provider_override(loader):
 DEFAULT_SCENE = {"label": "bedroom", "confidence": 0.9, "all_scores": {"bedroom": 0.9, "kitchen": 0.1}}
 
 
-def _do_reorganise_upload(image_bytes: bytes = PNG_BYTES) -> dict:
-    detections = [
+def _do_reorganise_upload(image_bytes: bytes = PNG_BYTES, detections: list[FakeDetection] | None = None) -> dict:
+    detections = detections or [
         FakeDetection(label="lamp", box_xyxy=(0.1, 0.1, 0.3, 0.3), confidence=0.9),
-        FakeDetection(label="book", box_xyxy=(0.5, 0.5, 0.7, 0.7), confidence=0.6),
+        FakeDetection(label="book", box_xyxy=(0.7, 0.5, 0.9, 0.7), confidence=0.6),
     ]
     app.dependency_overrides[get_scene_classifier_provider] = _provider_override(
         lambda: CallRecorder(return_value=DEFAULT_SCENE)
@@ -113,66 +113,44 @@ def _do_reorganise_upload(image_bytes: bytes = PNG_BYTES) -> dict:
     return body
 
 
-class FakeLLMResult:
-    def __init__(self, parsed_json, is_valid_json=True, was_repaired=False, model_name="phi4-mini", prompt_version="v1"):
-        self.raw_text = "fake"
-        self.parsed_json = parsed_json
-        self.is_valid_json = is_valid_json
-        self.was_repaired = was_repaired
-        self.model_name = model_name
-        self.prompt_version = prompt_version
+class ChecklistSpy:
+    """Wraps the REAL plan_reorganise_actions and records each call,
+    rather than replacing it with a stub.
 
-
-def _valid_plan_json(item_ids: list[str]) -> dict:
-    return {
-        "zones": [{"zone_name": "Keep in place", "item_ids": item_ids, "instruction": "keep as is"}],
-        "image_prompt": "a tidy bedroom",
-        "negative_prompt": None,
-    }
-
-
-class PlanningSpy:
-    """Wraps the REAL production planning function
-    (plan_reorganisation_direct) and records each call, rather than
-    replacing it with a stub.
-
-    Production no longer injects a planner at all — /generate passes
-    llm_planner=None — so there is no planner dependency left to override.
-    What these tests still need to assert is whether planning was reached
-    at all (every validation-rejection test asserts it was not), and that
-    is what `.calls` reports. Delegating to the real function means the
-    success path still exercises genuine deterministic planning, not a
-    fixture-shaped imitation of it."""
+    Production injects no checklist model at all: both routes pass
+    action_generator=None, so there is no generator dependency to
+    override. What these tests still need to assert is whether the
+    checklist stage was reached at all (every validation-rejection test
+    asserts it was not), with which selection, and that the generator it
+    was given is None. Delegating to the real function means the success
+    path exercises the genuine deterministic checklist."""
 
     def __init__(self, real):
         self._real = real
         self.calls: list[dict] = []
 
-    def __call__(self, run_id, selected_items, scene_label, user_context):
+    def __call__(self, run_id, selected_items, scene_label, user_context, generator):
         self.calls.append(
-            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
+            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator)
         )
         return self._real(
-            run_id=run_id,
-            selected_items=selected_items,
-            scene_label=scene_label,
-            user_context=user_context,
+            run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator
         )
 
 
-_planning_spy: PlanningSpy | None = None
+_checklist_spy: ChecklistSpy | None = None
 
 
 @pytest.fixture(autouse=True)
-def _spy_on_direct_planning(monkeypatch):
-    global _planning_spy
+def _spy_on_checklist(monkeypatch):
+    global _checklist_spy
     import app.services.reorganise_pipeline_service as pipeline_mod
 
-    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
-    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
-    _planning_spy = spy
+    spy = ChecklistSpy(pipeline_mod.plan_reorganise_actions)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganise_actions", spy)
+    _checklist_spy = spy
     yield
-    _planning_spy = None
+    _checklist_spy = None
 
 
 class FakeGenerator:
@@ -231,12 +209,12 @@ def _generation_result(run_id: str, image_bytes: bytes, prompt: str) -> Generati
 
 
 def _override_generate_deps(generator=None):
-    """Returns (planning_spy, generator). There is no planner override —
-    /generate has no planner dependency any more; the spy observes the
-    real direct-planning call instead (see PlanningSpy)."""
+    """Returns (checklist_spy, generator). There is no checklist-model
+    override: /generate has no such dependency; the spy observes the real
+    deterministic checklist call instead (see ChecklistSpy)."""
     generator = generator or FakeGenerator()
     app.dependency_overrides[get_image_generator_provider] = lambda: generator
-    return _planning_spy, generator
+    return _checklist_spy, generator
 
 
 def _generate_request_body(upload_body: dict, image_bytes: bytes, selected_item_ids=None, **overrides) -> dict:
@@ -261,7 +239,7 @@ def _generate_request_body(upload_body: dict, image_bytes: bytes, selected_item_
 # ---------------------------------------------------------------------------
 
 
-def test_generate_success_returns_generated_image_and_full_planning():
+def test_generate_success_returns_generated_image_and_full_action_plan():
     upload_body = _do_reorganise_upload()
     planner, generator = _override_generate_deps()
     body = _generate_request_body(upload_body, PNG_BYTES)
@@ -270,29 +248,87 @@ def test_generate_success_returns_generated_image_and_full_planning():
 
     assert response.status_code == 200
     result = response.json()
+    assert set(result) == {
+        "run_id", "action_plan", "focus_areas", "storage_suggestions", "image_prompt",
+        "image_status", "image", "image_unavailable_reason",
+    }
     assert result["image_status"] == "generated"
     assert result["image_unavailable_reason"] is None
     assert result["image"]["api_version"] == IMAGE_GEN_API_VERSION
     assert result["image"]["depth_map_used"] is True
 
-    # Complete planning result preserved — and truthful: production makes
-    # no LLM call, so zero attempts, no issues, and no model identity.
-    planning = result["planning"]
-    assert planning["provenance"] == "deterministic_direct"
-    assert planning["attempts"] == 0
-    assert planning["issues"] == []
-    assert planning["model_name"] is None
-    assert planning["prompt_version"] is None
-    assert len(planning["stage_timings"]) == 1
-    assert planning["stage_timings"][0]["stage"] == "reorganise_plan"
+    # Complete, truthful action plan: production calls NO checklist model,
+    # so zero model calls, no issue, no model identity, no repair flag.
+    plan = result["action_plan"]
+    assert plan["run_id"] == body["run_id"]
+    assert plan["provenance"] == "deterministic_direct"
+    assert plan["attempts"] == 0
+    assert plan["issues"] == []
+    assert plan["model_name"] is None
+    assert plan["prompt_version"] is None
+    assert plan["was_repaired"] is None
+    assert plan["duration_ms"] >= 0
+    assert [a["priority"] for a in plan["actions"]] == list(range(1, len(plan["actions"]) + 1))
+    assert plan["actions"][0]["title"].startswith("Start with the")
 
-    # Every selected item is planned for, exactly once.
-    planned = [i for zone in planning["plan"]["zones"] for i in zone["item_ids"]]
-    assert sorted(planned) == sorted(body["selected_item_ids"])
-    assert len(planned) == len(set(planned))
+    # Focus areas and suggestions are joined only by item_id, from the selection.
+    assert [area["item_ids"] for area in result["focus_areas"]] == [["item_001"], ["item_002"]]
+    assert [area["area_id"] for area in result["focus_areas"]] == ["left", "right"]
+    assert result["storage_suggestions"] == []  # one lamp and one book: no evidence
+    assert result["image_prompt"].startswith("A tidy, well-organised bedroom.")
 
-    assert len(generator.calls) == 1
+    # the checklist stage ran once with NO generator; the image call still happened once
     assert len(planner.calls) == 1
+    assert planner.calls[0]["generator"] is None
+    assert len(generator.calls) == 1
+    assert generator.calls[0]["prompt"] == result["image_prompt"]
+
+
+def test_generate_has_no_checklist_model_dependency_to_override():
+    """The route exposes no checklist-model provider, so nothing a caller
+    (or a test) injects can put a model on the request path."""
+    import inspect
+
+    import app.api.routes as routes
+
+    assert not hasattr(routes, "get_reorganise_action_generator_provider")
+    assert not hasattr(routes, "_load_reorganise_action_generator")
+    parameters = inspect.signature(routes.generate_reorganisation).parameters
+    assert list(parameters) == ["request", "image_generator"]
+
+
+def test_generate_checklist_is_the_deterministic_one_for_the_selection():
+    from app.core.reorganise_actions import build_deterministic_checklist
+
+    upload_body = _do_reorganise_upload()
+    planner, _generator = _override_generate_deps()
+    body = _generate_request_body(upload_body, PNG_BYTES)
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    expected = build_deterministic_checklist(planner.calls[0]["selected_items"], "bedroom")
+    assert response.json()["action_plan"]["actions"] == [a.model_dump() for a in expected]
+
+
+def test_generate_reports_storage_suggestions_for_compatible_items():
+    upload_body = _do_reorganise_upload(
+        detections=[
+            FakeDetection(label="charger", box_xyxy=(0.1, 0.1, 0.2, 0.2), confidence=0.9),
+            FakeDetection(label="cable", box_xyxy=(0.5, 0.5, 0.6, 0.6), confidence=0.9),
+            FakeDetection(label="lamp", box_xyxy=(0.7, 0.7, 0.9, 0.9), confidence=0.9),
+        ]
+    )
+    _override_generate_deps()
+    body = _generate_request_body(upload_body, PNG_BYTES)
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    suggestions = response.json()["storage_suggestions"]
+    assert [s["name"] for s in suggestions] == ["Cable or technology-accessory organiser"]
+    assert suggestions[0]["related_item_ids"] == ["item_001", "item_002"]
+    assert set(suggestions[0]) == {"name", "reason", "related_item_ids"}
 
 
 def test_generate_rejects_client_supplied_tuning_fields():
@@ -350,8 +386,11 @@ def test_generate_typed_image_gen_failure_returns_200_plan_preserved(exception, 
     assert result["image_status"] == "unavailable"
     assert result["image_unavailable_reason"] == expected_reason
     assert result["image"] is None
-    assert result["planning"]["plan"] is not None
-    assert result["planning"]["plan"]["zones"]
+    # checklist, focus areas, suggestions and prompt are all still present
+    assert result["action_plan"]["actions"]
+    assert result["focus_areas"]
+    assert isinstance(result["storage_suggestions"], list)
+    assert result["image_prompt"]
 
 
 def test_generate_no_separate_health_call_for_success():
@@ -520,7 +559,8 @@ def test_importing_routes_and_main_does_not_load_reorganise_llm_or_ollama():
         "import sys\n"
         "import app.main\n"
         "heavy = {'torch', 'clip', 'ollama', 'app.models.clip_scene', "
-        "'app.models.grounding_dino', 'app.models.mistral_llm', 'app.models.reorganise_llm'}\n"
+        "'app.models.grounding_dino', 'app.models.mistral_llm', 'app.models.reorganise_llm', "
+        "'app.models.reorganise_actions_llm'}\n"
         "loaded = heavy & set(sys.modules)\n"
         "assert not loaded, sorted(loaded)\n"
     )
@@ -610,14 +650,37 @@ def test_generated_image_payload_rejects_malformed_base64_image():
         GeneratedImagePayload(**_valid_payload_kwargs(image="not-valid-base64!!!"))
 
 
-# ===================== zero-Ollama proof (production request path) =======
+# ===================== zero-model proof (production request path) ========
 
 
-def test_driving_generate_never_imports_ollama_or_the_reorganise_planner():
-    """The strongest available proof that production planning makes no
-    Ollama call: drive a real /generate request in a FRESH interpreter
-    and assert the ollama module and app.models.reorganise_llm are never
-    imported at all.
+def test_no_reorganise_model_is_wired_into_any_route():
+    """Neither the research zone planner nor the research checklist model
+    is imported, resolved or named as a callable by the route layer or
+    the Both service."""
+    import inspect
+
+    import app.api.routes as routes
+    import app.services.both_service as both_service
+
+    for module in (routes, both_service):
+        code_lines = [
+            line for line in inspect.getsource(module).splitlines()
+            if "import" in line or "generate_reorganise" in line or "plan_reorganisation" in line
+        ]
+        joined = "\n".join(code_lines)
+        assert "generate_reorganise_plan_once" not in joined
+        assert "generate_reorganise_actions_once" not in joined
+        assert "app.models.reorganise_llm" not in joined
+        assert "app.models.reorganise_actions_llm" not in joined
+        assert "plan_reorganisation" not in joined
+
+
+def test_driving_generate_never_imports_ollama_or_any_reorganise_model():
+    """The strongest available proof that production makes no checklist
+    model call: drive a real /generate request in a FRESH interpreter
+    with NOTHING injected for the checklist, and assert that ollama and
+    both Reorganise model modules are never imported at all, while the
+    single image-generation call still happens.
 
     A subprocess, not an in-process sys.modules check: other tests in
     this session import ollama for unrelated reasons (Declutter's own
@@ -667,8 +730,11 @@ up = client.post("/upload", files={"image": ("t.png", png, "image/png")}, data={
 assert up.status_code == 200, up.text
 body = up.json()
 
+image_calls = []
+
 def gen(run_id, image_bytes, image_media_type, prompt, negative_prompt=None,
         denoise_strength=None, controlnet_conditioning_scale=None, seed=None):
+    image_calls.append(prompt)
     return GenerationResult(
         run_id=run_id, image_bytes=image_bytes, image_media_type="image/png",
         depth_map_used=True, denoise_strength=0.35, controlnet_conditioning_scale=1.0,
@@ -685,10 +751,14 @@ res = client.post("/generate", json={
     "image": base64.b64encode(png).decode("ascii"), "image_media_type": "image/png",
     "input_image_sha256": body["input_image_sha256"], "user_context": None})
 assert res.status_code == 200, res.text
-assert res.json()["planning"]["provenance"] == "deterministic_direct"
-assert res.json()["planning"]["attempts"] == 0
+plan = res.json()["action_plan"]
+assert plan["provenance"] == "deterministic_direct", plan
+assert plan["attempts"] == 0
+assert plan["model_name"] is None and plan["prompt_version"] is None
+assert plan["issues"] == []
+assert len(image_calls) == 1, image_calls  # the single image call still happens
 
-leaked = {"ollama", "app.models.reorganise_llm"} & set(sys.modules)
+leaked = {"ollama", "app.models.reorganise_llm", "app.models.reorganise_actions_llm"} & set(sys.modules)
 assert not leaked, sorted(leaked)
 """
     result = subprocess.run(

@@ -110,20 +110,20 @@ function makeGeneratedResponse(confirmed, { imageStatus = "generated" } = {}) {
   return {
     run_id: "run1",
     confirmation,
-    planning: {
+    action_plan: {
       run_id: "run1",
-      plan: {
-        zones: [{ zone_name: "Keep in place", item_ids: confirmation.confirmed_keep_ids, instruction: "keep as is" }],
-        image_prompt: "a tidy bedroom",
-        negative_prompt: null,
-      },
-      provenance: "raw_valid",
-      issues: [],
+      actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
+      provenance: "llm_generated",
       attempts: 1,
       model_name: "phi4-mini",
-      prompt_version: "v1",
-      stage_timings: [{ stage: "reorganise_plan", duration_ms: 5 }],
+      prompt_version: "reorganise-actions-v1",
+      was_repaired: false,
+      duration_ms: 5,
+      issues: [],
     },
+    focus_areas: [{ area_id: "left", label: "Left side", item_ids: confirmation.confirmed_keep_ids }],
+    storage_suggestions: [],
+    image_prompt: "a tidy bedroom",
     image_status: imageStatus,
     image:
       imageStatus === "generated"
@@ -254,17 +254,17 @@ describe("BothPage screen-by-screen flow", () => {
     expect(within(stepper()).queryByRole("button", { name: /go to review/i })).not.toBeInTheDocument();
   });
 
-  test("full flow explicitly generates a room plan on the final screen", async () => {
+  test("full flow explicitly generates a reorganisation plan on the final screen", async () => {
     const user = userEvent.setup();
     client.generateConfirmedReorganisation.mockResolvedValue(makeGeneratedResponse(KEEP));
     render(<BothPage />);
     await reachActions(user);
 
     expect(currentStep()).toBe("Reorganise");
-    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /generate room plan/i }));
+    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(screen.getByLabelText(/room photo/i)).not.toBeVisible();
   });
 
@@ -278,7 +278,7 @@ describe("BothPage screen-by-screen flow", () => {
     await reachActions(user, scenario);
 
     expect(screen.getByText(/nothing to reorganise/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /generate room plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate reorganisation plan/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /generate listing drafts/i })).toBeEnabled();
   });
 
@@ -288,7 +288,7 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate room plan/i }));
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
     expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
@@ -299,8 +299,8 @@ describe("BothPage screen-by-screen flow", () => {
     client.generateConfirmedReorganisation.mockResolvedValue(makeGeneratedResponse(KEEP));
     render(<BothPage />);
     await reachActions(user);
-    await user.click(screen.getByRole("button", { name: /generate room plan/i }));
-    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /start over/i }));
     expect(currentStep()).toBe("Upload");
@@ -328,15 +328,15 @@ describe("BothPage independent final actions", () => {
     await reachActions(user, KEEP_AND_SELL);
 
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
-    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /generate room plan/i }));
+    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
     expect(client.generateListings).toHaveBeenCalledTimes(1);
     expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
 
     resolveListings();
     await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
     resolveReorganise();
-    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
   });
 
@@ -348,10 +348,10 @@ describe("BothPage independent final actions", () => {
 
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
-    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
   });
 
-  test("a completed room plan keeps edited listing drafts visible", async () => {
+  test("a completed reorganisation plan keeps edited listing drafts visible", async () => {
     const user = userEvent.setup();
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
@@ -364,9 +364,9 @@ describe("BothPage independent final actions", () => {
     const title = await screen.findByDisplayValue("Great lamp for sale");
     await user.clear(title);
     await user.type(title, "My edited title");
-    await user.click(screen.getByRole("button", { name: /generate room plan/i }));
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(screen.getByDisplayValue("My edited title")).toBeInTheDocument();
   });
 
@@ -390,5 +390,102 @@ describe("BothPage independent final actions", () => {
 
     await waitFor(() => expect(screen.getByDisplayValue("Regenerated title")).toBeInTheDocument());
     expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
+  });
+});
+
+describe("BothPage checklist, focus areas and storage suggestions", () => {
+  test("renders the same shared checklist, focus areas and storage suggestions as Direct Reorganise", async () => {
+    const user = userEvent.setup();
+    const response = makeGeneratedResponse(KEEP);
+    response.storage_suggestions = [
+      { name: "Compartment tray", reason: "Gives 2 small personal items a fixed compartment each.", related_item_ids: ["item_001"] },
+    ];
+    client.generateConfirmedReorganisation.mockResolvedValue(response);
+    render(<BothPage />);
+    await reachActions(user);
+
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: /your reorganisation checklist/i })).toBeInTheDocument());
+    const checklist = screen.getByRole("list", { name: /checklist actions/i });
+    expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
+    const areas = screen.getByRole("region", { name: /areas to focus on/i });
+    expect(within(areas).getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
+    expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("Your reorganisation checklist")).toBeLessThan(headings.indexOf("Areas to focus on"));
+    expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
+    // listings stay available after the visual, and navigation is unchanged
+    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Marketplace listing drafts"));
+    expect(currentStep()).toBe("Reorganise");
+    expect(screen.getByRole("button", { name: /back to confirm/i })).toBeEnabled();
+  });
+
+  test("an unavailable visual preview still leaves the checklist, areas and suggestions visible", async () => {
+    const user = userEvent.setup();
+    const response = makeGeneratedResponse(KEEP, { imageStatus: "unavailable" });
+    response.storage_suggestions = [
+      { name: "Compartment tray", reason: "Gives 2 small personal items a fixed compartment each.", related_item_ids: ["item_001"] },
+    ];
+    client.generateConfirmedReorganisation.mockResolvedValue(response);
+    render(<BothPage />);
+    await reachActions(user);
+
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    expect(screen.getByText("Compartment tray")).toBeInTheDocument();
+  });
+
+  test("a response whose storage suggestion names a non-Keep item is rejected as a generation error", async () => {
+    const user = userEvent.setup();
+    const response = makeGeneratedResponse(KEEP);
+    response.storage_suggestions = [{ name: "Compartment tray", reason: "x", related_item_ids: ["item_999"] }];
+    client.generateConfirmedReorganisation.mockResolvedValue(response);
+    render(<BothPage />);
+    await reachActions(user);
+
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
+    expect(screen.queryByRole("heading", { name: /your reorganisation checklist/i })).not.toBeInTheDocument();
+    // listings remain independently available regardless
+    expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
+  });
+
+  test("the production response shows zero checklist model calls and deterministic_direct, truthfully", async () => {
+    const user = userEvent.setup();
+    const response = makeGeneratedResponse(KEEP);
+    response.action_plan = {
+      ...response.action_plan,
+      actions: [
+        { priority: 1, title: "Start with the left side", instruction: "The left side of your photo holds 1 of your selected item (lamp). Straighten it and clear loose items from the space immediately around it." },
+      ],
+      provenance: "deterministic_direct",
+      attempts: 0,
+      model_name: null,
+      prompt_version: null,
+      was_repaired: null,
+      issues: [],
+    };
+    client.generateConfirmedReorganisation.mockResolvedValue(response);
+    render(<BothPage />);
+    await reachActions(user);
+
+    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
+    expect(screen.getByText(/without the ai assistant/i)).toBeInTheDocument();
+    const details = screen.getByText("Checklist details").closest("details");
+    expect(details).toHaveTextContent("deterministic_direct");
+    expect(within(details).getByText("Model calls").closest("div")).toHaveTextContent("0");
+    expect(within(details).getByText("Model").closest("div")).toHaveTextContent("n/a");
+    expect(details).not.toHaveTextContent("phi4-mini");
+    // listings and the visual are unaffected
+    expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
   });
 });

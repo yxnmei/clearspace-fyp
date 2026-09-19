@@ -57,20 +57,20 @@ function makeUploadResponse() {
 function makeGeneratedResponse() {
   return {
     run_id: "run1",
-    planning: {
+    action_plan: {
       run_id: "run1",
-      plan: {
-        zones: [{ zone_name: "Keep in place", item_ids: ["item_001"], instruction: "keep as is" }],
-        image_prompt: "a tidy bedroom",
-        negative_prompt: null,
-      },
-      provenance: "raw_valid",
-      issues: [],
+      actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
+      provenance: "llm_generated",
       attempts: 1,
       model_name: "phi4-mini",
-      prompt_version: "v1",
-      stage_timings: [{ stage: "reorganise_plan", duration_ms: 5 }],
+      prompt_version: "reorganise-actions-v1",
+      was_repaired: false,
+      duration_ms: 5,
+      issues: [],
     },
+    focus_areas: [{ area_id: "left", label: "Left side", item_ids: ["item_001"] }],
+    storage_suggestions: [],
+    image_prompt: "a tidy bedroom",
     image_status: "generated",
     image: {
       image: "aGVsbG8=",
@@ -111,9 +111,9 @@ async function analyseRoom() {
 
 async function continueToGenerate() {
   await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
-  expect(screen.getByRole("heading", { name: /review items for your room plan/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /review items for your reorganisation plan/i })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: /continue to generate/i }));
-  expect(screen.getByRole("heading", { name: /generate room plan/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /generate reorganisation plan/i })).toBeInTheDocument();
 }
 
 describe("ReorganisePage screen-by-screen flow", () => {
@@ -127,11 +127,11 @@ describe("ReorganisePage screen-by-screen flow", () => {
     render(<ReorganisePage />);
 
     expect(currentStep()).toBe("Upload");
-    expect(screen.queryByRole("heading", { name: /review items for your room plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
 
     await analyseRoom();
     expect(currentStep()).toBe("Analyse");
-    expect(screen.queryByRole("heading", { name: /review items for your room plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
     expect(currentStep()).toBe("Review");
@@ -160,10 +160,10 @@ describe("ReorganisePage screen-by-screen flow", () => {
     await analyseRoom();
     await continueToGenerate();
     await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /generate room plan/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
 
-    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
-    await waitFor(() => expect(screen.getByText("Keep in place")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(currentStep()).toBe("Generate");
     expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
   });
@@ -175,7 +175,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
     expect(currentStep()).toBe("Generate");
@@ -193,9 +193,121 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate room plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument());
-    expect(screen.getByText("Keep in place")).toBeInTheDocument();
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+  });
+});
+
+describe("ReorganisePage checklist, focus areas and storage suggestions", () => {
+  test("renders the shared checklist, focus areas and storage suggestions from the generate response", async () => {
+    const response = makeGeneratedResponse();
+    response.storage_suggestions = [
+      { name: "Compartment tray", reason: "Gives 2 small personal items a fixed compartment each.", related_item_ids: ["item_001"] },
+    ];
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(response);
+    render(<ReorganisePage />);
+
+    await analyseRoom();
+    await continueToGenerate();
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: /your reorganisation checklist/i })).toBeInTheDocument());
+    const checklist = screen.getByRole("list", { name: /checklist actions/i });
+    expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
+    const areas = screen.getByRole("region", { name: /areas to focus on/i });
+    expect(within(areas).getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
+    expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("Your reorganisation checklist")).toBeLessThan(headings.indexOf("Areas to focus on"));
+    expect(headings.indexOf("Areas to focus on")).toBeLessThan(headings.indexOf("Storage suggestions"));
+    expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
+    expect(screen.queryByText(/room plan/i)).not.toBeInTheDocument();
+    // the wizard is unchanged: Generate is the viewed step and Back still works
+    expect(currentStep()).toBe("Generate");
+    expect(screen.getByRole("button", { name: /back to review/i })).toBeEnabled();
+  });
+
+  test("a response whose focus area names an unselected item is rejected as a generation error", async () => {
+    const response = makeGeneratedResponse();
+    response.focus_areas = [{ area_id: "left", label: "Left side", item_ids: ["item_999"] }];
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(response);
+    render(<ReorganisePage />);
+
+    await analyseRoom();
+    await continueToGenerate();
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
+    expect(screen.queryByRole("heading", { name: /your reorganisation checklist/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
+  });
+
+  test("a fallback checklist renders with an unavailable visual preview", async () => {
+    const response = makeGeneratedResponse();
+    response.action_plan = {
+      ...response.action_plan,
+      provenance: "deterministic_fallback",
+      was_repaired: null,
+      model_name: null,
+      prompt_version: null,
+      issues: [{ kind: "call_failed", detail: "checklist model call failed: RuntimeError" }],
+    };
+    response.image_status = "unavailable";
+    response.image = null;
+    response.image_unavailable_reason = "timeout";
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(response);
+    render(<ReorganisePage />);
+
+    await analyseRoom();
+    await continueToGenerate();
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+    expect(screen.getByText(/did not return a usable checklist/i)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /areas to focus on/i })).toBeInTheDocument();
+    expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
+  });
+
+  test("the production response shows zero checklist model calls and deterministic_direct, truthfully", async () => {
+    // What the backend actually returns: no checklist model is called.
+    const response = makeGeneratedResponse();
+    response.action_plan = {
+      ...response.action_plan,
+      actions: [
+        { priority: 1, title: "Start with the left side", instruction: "The left side of your photo holds 1 of your selected item (lamp). Straighten it and clear loose items from the space immediately around it." },
+        { priority: 2, title: "Check the whole room", instruction: "Look over the bedroom once more and make sure each selected item has a visible, settled place before you finish." },
+      ],
+      provenance: "deterministic_direct",
+      attempts: 0,
+      model_name: null,
+      prompt_version: null,
+      was_repaired: null,
+      issues: [],
+    };
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(response);
+    render(<ReorganisePage />);
+
+    await analyseRoom();
+    await continueToGenerate();
+    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+
+    await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
+    expect(screen.getByText(/without the ai assistant/i)).toBeInTheDocument();
+    expect(screen.queryByText(/suggested by the ai assistant/i)).not.toBeInTheDocument();
+    const details = screen.getByText("Checklist details").closest("details");
+    expect(details).toHaveTextContent("deterministic_direct");
+    expect(within(details).getByText("Model calls").closest("div")).toHaveTextContent("0");
+    expect(within(details).getByText("Model").closest("div")).toHaveTextContent("n/a");
+    expect(within(details).getByText("Prompt version").closest("div")).toHaveTextContent("n/a");
+    expect(details).not.toHaveTextContent("phi4-mini");
+    expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
   });
 });

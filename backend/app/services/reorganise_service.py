@@ -10,9 +10,19 @@ contradicting the corrected item_id-only architecture. Removed here,
 confirmed via `rg -n "run_reorganise|score_generation_fidelity"` to have
 had zero callers anywhere in the repository before deletion.
 
-TWO entry points, and PRODUCTION USES THE FIRST:
+RESEARCH-ONLY SINCE 2026-09-13. Neither entry point below is on the
+production request path any more: Direct Reorganise and Both now produce
+an AI-generated prioritised action checklist plus deterministic focus
+areas and storage suggestions (app/services/reorganise_actions_service.py,
+app/core/reorganise_focus_areas.py, app/core/reorganise_storage.py), not a
+zone plan. This module, its schemas and its prompt are retained unchanged
+for evaluation/scripts/compare_reorganise_planning.py and its tests. The
+paragraphs below describe the arrangement as it stood while this module
+still served production and are kept as history.
 
-  plan_reorganisation_direct() — the production path. Builds the
+TWO entry points, and PRODUCTION USED THE FIRST:
+
+  plan_reorganisation_direct() — the former production path. Builds the
   deterministic plan immediately, calls no planner, imports no ollama,
   and reports provenance DETERMINISTIC_DIRECT with zero attempts.
 

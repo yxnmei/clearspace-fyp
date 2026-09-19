@@ -57,28 +57,34 @@ function makeUploadResponse({ runId = "run1", items } = {}) {
   };
 }
 
-function makePlanning(runId, itemIds, overrides = {}) {
+function makeActionPlan(runId, overrides = {}) {
   return {
     run_id: runId,
-    plan: {
-      zones: [{ zone_name: "Keep in place", item_ids: itemIds, instruction: "keep as is" }],
-      image_prompt: "a tidy bedroom",
-      negative_prompt: null,
-    },
-    provenance: "raw_valid",
-    issues: [],
+    actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
+    provenance: "llm_generated",
     attempts: 1,
     model_name: "phi4-mini",
-    prompt_version: "v1",
-    stage_timings: [{ stage: "reorganise_plan", duration_ms: 5 }],
+    prompt_version: "reorganise-actions-v1",
+    was_repaired: false,
+    duration_ms: 5,
+    issues: [],
     ...overrides,
+  };
+}
+
+function makeGenerationBody(runId, itemIds) {
+  return {
+    action_plan: makeActionPlan(runId),
+    focus_areas: [{ area_id: "left", label: "Left side", item_ids: itemIds }],
+    storage_suggestions: [],
+    image_prompt: "a tidy bedroom",
   };
 }
 
 function makeGeneratedResponse(runId, itemIds) {
   return {
     run_id: runId,
-    planning: makePlanning(runId, itemIds),
+    ...makeGenerationBody(runId, itemIds),
     image_status: "generated",
     image: {
       image: "aGVsbG8=",
@@ -102,7 +108,7 @@ function makeGeneratedResponse(runId, itemIds) {
 function makeUnavailableResponse(runId, itemIds, reason = "service_unreachable") {
   return {
     run_id: runId,
-    planning: makePlanning(runId, itemIds),
+    ...makeGenerationBody(runId, itemIds),
     image_status: "unavailable",
     image: null,
     image_unavailable_reason: reason,
@@ -332,7 +338,7 @@ describe("useReorganiseFlow, generate", () => {
     expect(result.current.generateResult.imageUnavailableReason).toBe("timeout");
     expect(result.current.generateResult.image).toBeNull();
     expect(result.current.generateError).toBeNull(); // never treated as an error
-    expect(result.current.generateResult.planning.plan.zones).toHaveLength(1); // plan preserved
+    expect(result.current.generateResult.actionPlan.actions).toHaveLength(1); // checklist preserved
   });
 
   test("a generate() failure preserves file/analysis/selection and returns to selecting", async () => {

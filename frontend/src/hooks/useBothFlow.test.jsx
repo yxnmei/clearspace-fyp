@@ -109,21 +109,22 @@ function makeConfirmResponse(runId, confirmed) {
   };
 }
 
-function makePlanning(runId, itemIds, overrides = {}) {
+function makeGenerationBody(runId, itemIds) {
   return {
-    run_id: runId,
-    plan: {
-      zones: [{ zone_name: "Keep in place", item_ids: itemIds, instruction: "keep as is" }],
-      image_prompt: "a tidy bedroom",
-      negative_prompt: null,
+    action_plan: {
+      run_id: runId,
+      actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
+      provenance: "llm_generated",
+      attempts: 1,
+      model_name: "phi4-mini",
+      prompt_version: "reorganise-actions-v1",
+      was_repaired: false,
+      duration_ms: 5,
+      issues: [],
     },
-    provenance: "raw_valid",
-    issues: [],
-    attempts: 1,
-    model_name: "phi4-mini",
-    prompt_version: "v1",
-    stage_timings: [{ stage: "reorganise_plan", duration_ms: 5 }],
-    ...overrides,
+    focus_areas: [{ area_id: "left", label: "Left side", item_ids: itemIds }],
+    storage_suggestions: [],
+    image_prompt: "a tidy bedroom",
   };
 }
 
@@ -149,13 +150,13 @@ function makeGeneratedImage(overrides = {}) {
 // Builds a /generate/confirmed response whose `confirmation` is the exact
 // ConfirmationResult a matching makeConfirmResponse() call would produce
 // i.e. genuinely server-derived and internally consistent, not a
-// client echo, and whose planning exactly matches confirmedKeepIds.
+// client echo, and whose focus areas cover exactly confirmedKeepIds.
 function makeConfirmedGenerateResponse(runId, confirmed, { imageStatus = "generated", unavailableReason = null } = {}) {
   const confirmation = makeConfirmResponse(runId, confirmed);
   return {
     run_id: runId,
     confirmation,
-    planning: makePlanning(runId, confirmation.confirmed_keep_ids),
+    ...makeGenerationBody(runId, confirmation.confirmed_keep_ids),
     image_status: imageStatus,
     image: imageStatus === "generated" ? makeGeneratedImage() : null,
     image_unavailable_reason: imageStatus === "generated" ? null : unavailableReason,

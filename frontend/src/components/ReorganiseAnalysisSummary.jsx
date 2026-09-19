@@ -44,7 +44,7 @@ export default function ReorganiseAnalysisSummary({ analysis }) {
           value={`${analysis.scene.label} (${formatConfidence(analysis.scene.confidence)})`}
         />
         <Stat icon={ScanSearch} label="Candidate detections" value={analysis.items.length} />
-        <Stat icon={Sparkles} label="Included in room plan" value={actionableCount} />
+        <Stat icon={Sparkles} label="Included in plan" value={actionableCount} />
         <Stat icon={Layers} label="Contextual items" value={contextualCount} />
         <Stat
           icon={TriangleAlert}

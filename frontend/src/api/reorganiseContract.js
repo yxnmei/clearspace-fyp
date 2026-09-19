@@ -16,28 +16,29 @@
 //      response never carries at all, this is a genuinely different
 //      envelope, not a variant of the Declutter one.
 //   2. normaliseGenerateResponse(), validates POST /generate's response
-//      (GenerateResponse) against the exact selected_item_ids that were
-//      requested and the input_image_sha256 the upload step reported,
-//      both passed in by the caller, exactly like
-//      normaliseConfirmationResponse() takes sourceDeclutter to
+//      (GenerateResponse: action_plan + focus_areas + storage_suggestions
+//      + image_prompt + the image fields) against the exact
+//      selected_item_ids that were requested and the input_image_sha256
+//      the upload step reported, both passed in by the caller, exactly
+//      like normaliseConfirmationResponse() takes sourceDeclutter to
 //      cross-check against.
 //   3. normaliseConfirmedGenerateResponse(), validates POST
-//      /generate/confirmed's response (ConfirmedGenerateResponse, R6,
-//      Both). Reuses validatePlanning()/validateGeneratedImage() below
-//      VERBATIM (they're already standalone module-level functions, not
-//      inlined into normaliseGenerateResponse) and reuses
-//      confirmationContract.js's own normaliseConfirmationResponse()
-//      verbatim too, genuine reuse of existing normalizers, not a
-//      parallel reimplementation, per this module's own job.
+//      /generate/confirmed's response (ConfirmedGenerateResponse, Both).
+//      Reuses validateGenerationBody()/validateGeneratedImage() below
+//      VERBATIM and reuses confirmationContract.js's own
+//      normaliseConfirmationResponse() verbatim too, genuine reuse of
+//      existing normalizers, not a parallel reimplementation.
 //
 // Never merges/joins by label text anywhere in this file, item_id is
 // the only identity. Duplicate labels are explicitly legal and remain
 // fully independent (see requireNoDuplicates, which only ever runs
-// against item_id lists).
+// against item_id lists). Focus areas and storage suggestions may only
+// reference selected item_ids; the checklist itself references no ids at
+// all (it is prose, never an item partition).
 //
-// A plan-preserving image_status="unavailable" response is a SUCCESSFUL,
-// fully validated result here, never thrown as an error. Only a
-// genuinely malformed/contract-violating response throws.
+// A checklist-preserving image_status="unavailable" response is a
+// SUCCESSFUL, fully validated result here, never thrown as an error.
+// Only a genuinely malformed/contract-violating response throws.
 
 import { normaliseConfirmationResponse } from "./confirmationContract";
 
@@ -51,18 +52,32 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 // rejects both.
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
 const ITEM_ID_RE = /^item_\d{3,}$/;
-// "deterministic_direct" is the PRODUCTION value: no LLM planner is
-// called at all, so the plan is built deterministically from the start.
-// Distinct from "deterministic_fallback", which means two planner
-// attempts were made and both were rejected, see the per-provenance
-// attempt rules enforced below.
-const VALID_PROVENANCE = new Set([
-  "raw_valid",
-  "mechanically_repaired",
-  "recovery_used",
-  "deterministic_fallback",
-  "deterministic_direct",
-]);
+// Mirrors app.services.reorganise_actions_service.ActionPlanProvenance.
+// "llm_generated": the single checklist-model call returned a trusted
+// checklist. "deterministic_fallback": that one call failed or was
+// rejected, so the checklist is the deterministic one (exactly one issue
+// says why). "deterministic_direct": no model was called at all (the
+// explicit no-model path). Per-provenance attempt/issue/metadata rules
+// are enforced below, so a response cannot claim a model wrote the
+// checklist while also reporting zero attempts, or vice versa.
+const VALID_ACTION_PLAN_PROVENANCE = new Set(["llm_generated", "deterministic_fallback", "deterministic_direct"]);
+const VALID_ACTION_PLAN_ISSUE_KINDS = new Set(["call_failed", "invalid_json", "invalid_actions"]);
+// Mirrors app.core.reorganise_actions / reorganise_focus_areas /
+// reorganise_storage: the bounds and the exact key sets. An extra key on
+// an action, area or suggestion (a zone, a coordinate, a price, a link)
+// is contract drift and is rejected rather than displayed.
+const MIN_ACTIONS = 1;
+const MAX_ACTIONS = 5;
+const TITLE_MIN_LENGTH = 3;
+const TITLE_MAX_LENGTH = 80;
+const INSTRUCTION_MIN_LENGTH = 10;
+const INSTRUCTION_MAX_LENGTH = 300;
+const ACTION_KEYS = ["instruction", "priority", "title"];
+const MAX_FOCUS_AREAS = 3;
+const VALID_FOCUS_AREA_IDS = new Set(["left", "centre", "right", "other"]);
+const FOCUS_AREA_KEYS = ["area_id", "item_ids", "label"];
+const MAX_STORAGE_SUGGESTIONS = 3;
+const STORAGE_SUGGESTION_KEYS = ["name", "reason", "related_item_ids"];
 const VALID_IMAGE_STATUS = new Set(["generated", "unavailable"]);
 const VALID_UNAVAILABLE_REASONS = new Set([
   "service_unreachable",
@@ -73,8 +88,6 @@ const VALID_UNAVAILABLE_REASONS = new Set([
 ]);
 const VALID_MEDIA_TYPES = new Set(["image/png", "image/jpeg"]);
 const VALID_ITEM_ROLES = new Set(["actionable", "contextual"]);
-const VALID_ISSUE_ATTEMPTS = new Set(["initial", "recovery"]);
-const VALID_ISSUE_KINDS = new Set(["call_failed", "invalid_json", "semantic_invalid"]);
 // Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION (R3), the
 // generated image's api_version must equal this EXACT value, not merely
 // be some non-empty string.
@@ -208,122 +221,161 @@ export function normaliseReorganiseUploadResponse(response) {
 // 2. normaliseGenerateResponse
 // ---------------------------------------------------------------------------
 
-function validateZone(zone, index) {
-  if (!isPlainObject(zone)) fail(`planning.plan.zones[${index}] must be an object`);
-  requireNonEmptyString(zone.zone_name, `planning.plan.zones[${index}].zone_name`);
-  requireNonEmptyString(zone.instruction, `planning.plan.zones[${index}].instruction`);
-  const itemIds = requireArray(zone.item_ids, `planning.plan.zones[${index}].item_ids`);
-  if (itemIds.length === 0) fail(`planning.plan.zones[${index}].item_ids must not be empty`);
-  itemIds.forEach((id, j) => requireItemId(id, `planning.plan.zones[${index}].item_ids[${j}]`));
-  return itemIds;
+function requireExactKeys(value, keys, name) {
+  const actual = Object.keys(value).sort();
+  if (actual.length !== keys.length || actual.some((key, i) => key !== keys[i])) {
+    fail(`${name} must have exactly the keys ${JSON.stringify(keys)}`);
+  }
 }
 
-function validatePlanning(planning, runId, selectedItemIds) {
-  if (!isPlainObject(planning)) fail("planning must be an object");
-  if (planning.run_id !== runId) fail("planning.run_id does not match run_id");
+function requireBoundedString(value, name, min, max) {
+  requireNonEmptyString(value, name);
+  const length = value.trim().length;
+  if (length < min || length > max) fail(`${name} must be ${min}..${max} characters after trimming, got ${length}`);
+  return value;
+}
 
-  if (!isPlainObject(planning.plan)) fail("planning.plan must be an object");
-  const zones = requireArray(planning.plan.zones, "planning.plan.zones");
-  if (zones.length === 0) fail("planning.plan.zones must not be empty");
+function validateAction(action, index) {
+  const name = `action_plan.actions[${index}]`;
+  if (!isPlainObject(action)) fail(`${name} must be an object`);
+  requireExactKeys(action, ACTION_KEYS, name);
+  // The server numbers actions 1..n in order; a gap, repeat or reorder
+  // is contract drift, never silently renumbered here.
+  const priority = requireInteger(action.priority, `${name}.priority`);
+  if (priority !== index + 1) fail(`${name}.priority must be ${index + 1}, got ${priority}`);
+  // Same trimmed bounds as ReorganiseAction (app.core.reorganise_actions):
+  // a title of 3..80 and an instruction of 10..300 characters.
+  requireBoundedString(action.title, `${name}.title`, TITLE_MIN_LENGTH, TITLE_MAX_LENGTH);
+  requireBoundedString(action.instruction, `${name}.instruction`, INSTRUCTION_MIN_LENGTH, INSTRUCTION_MAX_LENGTH);
+}
 
-  const plannedIds = [];
-  zones.forEach((zone, i) => {
-    plannedIds.push(...validateZone(zone, i));
-  });
-  requireNoDuplicates(plannedIds, "planned item_id (across zones)");
+function validateActionPlan(plan, runId) {
+  if (!isPlainObject(plan)) fail("action_plan must be an object");
+  if (plan.run_id !== runId) fail("action_plan.run_id does not match run_id");
 
-  // Exact partition against the requested selection, no missing, no
-  // unexpected, no duplicate. Re-verified client-side even though R1
-  // (parse_and_validate_plan) already guarantees this server-side, the
-  // same "never trust a server-side invariant at face value" discipline
-  // confirmationContract.js's keepSetMatches check already established.
-  const plannedIdSet = new Set(plannedIds);
-  const selectedIdSet = new Set(selectedItemIds);
-  const missing = selectedItemIds.filter((id) => !plannedIdSet.has(id));
-  const unexpected = plannedIds.filter((id) => !selectedIdSet.has(id));
-  if (missing.length > 0) fail(`planning.plan omits selected item_id(s): ${JSON.stringify(missing)}`);
-  if (unexpected.length > 0) fail(`planning.plan references unselected item_id(s): ${JSON.stringify(unexpected)}`);
+  const actions = requireArray(plan.actions, "action_plan.actions");
+  if (actions.length < MIN_ACTIONS || actions.length > MAX_ACTIONS) {
+    fail(`action_plan.actions must contain ${MIN_ACTIONS}..${MAX_ACTIONS} entries, got ${actions.length}`);
+  }
+  actions.forEach(validateAction);
 
-  requireNonEmptyString(planning.plan.image_prompt, "planning.plan.image_prompt");
-  // null or NON-EMPTY (an empty/whitespace-only string is not a
-  // meaningful "no negative prompt" representation, that's what null
-  // itself already means).
-  if (planning.plan.negative_prompt !== null) {
-    requireNonEmptyString(planning.plan.negative_prompt, "planning.plan.negative_prompt");
+  if (!VALID_ACTION_PLAN_PROVENANCE.has(plan.provenance)) {
+    fail(`action_plan.provenance is not a recognised value: ${JSON.stringify(plan.provenance)}`);
   }
 
-  if (!VALID_PROVENANCE.has(planning.provenance)) {
-    fail(`planning.provenance is not a recognised value: ${JSON.stringify(planning.provenance)}`);
-  }
-  // Attempt count is provenance-specific, not a single blanket rule.
-  // attempts === 0 is valid ONLY for deterministic_direct (no planner was
-  // called, so there is no attempt to count); every LLM-derived
-  // provenance still requires a real attempt count of 1 or 2, so a
-  // response cannot quietly claim zero attempts while also claiming the
-  // model produced the plan.
-  if (planning.provenance === "deterministic_direct") {
-    if (planning.attempts !== 0) {
-      fail(
-        `planning.attempts must be 0 for deterministic_direct (no planner is called), got ${JSON.stringify(planning.attempts)}`
-      );
-    }
-  } else if (planning.attempts !== 1 && planning.attempts !== 2) {
-    fail(
-      `planning.attempts must be 1 or 2 for provenance ${JSON.stringify(planning.provenance)}, got ${JSON.stringify(planning.attempts)}`
-    );
-  }
-
-  const issues = requireArray(planning.issues, "planning.issues");
+  const issues = requireArray(plan.issues, "action_plan.issues");
   issues.forEach((issue, i) => {
-    if (!isPlainObject(issue)) fail(`planning.issues[${i}] must be an object`);
-    if (!VALID_ISSUE_ATTEMPTS.has(issue.attempt)) {
-      fail(`planning.issues[${i}].attempt must be "initial" or "recovery", got ${JSON.stringify(issue.attempt)}`);
+    if (!isPlainObject(issue)) fail(`action_plan.issues[${i}] must be an object`);
+    if (!VALID_ACTION_PLAN_ISSUE_KINDS.has(issue.kind)) {
+      fail(`action_plan.issues[${i}].kind is not recognised: ${JSON.stringify(issue.kind)}`);
     }
-    if (!VALID_ISSUE_KINDS.has(issue.kind)) {
-      fail(`planning.issues[${i}].kind is not recognised: ${JSON.stringify(issue.kind)}`);
-    }
-    requireNonEmptyString(issue.detail, `planning.issues[${i}].detail`);
-    requireArray(issue.conversion_errors, `planning.issues[${i}].conversion_errors`);
+    requireNonEmptyString(issue.detail, `action_plan.issues[${i}].detail`);
   });
 
-  // Exactly one stage timing, for the "reorganise_plan" stage, matches
-  // ReorganisePlanningResult's own enforced invariant (R2), re-verified
-  // here since this UI (ReorganiseResult) renders it directly.
-  const stageTimings = requireArray(planning.stage_timings, "planning.stage_timings");
-  if (stageTimings.length !== 1) {
-    fail(`planning.stage_timings must contain exactly one entry, got ${stageTimings.length}`);
-  }
-  const [timing] = stageTimings;
-  if (!isPlainObject(timing)) fail("planning.stage_timings[0] must be an object");
-  if (timing.stage !== "reorganise_plan") {
-    fail(`planning.stage_timings[0].stage must be "reorganise_plan", got ${JSON.stringify(timing.stage)}`);
-  }
-  requireRange(
-    requireFiniteNumber(timing.duration_ms, "planning.stage_timings[0].duration_ms"),
-    "planning.stage_timings[0].duration_ms",
-    0,
-    Infinity
-  );
+  requireRange(requireFiniteNumber(plan.duration_ms, "action_plan.duration_ms"), "action_plan.duration_ms", 0, Infinity);
 
-  const modelName = planning.model_name;
-  const promptVersion = planning.prompt_version;
-  const bothPresent = typeof modelName === "string" && modelName.trim() !== "" && typeof promptVersion === "string" && promptVersion.trim() !== "";
+  const modelName = plan.model_name;
+  const promptVersion = plan.prompt_version;
+  const bothPresent =
+    typeof modelName === "string" && modelName.trim() !== "" && typeof promptVersion === "string" && promptVersion.trim() !== "";
   const bothNull = modelName === null && promptVersion === null;
   if (!bothPresent && !bothNull) {
-    fail("planning.model_name and planning.prompt_version must either both be non-empty strings or both be null");
+    fail("action_plan.model_name and action_plan.prompt_version must either both be non-empty strings or both be null");
   }
 
-  // deterministic_direct means NO model ran. A response naming a model or
-  // reporting a failed attempt alongside it would be claiming evidence of
-  // an LLM call that never happened, rejected rather than displayed.
-  if (planning.provenance === "deterministic_direct") {
-    if (!bothNull) {
-      fail("deterministic_direct requires planning.model_name and planning.prompt_version to both be null, no model was called");
-    }
-    if (issues.length !== 0) {
-      fail(`deterministic_direct requires planning.issues to be empty, no attempt was made to fail, got ${issues.length}`);
+  // Per-provenance truthfulness. At most ONE model call ever happens, so
+  // attempts is 1 whenever a call was made and 0 only on the explicit
+  // no-model path; a fallback must say why (exactly one issue); a model
+  // may be named only if a call happened; was_repaired is a genuine
+  // boolean only for a checklist the model actually wrote.
+  if (plan.provenance === "deterministic_direct") {
+    if (plan.attempts !== 0) fail(`action_plan.attempts must be 0 for deterministic_direct (no model is called), got ${JSON.stringify(plan.attempts)}`);
+    if (issues.length !== 0) fail(`deterministic_direct requires action_plan.issues to be empty, no attempt was made to fail, got ${issues.length}`);
+    if (!bothNull) fail("deterministic_direct requires action_plan.model_name and action_plan.prompt_version to both be null, no model was called");
+    if (plan.was_repaired !== null) fail("deterministic_direct requires action_plan.was_repaired to be null");
+  } else {
+    if (plan.attempts !== 1) fail(`action_plan.attempts must be 1 for provenance ${JSON.stringify(plan.provenance)}, got ${JSON.stringify(plan.attempts)}`);
+    if (plan.provenance === "llm_generated") {
+      if (issues.length !== 0) fail(`llm_generated requires action_plan.issues to be empty, got ${issues.length}`);
+      if (!bothPresent) fail("llm_generated requires action_plan.model_name and action_plan.prompt_version to be non-empty strings");
+      requireBoolean(plan.was_repaired, "action_plan.was_repaired");
+    } else {
+      if (issues.length !== 1) fail(`deterministic_fallback requires exactly one action_plan issue, got ${issues.length}`);
+      if (plan.was_repaired !== null) fail("deterministic_fallback requires action_plan.was_repaired to be null");
+      if (bothNull && issues[0].kind !== "call_failed") {
+        fail("deterministic_fallback may omit action_plan.model_name and action_plan.prompt_version only when the call itself failed");
+      }
     }
   }
+}
+
+// Focus areas: at most three, count-ordered, every item_id selected and
+// in at most one area. Joined by item_id only; the label is display text.
+function validateFocusAreas(focusAreas, selectedItemIds) {
+  const areas = requireArray(focusAreas, "focus_areas");
+  if (areas.length === 0 || areas.length > MAX_FOCUS_AREAS) {
+    fail(`focus_areas must contain 1..${MAX_FOCUS_AREAS} entries, got ${areas.length}`);
+  }
+  const selectedIdSet = new Set(selectedItemIds);
+  const seenIds = [];
+  const seenAreaIds = new Set();
+  let previousCount = Infinity;
+  areas.forEach((area, i) => {
+    const name = `focus_areas[${i}]`;
+    if (!isPlainObject(area)) fail(`${name} must be an object`);
+    requireExactKeys(area, FOCUS_AREA_KEYS, name);
+    if (!VALID_FOCUS_AREA_IDS.has(area.area_id)) fail(`${name}.area_id is not recognised: ${JSON.stringify(area.area_id)}`);
+    if (seenAreaIds.has(area.area_id)) fail(`duplicate focus area: ${JSON.stringify(area.area_id)}`);
+    seenAreaIds.add(area.area_id);
+    requireNonEmptyString(area.label, `${name}.label`);
+    const ids = requireArray(area.item_ids, `${name}.item_ids`);
+    if (ids.length === 0) fail(`${name}.item_ids must not be empty`);
+    if (ids.length > previousCount) fail("focus_areas must be ordered by item count, highest first");
+    previousCount = ids.length;
+    ids.forEach((id, j) => {
+      requireItemId(id, `${name}.item_ids[${j}]`);
+      if (!selectedIdSet.has(id)) fail(`${name} references unselected item_id ${JSON.stringify(id)}`);
+      seenIds.push(id);
+    });
+  });
+  requireNoDuplicates(seenIds, "focus area item_id (across areas)");
+}
+
+// Storage suggestions: at most three, unique names, every related id
+// selected. Exact keys, so a price/brand/link field is rejected.
+function validateStorageSuggestions(suggestions, selectedItemIds) {
+  const list = requireArray(suggestions, "storage_suggestions");
+  if (list.length > MAX_STORAGE_SUGGESTIONS) {
+    fail(`storage_suggestions must contain at most ${MAX_STORAGE_SUGGESTIONS} entries, got ${list.length}`);
+  }
+  const selectedIdSet = new Set(selectedItemIds);
+  const seenNames = new Set();
+  list.forEach((suggestion, i) => {
+    const name = `storage_suggestions[${i}]`;
+    if (!isPlainObject(suggestion)) fail(`${name} must be an object`);
+    requireExactKeys(suggestion, STORAGE_SUGGESTION_KEYS, name);
+    const title = requireNonEmptyString(suggestion.name, `${name}.name`);
+    requireNonEmptyString(suggestion.reason, `${name}.reason`);
+    const normalised = title.trim().toLowerCase();
+    if (seenNames.has(normalised)) fail(`duplicate storage suggestion name: ${JSON.stringify(title)}`);
+    seenNames.add(normalised);
+    const ids = requireArray(suggestion.related_item_ids, `${name}.related_item_ids`);
+    if (ids.length === 0) fail(`${name}.related_item_ids must not be empty`);
+    ids.forEach((id, j) => requireItemId(id, `${name}.related_item_ids[${j}]`));
+    requireNoDuplicates(ids, `${name}.related_item_ids entry`);
+    const unselected = ids.filter((id) => !selectedIdSet.has(id));
+    if (unselected.length > 0) fail(`${name} references unselected item_id(s): ${JSON.stringify(unselected)}`);
+  });
+}
+
+// The shared, non-image part of both generate responses. `selectedItemIds`
+// is the authoritative selection: the client's own request for
+// /generate, the server-derived confirmed Keep set for /generate/confirmed.
+function validateGenerationBody(response, runId, selectedItemIds) {
+  validateActionPlan(response.action_plan, runId);
+  validateFocusAreas(response.focus_areas, selectedItemIds);
+  validateStorageSuggestions(response.storage_suggestions, selectedItemIds);
+  requireNonEmptyString(response.image_prompt, "image_prompt");
 }
 
 function validateGeneratedImage(image, expectedInputImageSha256) {
@@ -379,7 +431,7 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
   const responseRunId = requireNonEmptyString(response.run_id, "run_id");
   if (responseRunId !== runId) fail("response.run_id does not match the expected run_id");
 
-  validatePlanning(response.planning, runId, selectedItemIds);
+  validateGenerationBody(response, runId, selectedItemIds);
 
   if (!VALID_IMAGE_STATUS.has(response.image_status)) {
     fail(`image_status is not "generated" or "unavailable": ${JSON.stringify(response.image_status)}`);
@@ -399,7 +451,10 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 
   return {
     runId: responseRunId,
-    planning: response.planning,
+    actionPlan: response.action_plan,
+    focusAreas: response.focus_areas,
+    storageSuggestions: response.storage_suggestions,
+    imagePrompt: response.image_prompt,
     imageStatus: response.image_status,
     image: response.image,
     imageUnavailableReason: response.image_unavailable_reason,
@@ -412,10 +467,11 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 
 // POST /generate/confirmed's response (ConfirmedGenerateResponse, R6,
 // Both), see app/api/routes.py: EXTENDS GenerateResponse's shape
-// (run_id/planning/image_status/image/image_unavailable_reason) with
-// `confirmation`, never reshaping it. This adapter mirrors that
-// composition: it validates the shared generation portion with the
-// SAME validatePlanning()/validateGeneratedImage() functions
+// (run_id/action_plan/focus_areas/storage_suggestions/image_prompt/
+// image_status/image/image_unavailable_reason) with `confirmation`,
+// never reshaping it. This adapter mirrors that composition: it
+// validates the shared generation portion with the SAME
+// validateGenerationBody()/validateGeneratedImage() functions
 // normaliseGenerateResponse() above already uses (genuine reuse, not a
 // parallel copy), and validates `confirmation` with
 // confirmationContract.js's own normaliseConfirmationResponse()
@@ -460,10 +516,10 @@ export function normaliseConfirmedGenerateResponse(
     );
   }
 
-  // The plan must exactly partition the server-derived confirmed Keep
-  // set, never a client-supplied selection (there is none here at all;
-  // see generateConfirmedReorganisation in api/client.js).
-  validatePlanning(response.planning, runId, confirmation.confirmedKeepIds);
+  // Focus areas and suggestions may only reference the server-derived
+  // confirmed Keep set, never a client-supplied selection (there is none
+  // here at all; see generateConfirmedReorganisation in api/client.js).
+  validateGenerationBody(response, runId, confirmation.confirmedKeepIds);
 
   if (!VALID_IMAGE_STATUS.has(response.image_status)) {
     fail(`image_status is not "generated" or "unavailable": ${JSON.stringify(response.image_status)}`);
@@ -484,7 +540,10 @@ export function normaliseConfirmedGenerateResponse(
   return {
     runId: responseRunId,
     confirmation,
-    planning: response.planning,
+    actionPlan: response.action_plan,
+    focusAreas: response.focus_areas,
+    storageSuggestions: response.storage_suggestions,
+    imagePrompt: response.image_prompt,
     imageStatus: response.image_status,
     image: response.image,
     imageUnavailableReason: response.image_unavailable_reason,

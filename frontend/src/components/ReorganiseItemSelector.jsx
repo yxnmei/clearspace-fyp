@@ -64,7 +64,7 @@ export default function ReorganiseItemSelector({
       {enableBackToTop && <span ref={topSentinelRef} aria-hidden="true" className="block h-px w-full" />}
 
       <header>
-        <h2 className="text-title font-semibold tracking-tight text-foreground">Review items for your room plan</h2>
+        <h2 className="text-title font-semibold tracking-tight text-foreground">Review items for your reorganisation plan</h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           All {actionableItems.length} actionable detection{actionableItems.length === 1 ? " is" : "s are"} included
           by default. Exclude anything detected incorrectly or anything that should not be part of the plan.

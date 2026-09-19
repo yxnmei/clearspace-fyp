@@ -121,7 +121,7 @@ export default function BothPage() {
         <div hidden={viewed !== "upload"}>
           <p className="mb-6 max-w-2xl text-muted-foreground">
             Review Keep / Sell / Donate / Discard suggestions, then independently create marketplace listings
-            and a reorganisation plan from your confirmed choices.
+            and a reorganisation checklist from your confirmed choices.
           </p>
           <DeclutterUploadForm status={flow.status} error={flow.error} onSubmit={handleSubmit} />
         </div>
@@ -266,12 +266,13 @@ export default function BothPage() {
                   ) : (
                     <>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        Generate a room plan using the {flow.confirmation.confirmedKeepIds.length} confirmed Keep
-                        item{flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"}.
+                        Generate a prioritised checklist, focus areas, storage suggestions and a visual preview using
+                        the {flow.confirmation.confirmedKeepIds.length} confirmed Keep item
+                        {flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"}.
                       </p>
                       {health.status === "unavailable" && (
                         <p className="mt-3 rounded-control border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-                          The image service is offline, so the room plan can still complete without a visual preview.
+                          The image service is offline, so the plan can still complete without a visual preview.
                         </p>
                       )}
                       <Button
@@ -288,11 +289,11 @@ export default function BothPage() {
                           ? "Generating…"
                           : flow.generateError
                             ? "Try again"
-                            : "Generate room plan"}
+                            : "Generate reorganisation plan"}
                       </Button>
                       {flow.generationStatus === "generating" && (
                         <p role="status" className="mt-3 text-sm text-muted-foreground">
-                          Creating your room plan and visual preview. This may take several minutes.
+                          Creating your checklist and visual preview. This may take several minutes.
                         </p>
                       )}
                       {flow.generateError && (

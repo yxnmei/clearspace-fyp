@@ -32,7 +32,7 @@ describe("ReorganiseItemSelector review screen", () => {
     const items = [makeItem({ item_id: "item_001" }), makeItem({ item_id: "item_002" })];
     render(<ReorganiseItemSelector {...baseProps({ items, selectedItemIds: ["item_001", "item_002"] })} />);
 
-    expect(screen.getByRole("heading", { name: /review items for your room plan/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /review items for your reorganisation plan/i })).toBeInTheDocument();
     expect(screen.getByText(/all 2 actionable detections are included by default/i)).toBeInTheDocument();
     expect(screen.getByText(/2 of 2 included/i)).toBeInTheDocument();
   });

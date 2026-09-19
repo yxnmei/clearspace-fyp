@@ -197,6 +197,91 @@ def test_env_booleans_are_rejected_as_strings_too(env):
             env(timeout=raw)
 
 
+# --- Reorganise action checklist bounds -----------------------------------
+#
+# The production checklist call is bounded by its own two settings, not
+# by the 210 s / 1536-token research-planner bounds above. Same validator
+# discipline, same reasons.
+
+
+def test_checklist_defaults_are_conservative_production_ceilings():
+    settings = Settings()
+    assert settings.reorganise_actions_llm_timeout_s == 90.0
+    assert settings.reorganise_actions_llm_num_predict == 640
+
+
+def test_checklist_bounds_are_distinct_from_the_research_planner_bounds():
+    settings = Settings()
+    names = set(type(settings).model_fields)
+    assert {"reorganise_actions_llm_timeout_s", "reorganise_actions_llm_num_predict"} <= names
+    assert settings.reorganise_actions_llm_timeout_s < settings.reorganise_llm_timeout_s
+    assert settings.reorganise_actions_llm_num_predict < settings.reorganise_llm_num_predict
+    # no separate checklist model name: the configured llm_model_name is the model
+    assert "reorganise_actions_llm_model_name" not in names
+
+
+@pytest.mark.parametrize("good", [1, 0.5, 45.0, 90.0, 300])
+def test_checklist_timeout_accepts_finite_positive_numbers(good):
+    assert Settings(reorganise_actions_llm_timeout_s=good).reorganise_actions_llm_timeout_s == good
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), True, None, "fast", "", []])
+def test_checklist_timeout_rejects_everything_unbounded_or_non_numeric(bad):
+    with pytest.raises(ValidationError):
+        Settings(reorganise_actions_llm_timeout_s=bad)
+
+
+@pytest.mark.parametrize("good", [1, 256, 640, 2048])
+def test_checklist_num_predict_accepts_positive_integers(good):
+    assert Settings(reorganise_actions_llm_num_predict=good).reorganise_actions_llm_num_predict == good
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, False, 640.0, None, "640.0", "1e3", "abc", ""])
+def test_checklist_num_predict_rejects_non_whole_or_non_positive_values(bad):
+    with pytest.raises(ValidationError):
+        Settings(reorganise_actions_llm_num_predict=bad)
+
+
+@pytest.fixture
+def checklist_env(monkeypatch):
+    def _load(timeout: str | None = None, num_predict: str | None = None) -> Settings:
+        monkeypatch.delenv("REORGANISE_ACTIONS_LLM_TIMEOUT_S", raising=False)
+        monkeypatch.delenv("REORGANISE_ACTIONS_LLM_NUM_PREDICT", raising=False)
+        if timeout is not None:
+            monkeypatch.setenv("REORGANISE_ACTIONS_LLM_TIMEOUT_S", timeout)
+        if num_predict is not None:
+            monkeypatch.setenv("REORGANISE_ACTIONS_LLM_NUM_PREDICT", num_predict)
+        return Settings(_env_file=None)
+
+    return _load
+
+
+def test_documented_checklist_env_example_values_load(checklist_env):
+    text = (_BACKEND_DIR / ".env.example").read_text(encoding="utf-8")
+    assert "REORGANISE_ACTIONS_LLM_TIMEOUT_S=90.0" in text
+    assert "REORGANISE_ACTIONS_LLM_NUM_PREDICT=640" in text
+    settings = checklist_env(timeout="90.0", num_predict="640")
+    assert settings.reorganise_actions_llm_timeout_s == 90.0
+    assert settings.reorganise_actions_llm_num_predict == 640
+
+
+@pytest.mark.parametrize("raw,expected", [("30", 30.0), (" 45.5 ", 45.5)])
+def test_checklist_timeout_env_string_is_parsed(checklist_env, raw, expected):
+    assert checklist_env(timeout=raw).reorganise_actions_llm_timeout_s == expected
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf", "abc", "", "true"])
+def test_checklist_timeout_env_string_keeps_every_rejection(checklist_env, raw):
+    with pytest.raises(ValidationError):
+        checklist_env(timeout=raw)
+
+
+@pytest.mark.parametrize("raw", ["640.0", "0", "-1", "abc", "", "true"])
+def test_checklist_num_predict_env_string_keeps_every_rejection(checklist_env, raw):
+    with pytest.raises(ValidationError):
+        checklist_env(num_predict=raw)
+
+
 # --- speech-to-text settings ---------------------------------------------
 #
 # These carry validators for the same reason the Reorganise bounds do:

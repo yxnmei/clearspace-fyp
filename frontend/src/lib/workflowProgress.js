@@ -59,13 +59,13 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
       if (hasAnalysis) return ["Analysis complete.", "Continue to Review to check the detected items.", false];
       return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
     case "review":
-      if (selectedItemCount === 0) return ["Nothing is included in the room plan.", "Include at least one actionable item to continue.", false];
+      if (selectedItemCount === 0) return ["Nothing is included in the reorganisation plan.", "Include at least one actionable item to continue.", false];
       return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Generate.", false];
     case "generate":
-      if (phase === "generating") return ["Planning the room and generating a preview…", "This can take several minutes, no action needed yet.", true];
-      if (phase === "result") return ["Your reorganisation is complete.", "Review the room plan and visual preview below.", false];
-      if (phase === "selecting" && uploadError == null) return ["Ready to generate your room plan.", "Press Generate room plan when you are ready.", false];
-      return ["Room-plan generation is ready.", "Return to Review if you want to change the included items.", false];
+      if (phase === "generating") return ["Writing your checklist and generating a preview…", "This can take several minutes, no action needed yet.", true];
+      if (phase === "result") return ["Your reorganisation is complete.", "Review your checklist, focus areas, storage suggestions and visual preview below.", false];
+      if (phase === "selecting" && uploadError == null) return ["Ready to generate your reorganisation plan.", "Press Generate reorganisation plan when you are ready.", false];
+      return ["Plan generation is ready.", "Return to Review if you want to change the included items.", false];
     default:
       return ["", "", false];
   }
@@ -131,10 +131,10 @@ export function deriveReorganiseProgress({
     selectedItemCount,
   });
   const finalStatusText = generateError && navigation.viewedStepId === "generate"
-    ? "The room-plan generation didn't finish."
+    ? "The reorganisation plan didn't finish."
     : statusText;
   const finalNextActionText = generateError && navigation.viewedStepId === "generate"
-    ? "Your selection is unchanged. Press Generate room plan to try again."
+    ? "Your selection is unchanged. Press Generate reorganisation plan to try again."
     : nextActionText;
 
   return {
@@ -184,11 +184,11 @@ function describeBothStep({
       if (hasConfirmation) return ["Your decisions are locked in.", "Continue to the final actions when you are ready.", false];
       return ["Ready to confirm.", "Press Confirm decisions when your review is ready.", false];
     case "reorganise":
-      if (generationStatus === "generating") return ["Planning the room and generating a preview…", "Listings remain independently available on this screen.", true];
+      if (generationStatus === "generating") return ["Writing your checklist and generating a preview…", "Listings remain independently available on this screen.", true];
       if (listingStatus === "generating") return ["Generating your listing drafts…", "Reorganisation remains independently available on this screen.", true];
-      if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "The room plan and other drafts are unaffected.", true];
+      if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "The reorganisation plan and other drafts are unaffected.", true];
       if (generationStatus === "error") return ["The reorganisation didn't finish.", "Your confirmed choices are unchanged. Try again below.", false];
-      if (generationStatus === "done") return ["Your reorganisation is complete.", "Your room plan, preview and listing actions are below.", false];
+      if (generationStatus === "done") return ["Your reorganisation is complete.", "Your checklist, preview and listing actions are below.", false];
       return ["Choose your next action.", "Generate listings and a reorganisation independently, in either order.", false];
     default:
       return ["", "", false];

@@ -89,8 +89,8 @@ export default function ReorganisePage() {
       <div className="mt-6">
         <div hidden={viewed !== "upload"}>
           <p className="mb-6 max-w-2xl text-muted-foreground">
-            Analyse a room, review which detected items belong in the plan, then generate a structured room plan
-            and an optional AI visual preview.
+            Analyse a room, review which detected items belong in the plan, then generate a prioritised
+            reorganisation checklist, the areas to focus on, storage suggestions and an optional AI visual preview.
           </p>
           <ReorganiseUploadForm phase={flow.phase} error={flow.uploadError} onSubmit={handleSubmit} />
         </div>
@@ -166,14 +166,15 @@ export default function ReorganisePage() {
                 />
               ) : (
                 <section className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6">
-                  <h2 className="text-lg font-semibold text-foreground">4. Generate room plan</h2>
+                  <h2 className="text-lg font-semibold text-foreground">4. Generate reorganisation plan</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Generate a plan using the {flow.selectedItemIds.length} item
+                    Generate a prioritised checklist, focus areas, storage suggestions and a visual preview using the{" "}
+                    {flow.selectedItemIds.length} item
                     {flow.selectedItemIds.length === 1 ? "" : "s"} you included during Review.
                   </p>
                   {health.status === "unavailable" && (
                     <p className="mt-3 rounded-control border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-                      The image service is offline, so the room plan can still complete without a visual preview.
+                      The image service is offline, so the plan can still complete without a visual preview.
                     </p>
                   )}
                   <Button
@@ -184,11 +185,11 @@ export default function ReorganisePage() {
                     aria-busy={flow.phase === "generating" || undefined}
                   >
                     {flow.phase === "generating" && <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />}
-                    {flow.phase === "generating" ? "Generating…" : flow.generateError ? "Try again" : "Generate room plan"}
+                    {flow.phase === "generating" ? "Generating…" : flow.generateError ? "Try again" : "Generate reorganisation plan"}
                   </Button>
                   {flow.phase === "generating" && (
                     <p role="status" className="mt-3 text-sm text-muted-foreground">
-                      Creating your room plan and visual preview. This may take several minutes.
+                      Creating your checklist and visual preview. This may take several minutes.
                     </p>
                   )}
                   {flow.generateError && (

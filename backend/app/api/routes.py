@@ -9,8 +9,8 @@ Endpoints mirror the v1 design (§3 step 6), kept because it worked:
   POST /confirm           -> deterministic user decision confirmation + confirmed Keep-item handoff
   POST /override     -> re-run LLM reasoning for one item after user edits its label
   POST /transcribe    -> Whisper transcript for user review before it affects context
-  POST /generate        -> R2 zone plan + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
-  POST /generate/confirmed -> server-derived Keep-item selection + R2/R3 generation (Both, R6)
+  POST /generate        -> deterministic action checklist (no LLM call) + focus areas + storage suggestions + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
+  POST /generate/confirmed -> server-derived Keep-item selection + the same checklist/areas/suggestions/R3 generation (Both, R6)
   GET  /image-gen/health -> §5: surfaced proactively in the UI, not just on failure
 
 /upload's declutter path is the first real vertical slice: it composes
@@ -41,13 +41,14 @@ BothUploadResponse.
 
 /generate (R4) is a thin route wrapper around
 app.services.reorganise_pipeline_service.run_reorganise_pipeline() — all
-selection/image/hash validation, R2 planning, and the single R3 image-
-generation call happen there, never reimplemented here. This route's own
-job is exactly three things: (1) parse/validate the JSON request shape,
-(2) resolve the two model-boundary dependencies (the reorganise LLM
-planner via a lazy two-level loader, the image generator via a
-lightweight one-level provider — see their own docstrings below for why
-they differ), (3) convert the pipeline's raw GenerationResult.image_bytes
+selection/image/hash validation, the deterministic focus areas / storage
+suggestions / image prompt, the deterministic action checklist (no
+model call, provenance "deterministic_direct"), and the single R3
+image-generation call happen there, never reimplemented here. This
+route's own job is exactly three things: (1) parse/validate the JSON
+request shape, (2) resolve the one model-boundary dependency (the image
+generator, via a lightweight one-level provider — see its own docstring
+below), (3) convert the pipeline's raw GenerationResult.image_bytes
 to base64 for the browser. Base64 conversion happens ONLY here — the
 service layer never imports base64 for this purpose and never touches
 fastapi at all, so it stays reachable from a future evaluation script
@@ -167,7 +168,9 @@ from app.models.whisper_stt import (
     resolve_model_name,
     validate_transcript_result,
 )
-from app.services.reorganise_service import ReorganisePlanningResult
+from app.core.reorganise_focus_areas import FocusArea
+from app.core.reorganise_storage import StorageSuggestion
+from app.services.reorganise_actions_service import ReorganiseActionPlan
 from app.services.transcription_service import (
     TranscriptionBusyError,
     transcribe_audio,
@@ -706,21 +709,26 @@ def transcribe(
 
 # --- /generate (R4) -------------------------------------------------------
 
-# There is deliberately NO Reorganise planner dependency here. Both
-# generation routes pass llm_planner=None and get the deterministic plan
-# directly (provenance "deterministic_direct") — see
-# app/services/reorganise_service.py and backend/evaluation/README.md.
-# The former two-level lazy loader existed solely to defer the ollama
-# import for this path; with no planner call left to make, keeping it
-# would be dead route plumbing. The LLM planner itself is untouched and
-# still reachable for research by passing one to run_reorganise_pipeline().
+# There is deliberately NO checklist-model dependency here. Both
+# generation routes pass action_generator=None and get the deterministic
+# checklist directly (provenance "deterministic_direct", zero model
+# calls). The two authorised real phi4-mini checklist runs (prompts
+# reorganise-actions-v1 and -v2, 2026-09-17) both passed structural
+# validation and both failed human review, so no checklist model is on
+# the request path; see backend/evaluation/README.md. The checklist model
+# boundary (app/models/reorganise_actions_llm.py) and the one-call
+# service path are retained as research code, reachable only by passing a
+# generator to run_reorganise_pipeline() explicitly. Neither this module
+# nor app/services/both_service.py imports or resolves it, and the
+# research zone planner (app/models/reorganise_llm.py) is not on this
+# path either.
 
 
 def get_image_generator_provider() -> ImageGenerator:
     """FastAPI dependency resolving DIRECTLY to the real generate()
     callable — a ONE-level provider, unlike get_llm_classifier_provider's
-    two-level loader. app.models.image_gen_client imports no heavy model
-    library (no
+    two-level loader.
+    app.models.image_gen_client imports no heavy model library (no
     torch/clip/ollama/groundingdino — see that module's own
     test_module_does_not_import_model_libraries), so there is no
     import-cost reason to defer it behind a loader. This seam exists
@@ -875,22 +883,30 @@ class GeneratedImagePayload(BaseModel):
 class GenerateResponse(BaseModel):
     """API-facing /generate response — mirrors the internal
     ReorganisePipelineResult (app/services/reorganise_pipeline_service.py)
-    field-for-field except that `generation` (raw bytes) becomes `image`
-    (base64), the browser-consumable shape. `planning` is the COMPLETE,
-    unmodified ReorganisePlanningResult — attempts/provenance/issues/
-    model_name/prompt_version/stage_timings all remain visible, never
-    dropped to just the plan itself."""
+    except that `generation` (raw bytes) becomes `image` (base64), the
+    browser-consumable shape, and the internal server-ordered
+    selected_item_ids is not echoed (the client already holds its own
+    selection and re-derives the confirmed Keep set for Both).
+    `action_plan` is the COMPLETE ReorganiseActionPlan — provenance,
+    attempts, model_name, prompt_version, duration and issues all remain
+    visible, never dropped to just the actions. `focus_areas` and
+    `storage_suggestions` are the pipeline's deterministic derivations,
+    passed through unchanged; `image_prompt` is the deterministic prompt
+    actually sent to the image generator."""
 
     run_id: NonEmptyStr
-    planning: ReorganisePlanningResult
+    action_plan: ReorganiseActionPlan
+    focus_areas: list[FocusArea]
+    storage_suggestions: list[StorageSuggestion]
+    image_prompt: NonEmptyStr
     image_status: Literal["generated", "unavailable"]
     image: GeneratedImagePayload | None
     image_unavailable_reason: ImageUnavailableReason | None
 
     @model_validator(mode="after")
-    def _check_run_id_matches_planning(self) -> "GenerateResponse":
-        if self.run_id != self.planning.run_id:
-            raise ValueError("run_id must match planning.run_id")
+    def _check_run_id_matches_action_plan(self) -> "GenerateResponse":
+        if self.run_id != self.action_plan.run_id:
+            raise ValueError("run_id must match action_plan.run_id")
         return self
 
     @model_validator(mode="after")
@@ -907,7 +923,10 @@ class GenerateResponse(BaseModel):
     def from_pipeline_result(cls, result: ReorganisePipelineResult) -> "GenerateResponse":
         return cls(
             run_id=result.run_id,
-            planning=result.planning,
+            action_plan=result.action_plan,
+            focus_areas=result.focus_areas,
+            storage_suggestions=result.storage_suggestions,
+            image_prompt=result.image_prompt,
             image_status=result.image_status,
             image=GeneratedImagePayload.from_generation_result(result.generation)
             if result.generation is not None
@@ -924,12 +943,14 @@ def generate_reorganisation(
     """
     Synchronous handler, deliberately — image_generator blocks on a real
     HTTP POST to Colab, and FastAPI's threadpool keeps that off the event
-    loop with no manual thread management here. Planning itself no longer
-    blocks on anything: llm_planner=None below means the deterministic
-    plan is built in-process, with no Ollama call.
+    loop with no manual thread management here. The checklist blocks on
+    nothing: action_generator=None below means it is built in-process,
+    deterministically, with no Ollama call.
 
-    All selection/image/hash validation, planning, and the single R3
-    image-generation call happen inside run_reorganise_pipeline() (see
+    All selection/image/hash validation, the deterministic derivations
+    (checklist, focus areas, storage suggestions, image prompt) and the
+    single R3 image-generation call happen inside
+    run_reorganise_pipeline() (see
     app/services/reorganise_pipeline_service.py) — this handler's only
     job is request parsing, dependency resolution, base64<->bytes
     conversion, and error-type -> status-code translation, matching this
@@ -946,7 +967,7 @@ def generate_reorganisation(
             image_media_type=request.image_media_type,
             expected_input_image_sha256=request.input_image_sha256,
             user_context=request.user_context,
-            llm_planner=None,  # explicit production choice — deterministic_direct, no Ollama call
+            action_generator=None,  # explicit production choice — deterministic_direct, no model call
             image_generator=image_generator,
         )
     except ReorganisePipelineInputError as exc:
@@ -1032,9 +1053,10 @@ class ConfirmedGenerateRequest(BaseModel):
 
 class ConfirmedGenerateResponse(GenerateResponse):
     """POST /generate/confirmed's response — EXTENDS GenerateResponse
-    (Direct Reorganise's exact generation shape: run_id/planning/
-    image_status/image/image_unavailable_reason) rather than redefining
-    it: GenerateResponse's own `_check_run_id_matches_planning`/
+    (Direct Reorganise's exact generation shape: run_id/action_plan/
+    focus_areas/storage_suggestions/image_prompt/image_status/image/
+    image_unavailable_reason) rather than redefining it:
+    GenerateResponse's own `_check_run_id_matches_action_plan`/
     `_check_image_consistency` model-validators are inherited unchanged,
     not redefined here. Adds only the one new field — `confirmation`, the
     server-derived, authoritative ConfirmationResult
@@ -1055,7 +1077,10 @@ class ConfirmedGenerateResponse(GenerateResponse):
         return cls(
             run_id=result.run_id,
             confirmation=result.confirmation,
-            planning=result.pipeline.planning,
+            action_plan=result.pipeline.action_plan,
+            focus_areas=result.pipeline.focus_areas,
+            storage_suggestions=result.pipeline.storage_suggestions,
+            image_prompt=result.pipeline.image_prompt,
             image_status=result.pipeline.image_status,
             image=GeneratedImagePayload.from_generation_result(result.pipeline.generation)
             if result.pipeline.generation is not None
@@ -1072,15 +1097,14 @@ def generate_confirmed_reorganisation(
     """
     Synchronous handler, deliberately — same reasoning as /generate.
 
-    No planner dependency: run_both_generation() passes llm_planner=None
-    into run_reorganise_pipeline(), so Both's planning is the
-    deterministic direct build with no Ollama call. The former
-    pass-the-unresolved-loader arrangement existed to keep an empty-Keep
-    request from triggering the ollama import; with no import left to
-    trigger, that protection is now structural rather than conditional.
+    No checklist-model dependency: run_both_generation() passes
+    action_generator=None into run_reorganise_pipeline(), so Both's
+    checklist is the same deterministic, zero-call build Direct
+    Reorganise gets. An empty-Keep request still short-circuits inside
+    run_both_generation() before the pipeline or image_generator run.
 
-    All confirmation-derivation, selection/image/hash validation,
-    planning, and the single R3 image-generation call happen inside
+    All confirmation-derivation, selection/image/hash validation, the
+    checklist and the single R3 image-generation call happen inside
     run_both_generation() (see app/services/both_service.py) — this
     handler's only job is request parsing, dependency resolution,
     base64<->bytes conversion, and error-type -> status-code translation,

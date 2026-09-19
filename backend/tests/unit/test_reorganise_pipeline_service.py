@@ -1,9 +1,9 @@
 """
 Unit tests for app/services/reorganise_pipeline_service.run_reorganise_pipeline()
 — fake-backed, no HTTP, no FastAPI, no real Ollama/Colab call anywhere in
-this file. Fakes satisfy the ReorganisePlanner/ImageGenerator Protocols
-structurally, matching this codebase's existing DI-testing convention
-(see tests/unit/test_reorganise_service.py).
+this file. Fakes satisfy the ReorganiseActionGenerator/ImageGenerator
+Protocols structurally, matching this codebase's existing DI-testing
+convention.
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ import io
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
 
-from app.core.reorganise_schemas import PlanProvenance
+from app.core.reorganise_actions import build_deterministic_checklist
+from app.core.reorganise_focus_areas import FocusArea
+from app.core.reorganise_storage import StorageSuggestion
 from app.core.schemas import AnalysisResult, BoundingBox, DetectedItem, SceneClassification
 from app.models.image_gen_client import (
     IMAGE_GEN_API_VERSION,
@@ -26,8 +29,10 @@ from app.models.image_gen_client import (
     ImageGenTimeoutError,
     ImageGenUnavailableError,
 )
+from app.services.reorganise_actions_service import ActionPlanProvenance
 from app.services.reorganise_pipeline_service import (
     ReorganisePipelineInputError,
+    ReorganisePipelineResult,
     run_reorganise_pipeline,
 )
 
@@ -46,7 +51,7 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _detected_item(item_id: str, index: int, label: str = "lamp") -> DetectedItem:
+def _detected_item(item_id: str, index: int, label: str = "lamp", position: str = "upper-left") -> DetectedItem:
     return DetectedItem(
         item_id=item_id,
         source_detection_index=index,
@@ -54,14 +59,20 @@ def _detected_item(item_id: str, index: int, label: str = "lamp") -> DetectedIte
         clean_label=label,
         box=BoundingBox(x1=0.05 * index, y1=0.1, x2=0.05 * index + 0.04, y2=0.2),
         confidence=0.9,
-        position="upper-left",
+        position=position,
         relative_size="small",
     )
 
 
-def _analysis_result(run_id: str, item_ids: list[str], labels: list[str] | None = None) -> AnalysisResult:
+def _analysis_result(
+    run_id: str, item_ids: list[str], labels: list[str] | None = None, positions: list[str] | None = None
+) -> AnalysisResult:
     labels = labels or ["lamp"] * len(item_ids)
-    items = [_detected_item(item_id, i, label) for i, (item_id, label) in enumerate(zip(item_ids, labels))]
+    positions = positions or ["upper-left"] * len(item_ids)
+    items = [
+        _detected_item(item_id, i, label, position)
+        for i, (item_id, label, position) in enumerate(zip(item_ids, labels, positions))
+    ]
     return AnalysisResult(
         run_id=run_id,
         scene=SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9}),
@@ -71,16 +82,17 @@ def _analysis_result(run_id: str, item_ids: list[str], labels: list[str] | None 
     )
 
 
-def _valid_plan_json(item_ids: list[str]) -> dict:
-    return {
-        "zones": [{"zone_name": "Keep in place", "item_ids": item_ids, "instruction": "keep as is"}],
-        "image_prompt": "a tidy bedroom",
-        "negative_prompt": None,
-    }
+VALID_ACTIONS = {
+    "actions": [
+        {"priority": 1, "title": "Clear the desk", "instruction": "Group the lamps together and clear around them."},
+    ]
+}
 
 
 class FakeLLMResult:
-    def __init__(self, parsed_json, is_valid_json=True, was_repaired=False, model_name="phi4-mini", prompt_version="v1"):
+    def __init__(
+        self, parsed_json, is_valid_json=True, was_repaired=False, model_name="phi4-mini", prompt_version="reorganise-actions-v1"
+    ):
         self.raw_text = "fake"
         self.parsed_json = parsed_json
         self.is_valid_json = is_valid_json
@@ -89,28 +101,24 @@ class FakeLLMResult:
         self.prompt_version = prompt_version
 
 
-class FakePlanner:
-    """Matches app.services.reorganise_service.ReorganisePlanner's
+class FakeActionGenerator:
+    """Matches app.services.reorganise_actions_service.ReorganiseActionGenerator's
     Protocol shape exactly. Records every call for assertion."""
 
-    def __init__(self, result=None):
+    def __init__(self, result=None, exception=None):
         self.calls: list[dict] = []
         self._result = result
+        self._exception = exception
 
-    def __call__(self, run_id, selected_items, scene_label, user_context, validation_feedback=None, model_name=None):
+    def __call__(self, run_id, selected_items, scene_label, user_context, model_name=None):
         self.calls.append(
-            dict(
-                run_id=run_id,
-                selected_items=selected_items,
-                scene_label=scene_label,
-                user_context=user_context,
-                validation_feedback=validation_feedback,
-                model_name=model_name,
-            )
+            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, model_name=model_name)
         )
+        if self._exception is not None:
+            raise self._exception
         if self._result is not None:
             return self._result
-        return FakeLLMResult(_valid_plan_json([item.item_id for item in selected_items]))
+        return FakeLLMResult(VALID_ACTIONS)
 
 
 class FakeGenerator:
@@ -183,7 +191,7 @@ def _base_kwargs(**overrides) -> dict:
         image_media_type="image/png",
         expected_input_image_sha256=_sha256(PNG_BYTES),
         user_context=None,
-        llm_planner=FakePlanner(),
+        action_generator=FakeActionGenerator(),
         image_generator=FakeGenerator(),
     )
     kwargs.update(overrides)
@@ -193,14 +201,14 @@ def _base_kwargs(**overrides) -> dict:
 # ======================================================= success path ====
 
 
-def test_successful_generation_calls_generator_exactly_once():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=planner, image_generator=generator))
+def test_successful_generation_calls_each_boundary_exactly_once():
+    generator = FakeActionGenerator()
+    image_generator = FakeGenerator()
+    result = run_reorganise_pipeline(**_base_kwargs(action_generator=generator, image_generator=image_generator))
 
     assert result.image_status == "generated"
+    assert len(image_generator.calls) == 1
     assert len(generator.calls) == 1
-    assert len(planner.calls) == 1
 
 
 def test_pipeline_signature_has_no_health_checker_parameter():
@@ -218,11 +226,28 @@ def test_original_image_bytes_reach_generator_unchanged():
     assert generator.calls[0]["image_media_type"] == "image/png"
 
 
-def test_plan_prompts_reach_generator_unchanged():
+def test_the_deterministic_image_prompt_reaches_the_generator_and_the_result():
     generator = FakeGenerator()
-    run_reorganise_pipeline(**_base_kwargs(image_generator=generator))
-    assert generator.calls[0]["prompt"] == "a tidy bedroom"
+    result = run_reorganise_pipeline(**_base_kwargs(image_generator=generator, user_context="i want a neat room"))
+    prompt = generator.calls[0]["prompt"]
+    assert prompt == result.image_prompt
+    assert prompt.startswith("A tidy, well-organised bedroom.")
+    assert "- lamp (small, upper-left)" in prompt
+    assert "i want a neat room" in prompt
     assert generator.calls[0]["negative_prompt"] is None
+
+
+def test_the_checklist_model_never_writes_the_image_prompt():
+    """The generator is given a checklist that mentions a phrase; that
+    phrase must never reach the image prompt, which is deterministic."""
+    marker = "ZEBRA STRIPED WALLPAPER"
+    actions = {"actions": [{"priority": 1, "title": "Paint", "instruction": f"Hang the {marker} behind the lamp."}]}
+    image_generator = FakeGenerator()
+    result = run_reorganise_pipeline(
+        **_base_kwargs(action_generator=FakeActionGenerator(FakeLLMResult(actions)), image_generator=image_generator)
+    )
+    assert marker in result.action_plan.actions[0].instruction
+    assert marker not in image_generator.calls[0]["prompt"]
 
 
 def test_configured_defaults_used_no_tuning_params_passed():
@@ -239,49 +264,241 @@ def test_successful_result_includes_api_version():
     assert result.generation.api_version == IMAGE_GEN_API_VERSION
 
 
-def test_selected_items_reach_planner_in_analysis_order_not_request_order():
+def test_selected_items_reach_the_generator_in_analysis_order_not_request_order():
     run_id = "run1"
     item_ids = ["item_001", "item_002", "item_003"]
     analysis = _analysis_result(run_id, item_ids)
-    planner = FakePlanner()
-    # Deliberately reversed/shuffled request order.
+    generator = FakeActionGenerator()
     run_reorganise_pipeline(
         **_base_kwargs(
             run_id=run_id,
             analysis=analysis,
             selected_item_ids=["item_003", "item_001", "item_002"],
-            llm_planner=planner,
+            action_generator=generator,
         )
     )
-    got_ids = [item.item_id for item in planner.calls[0]["selected_items"]]
+    got_ids = [item.item_id for item in generator.calls[0]["selected_items"]]
     assert got_ids == ["item_001", "item_002", "item_003"]  # analysis.items' own order
 
 
-def test_effective_label_and_spatial_fields_reach_planner():
-    run_id = "run1"
-    analysis = _analysis_result(run_id, ["item_001"], labels=["necklace"])
-    planner = FakePlanner()
-    run_reorganise_pipeline(**_base_kwargs(run_id=run_id, analysis=analysis, selected_item_ids=["item_001"], llm_planner=planner))
-    selected = planner.calls[0]["selected_items"][0]
-    assert selected.effective_label == "necklace"
-    assert selected.position == "upper-left"
-    assert selected.relative_size == "small"
+def test_effective_label_scene_and_context_reach_the_generator():
+    analysis = _analysis_result("run1", ["item_001"], labels=["necklace"])
+    generator = FakeActionGenerator()
+    run_reorganise_pipeline(
+        **_base_kwargs(analysis=analysis, selected_item_ids=["item_001"], action_generator=generator, user_context="calm")
+    )
+    call = generator.calls[0]
+    assert call["selected_items"][0].effective_label == "necklace"
+    assert call["scene_label"] == "bedroom"
+    assert call["user_context"] == "calm"
 
 
-def test_complete_planning_result_reaches_response_unchanged():
+def test_complete_action_plan_reaches_the_result_unchanged():
     result = run_reorganise_pipeline(**_base_kwargs())
-    assert result.planning.attempts == 1
-    assert result.planning.provenance.value == "raw_valid"
-    assert result.planning.issues == []
-    assert result.planning.model_name == "phi4-mini"
-    assert result.planning.prompt_version == "v1"
-    assert len(result.planning.stage_timings) == 1
-    assert result.planning.stage_timings[0].stage == "reorganise_plan"
+    plan = result.action_plan
+    assert plan.provenance == ActionPlanProvenance.LLM_GENERATED
+    assert plan.attempts == 1
+    assert plan.issues == []
+    assert plan.model_name == "phi4-mini"
+    assert plan.prompt_version == "reorganise-actions-v1"
+    assert plan.was_repaired is False
+    assert plan.duration_ms >= 0
+    assert [a.title for a in plan.actions] == ["Clear the desk"]
 
 
-def test_result_run_id_matches_planning_run_id():
+def test_result_run_id_matches_action_plan_run_id():
     result = run_reorganise_pipeline(**_base_kwargs())
-    assert result.run_id == result.planning.run_id == "run1"
+    assert result.run_id == result.action_plan.run_id == "run1"
+    assert result.selected_item_ids == ["item_001", "item_002"]
+
+
+# ================================== checklist fallback inside the pipeline ====
+
+
+def test_a_failing_checklist_model_falls_back_after_exactly_one_call_and_still_generates_an_image():
+    generator = FakeActionGenerator(exception=RuntimeError("ollama unreachable"))
+    image_generator = FakeGenerator()
+    result = run_reorganise_pipeline(**_base_kwargs(action_generator=generator, image_generator=image_generator))
+
+    assert len(generator.calls) == 1
+    assert result.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_FALLBACK
+    assert result.action_plan.attempts == 1
+    assert [i.kind for i in result.action_plan.issues] == ["call_failed"]
+    assert result.action_plan.model_name is None
+    assert result.image_status == "generated"
+    assert len(image_generator.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "bad,kind",
+    [
+        (FakeLLMResult(None, is_valid_json=False), "invalid_json"),
+        (FakeLLMResult({"zones": [{"zone_name": "x", "item_ids": ["item_001"], "instruction": "y"}]}), "invalid_actions"),
+        (FakeLLMResult({"actions": [{"priority": 1, "title": "Shop", "instruction": "Buy a new shelf for the lamps."}]}), "invalid_actions"),
+    ],
+    ids=["invalid_json", "zone_plan_shape", "forbidden_content"],
+)
+def test_invalid_checklist_output_reaches_the_fallback_without_a_second_call(bad, kind):
+    generator = FakeActionGenerator(bad)
+    result = run_reorganise_pipeline(**_base_kwargs(action_generator=generator))
+
+    assert len(generator.calls) == 1
+    assert result.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_FALLBACK
+    assert [i.kind for i in result.action_plan.issues] == [kind]
+    assert result.action_plan.actions == build_deterministic_checklist(
+        [item for item in _base_kwargs()["analysis"].items], "bedroom"
+    )
+
+
+def test_too_few_actions_for_the_selection_falls_back_after_one_call_and_still_generates_an_image():
+    item_ids = ["item_001", "item_002", "item_003"]
+    analysis = _analysis_result("run1", item_ids)
+    generator = FakeActionGenerator(FakeLLMResult(VALID_ACTIONS))  # one action for three items
+    image_generator = FakeGenerator()
+
+    result = run_reorganise_pipeline(
+        **_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids), action_generator=generator, image_generator=image_generator)
+    )
+
+    assert len(generator.calls) == 1
+    assert result.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_FALLBACK
+    assert [i.kind for i in result.action_plan.issues] == ["invalid_actions"]
+    assert result.image_status == "generated"
+    assert len(image_generator.calls) == 1
+
+
+def test_the_visual_is_generated_regardless_of_checklist_provenance():
+    for generator in (FakeActionGenerator(), FakeActionGenerator(exception=RuntimeError("x")), None):
+        image_generator = FakeGenerator()
+        result = run_reorganise_pipeline(**_base_kwargs(action_generator=generator, image_generator=image_generator))
+        assert result.image_status == "generated"
+        assert len(image_generator.calls) == 1
+        assert image_generator.calls[0]["prompt"] == result.image_prompt
+
+
+# ============================================ focus areas and suggestions ====
+
+
+def test_focus_areas_are_derived_from_positions_count_sorted_and_capped():
+    item_ids = [f"item_{n:03d}" for n in range(1, 8)]
+    positions = ["upper-left", "left", "lower-left", "center", "right", "upper-right", "odd"]
+    analysis = _analysis_result("run1", item_ids, positions=positions)
+    result = run_reorganise_pipeline(**_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids)))
+
+    assert [(area.area_id, area.item_ids) for area in result.focus_areas] == [
+        ("left", ["item_001", "item_002", "item_003"]),
+        ("right", ["item_005", "item_006"]),
+        ("centre", ["item_004"]),
+    ]
+    assert len(result.focus_areas) <= 3
+
+
+def test_focus_areas_and_suggestions_cover_only_the_selected_items():
+    item_ids = ["item_001", "item_002", "item_003", "item_004"]
+    analysis = _analysis_result("run1", item_ids, labels=["cable", "charger", "cable", "lamp"], positions=["left"] * 4)
+    result = run_reorganise_pipeline(**_base_kwargs(analysis=analysis, selected_item_ids=["item_001", "item_002", "item_004"]))
+
+    shown = {item_id for area in result.focus_areas for item_id in area.item_ids}
+    assert shown == {"item_001", "item_002", "item_004"}
+    assert [s.related_item_ids for s in result.storage_suggestions] == [["item_001", "item_002"]]
+
+
+def test_storage_suggestions_are_derived_and_bounded():
+    labels = ["cable", "charger", "book", "magazine", "lamp", "toy", "toy"]
+    item_ids = [f"item_{n:03d}" for n in range(1, len(labels) + 1)]
+    analysis = _analysis_result("run1", item_ids, labels=labels)
+    result = run_reorganise_pipeline(**_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids)))
+
+    names = [s.name for s in result.storage_suggestions]
+    assert names == [
+        "Cable or technology-accessory organiser",
+        "Toy or small-item container",
+        "Bookends or a compact shelf",
+    ]
+    assert len(names) == len(set(names)) <= 3
+
+
+def test_storage_suggestions_are_empty_without_evidence():
+    result = run_reorganise_pipeline(**_base_kwargs())  # two lamps
+    assert result.storage_suggestions == []
+
+
+def test_pipeline_result_rejects_focus_areas_or_suggestions_naming_unselected_items():
+    base = run_reorganise_pipeline(**_base_kwargs())
+    fields = base.model_dump()
+    fields["generation"] = base.generation
+
+    with pytest.raises(ValidationError, match="unselected"):
+        ReorganisePipelineResult(**{**fields, "focus_areas": [FocusArea(area_id="left", label="Left side", item_ids=["item_999"])]})
+    with pytest.raises(ValidationError, match="unselected"):
+        ReorganisePipelineResult(
+            **{**fields, "storage_suggestions": [StorageSuggestion(name="Tray", reason="because", related_item_ids=["item_999"])]}
+        )
+    with pytest.raises(ValidationError, match="more than one focus area"):
+        ReorganisePipelineResult(
+            **{
+                **fields,
+                "focus_areas": [
+                    FocusArea(area_id="left", label="Left side", item_ids=["item_001"]),
+                    FocusArea(area_id="right", label="Right side", item_ids=["item_001"]),
+                ],
+            }
+        )
+    with pytest.raises(ValidationError, match="highest first"):
+        ReorganisePipelineResult(
+            **{
+                **fields,
+                "focus_areas": [
+                    FocusArea(area_id="right", label="Right side", item_ids=["item_002"]),
+                    FocusArea(area_id="left", label="Left side", item_ids=["item_001", "item_003"]),
+                ],
+                "selected_item_ids": ["item_001", "item_002", "item_003"],
+            }
+        )
+    with pytest.raises(ValidationError, match="unique"):
+        ReorganisePipelineResult(
+            **{
+                **fields,
+                "storage_suggestions": [
+                    StorageSuggestion(name="Tray", reason="a", related_item_ids=["item_001"]),
+                    StorageSuggestion(name="tray", reason="b", related_item_ids=["item_002"]),
+                ],
+            }
+        )
+
+
+def test_pipeline_survives_very_long_corrected_labels_and_still_generates_an_image():
+    """Two long corrected labels ending in a matching keyword must never
+    push a suggestion reason or a fallback instruction past its schema
+    limit and abort the pipeline before image generation."""
+    long_label = ("a very long user supplied corrected label " * 10).strip()
+    item_ids = ["item_001", "item_002", "item_003"]
+    analysis = _analysis_result("run1", item_ids)
+    analysis = analysis.model_copy(
+        update={
+            "items": [
+                analysis.items[0].model_copy(update={"corrected_label": long_label + " book"}),
+                analysis.items[1].model_copy(update={"corrected_label": long_label + " magazine"}),
+                analysis.items[2].model_copy(update={"corrected_label": long_label + " book"}),
+            ]
+        }
+    )
+    generator = FakeGenerator()
+
+    result = run_reorganise_pipeline(
+        **_base_kwargs(
+            analysis=analysis,
+            selected_item_ids=list(item_ids),
+            action_generator=FakeActionGenerator(exception=RuntimeError("x")),  # force the fallback checklist too
+            image_generator=generator,
+        )
+    )
+
+    assert result.image_status == "generated"
+    assert len(generator.calls) == 1
+    assert [s.name for s in result.storage_suggestions] == ["Bookends or a compact shelf"]
+    assert all(len(s.reason) <= 300 for s in result.storage_suggestions)
+    assert all(len(a.instruction) <= 300 and len(a.title) <= 80 for a in result.action_plan.actions)
 
 
 # ================================================== image-gen failures ====
@@ -297,29 +514,25 @@ def test_result_run_id_matches_planning_run_id():
         (ImageGenResponseError("malformed"), "invalid_response"),
     ],
 )
-def test_typed_image_gen_failure_preserves_plan_and_maps_reason(exception, expected_reason):
-    planner = FakePlanner()
-    generator = FakeGenerator(exception=exception)
-    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=planner, image_generator=generator))
+def test_typed_image_gen_failure_preserves_checklist_areas_and_suggestions(exception, expected_reason):
+    generator = FakeActionGenerator()
+    labels = ["cable", "charger"]
+    analysis = _analysis_result("run1", ["item_001", "item_002"], labels=labels)
+    image_generator = FakeGenerator(exception=exception)
+    result = run_reorganise_pipeline(
+        **_base_kwargs(analysis=analysis, action_generator=generator, image_generator=image_generator)
+    )
 
     assert result.image_status == "unavailable"
     assert result.image_unavailable_reason == expected_reason
     assert result.generation is None
-    # The plan itself is real and complete — never discarded on image failure.
-    assert result.planning.plan is not None
-    assert result.planning.plan.zones
+    # Everything else is real and complete, never discarded on image failure.
+    assert result.action_plan.actions
+    assert result.focus_areas
+    assert [s.name for s in result.storage_suggestions] == ["Cable or technology-accessory organiser"]
+    assert result.image_prompt
+    assert len(image_generator.calls) == 1
     assert len(generator.calls) == 1
-    assert len(planner.calls) == 1
-
-
-def test_image_gen_unavailable_error_preserves_completed_plan():
-    generator = FakeGenerator(exception=ImageGenUnavailableError("service unreachable"))
-    result = run_reorganise_pipeline(**_base_kwargs(image_generator=generator))
-    assert result.image_status == "unavailable"
-    assert result.image_unavailable_reason == "service_unreachable"
-    assert result.planning.plan is not None
-    ids_in_plan = {iid for zone in result.planning.plan.zones for iid in zone.item_ids}
-    assert ids_in_plan == {"item_001", "item_002"}
 
 
 def test_unknown_generator_exception_propagates_uncaught():
@@ -331,115 +544,51 @@ def test_unknown_generator_exception_propagates_uncaught():
 # ============================================== selection validation ====
 
 
-def test_empty_selection_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
+def _assert_rejected_before_any_call(**overrides):
+    generator = FakeActionGenerator()
+    image_generator = FakeGenerator()
     with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(**_base_kwargs(selected_item_ids=[], llm_planner=planner, image_generator=generator))
-    assert planner.calls == []
+        run_reorganise_pipeline(**_base_kwargs(action_generator=generator, image_generator=image_generator, **overrides))
     assert generator.calls == []
+    assert image_generator.calls == []
+
+
+def test_empty_selection_rejected_before_planning_and_generation():
+    _assert_rejected_before_any_call(selected_item_ids=[])
 
 
 def test_duplicate_selected_ids_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(selected_item_ids=["item_001", "item_001"], llm_planner=planner, image_generator=generator)
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(selected_item_ids=["item_001", "item_001"])
 
 
 def test_unknown_selected_id_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(selected_item_ids=["item_999"], llm_planner=planner, image_generator=generator)
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(selected_item_ids=["item_999"])
 
 
 def test_selection_never_silently_deduplicated():
-    # A duplicate must raise, never silently collapse to one item.
     with pytest.raises(ReorganisePipelineInputError):
         run_reorganise_pipeline(**_base_kwargs(selected_item_ids=["item_001", "item_002", "item_001"]))
 
 
 def test_run_id_mismatch_against_analysis_rejected():
-    run_id = "run1"
-    analysis = _analysis_result("a-different-run", ["item_001"])
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                run_id=run_id,
-                analysis=analysis,
-                selected_item_ids=["item_001"],
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(run_id="run1", analysis=_analysis_result("a-different-run", ["item_001"]), selected_item_ids=["item_001"])
 
 
 # ================================================== image validation ====
 
 
 def test_non_image_bytes_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
     bad_bytes = b"this is not an image at all"
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                image_bytes=bad_bytes,
-                expected_input_image_sha256=_sha256(bad_bytes),
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(image_bytes=bad_bytes, expected_input_image_sha256=_sha256(bad_bytes))
 
 
 def test_media_type_mismatch_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    # Real PNG bytes, claimed as JPEG.
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                image_bytes=PNG_BYTES,
-                image_media_type="image/jpeg",
-                expected_input_image_sha256=_sha256(PNG_BYTES),
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(image_bytes=PNG_BYTES, image_media_type="image/jpeg", expected_input_image_sha256=_sha256(PNG_BYTES))
 
 
 def test_truncated_image_rejected_before_planning_and_generation():
-    planner = FakePlanner()
-    generator = FakeGenerator()
     truncated = PNG_BYTES[: len(PNG_BYTES) // 2]
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                image_bytes=truncated,
-                expected_input_image_sha256=_sha256(truncated),
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(image_bytes=truncated, expected_input_image_sha256=_sha256(truncated))
 
 
 # =============================================== hash correlation ====
@@ -451,30 +600,11 @@ def test_same_image_passes_generation_validation():
 
 
 def test_different_image_with_old_hash_rejected_before_planning():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                image_bytes=OTHER_PNG_BYTES,
-                expected_input_image_sha256=_sha256(PNG_BYTES),  # hash of a DIFFERENT image
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(image_bytes=OTHER_PNG_BYTES, expected_input_image_sha256=_sha256(PNG_BYTES))
 
 
 def test_malformed_hash_format_rejected_before_planning():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(expected_input_image_sha256="not-a-real-hash", llm_planner=planner, image_generator=generator)
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+    _assert_rejected_before_any_call(expected_input_image_sha256="not-a-real-hash")
 
 
 @pytest.mark.parametrize("bad_hash", ["", "F" * 64, "0" * 63, "0" * 65, "not-hex-at-all"])
@@ -483,27 +613,14 @@ def test_various_malformed_hash_formats_rejected(bad_hash):
         run_reorganise_pipeline(**_base_kwargs(expected_input_image_sha256=bad_hash))
 
 
-def test_hash_mismatch_never_invokes_planner_or_generator():
-    planner = FakePlanner()
-    generator = FakeGenerator()
-    with pytest.raises(ReorganisePipelineInputError):
-        run_reorganise_pipeline(
-            **_base_kwargs(
-                expected_input_image_sha256=_sha256(OTHER_PNG_BYTES),
-                llm_planner=planner,
-                image_generator=generator,
-            )
-        )
-    assert planner.calls == []
-    assert generator.calls == []
+def test_hash_mismatch_never_invokes_generator_or_image_generator():
+    _assert_rejected_before_any_call(expected_input_image_sha256=_sha256(OTHER_PNG_BYTES))
 
 
 # ============================================ standalone / no-FastAPI ====
 
 
 def test_service_level_validation_works_independently_of_fastapi():
-    # No TestClient, no app, no HTTP anywhere in this test — proves the
-    # pipeline rejects bad input on its own, not only via a route schema.
     with pytest.raises(ReorganisePipelineInputError):
         run_reorganise_pipeline(**_base_kwargs(selected_item_ids=[]))
     with pytest.raises(ReorganisePipelineInputError):
@@ -512,100 +629,43 @@ def test_service_level_validation_works_independently_of_fastapi():
         run_reorganise_pipeline(**_base_kwargs(selected_item_ids=["item_999"]))
 
 
-# ============================ production path: llm_planner=None ==========
-#
-# What BOTH production routes now pass. The LLM branch above stays fully
-# tested because run_reorganise_pipeline still accepts a planner — the
-# research path was not deleted, only taken off the request path.
+# ============================ the no-model path: action_generator=None ====
 
 
 def test_direct_path_produces_deterministic_direct_provenance():
-    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
-
-    planning = result.planning
-    assert planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
-    assert planning.attempts == 0
-    assert planning.issues == []
-    assert planning.model_name is None
-    assert planning.prompt_version is None
+    result = run_reorganise_pipeline(**_base_kwargs(action_generator=None))
+    plan = result.action_plan
+    assert plan.provenance == ActionPlanProvenance.DETERMINISTIC_DIRECT
+    assert plan.attempts == 0
+    assert plan.issues == []
+    assert plan.model_name is None and plan.prompt_version is None and plan.was_repaired is None
 
 
-def test_direct_path_never_touches_a_planner():
-    """A planner passed here would be a contract violation, so the proof
-    is structural: pass a recording planner via the LLM path, then the
-    direct path, and confirm only the former ever ran."""
-    planner = FakePlanner()
-    run_reorganise_pipeline(**_base_kwargs(llm_planner=planner))
-    assert len(planner.calls) == 1
-
-    run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
-    assert len(planner.calls) == 1  # unchanged — the direct path called nothing
-
-
-def test_direct_path_covers_every_selected_item_exactly_once():
-    # A many-item room. Capped at 19 because this file's shared
-    # _detected_item helper derives box.x2 as 0.05*index + 0.04, which
-    # exceeds the normalized [0,1] bound past index 19 — a limit of that
-    # helper, not of the planning path.
-    item_ids = [f"item_{n:03d}" for n in range(1, 20)]
-    analysis = _analysis_result("run1", item_ids)
-    result = run_reorganise_pipeline(
-        **_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids), llm_planner=None)
-    )
-
-    planned = [i for zone in result.planning.plan.zones for i in zone.item_ids]
-    assert sorted(planned) == sorted(item_ids)
-    assert len(planned) == len(set(planned))  # no duplicates
-    assert not set(item_ids) - set(planned)  # nothing missing
-
-
-def test_direct_path_reports_one_real_stage_timing():
-    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None))
-
-    assert len(result.planning.stage_timings) == 1
-    timing = result.planning.stage_timings[0]
-    assert timing.stage == "reorganise_plan"
-    assert timing.duration_ms >= 0.0
+def test_direct_path_never_touches_a_generator():
+    generator = FakeActionGenerator()
+    run_reorganise_pipeline(**_base_kwargs(action_generator=generator))
+    assert len(generator.calls) == 1
+    run_reorganise_pipeline(**_base_kwargs(action_generator=None))
+    assert len(generator.calls) == 1  # unchanged
 
 
 def test_direct_path_still_generates_an_image():
     generator = FakeGenerator()
-    result = run_reorganise_pipeline(**_base_kwargs(llm_planner=None, image_generator=generator))
-
+    result = run_reorganise_pipeline(**_base_kwargs(action_generator=None, image_generator=generator))
     assert result.image_status == "generated"
     assert len(generator.calls) == 1
 
 
-def test_direct_path_preserves_scene_and_user_context_in_the_prompt():
-    analysis = _analysis_result("run1", ["item_001", "item_002"])
-    result = run_reorganise_pipeline(
-        **_base_kwargs(analysis=analysis, llm_planner=None, user_context="i want a neat room")
-    )
-
-    prompt = result.planning.plan.image_prompt
-    assert analysis.scene.label in prompt
-    assert "i want a neat room" in prompt
-
-
-def test_llm_planner_argument_is_required_with_no_default():
-    """No default, deliberately: a default of None would let a new caller
-    silently opt out of the LLM without noticing, and a default planner
-    would silently reintroduce the Ollama dependency this policy removed."""
+def test_action_generator_argument_is_required_with_no_default():
     signature = inspect.signature(run_reorganise_pipeline)
-    assert signature.parameters["llm_planner"].default is inspect.Parameter.empty
+    assert signature.parameters["action_generator"].default is inspect.Parameter.empty
 
 
 def _grid_item(item_id: str, index: int, label: str = "lamp") -> DetectedItem:
-    """A DetectedItem with a locally-computed, always-valid normalized box.
-
-    Deliberately separate from this file's shared _detected_item helper,
-    whose box math (0.05*index + 0.04) exceeds the [0,1] bound past index
-    19. Laying boxes out on a 6-wide grid keeps 28 items valid without
-    changing a helper other tests depend on.
-    """
     row, col = divmod(index, 6)
     x1 = round(0.02 + col * 0.16, 4)
     y1 = round(0.02 + row * 0.19, 4)
+    positions = ["upper-left", "upper-center", "upper-right", "left", "center", "right"]
     return DetectedItem(
         item_id=item_id,
         source_detection_index=index,
@@ -613,34 +673,24 @@ def _grid_item(item_id: str, index: int, label: str = "lamp") -> DetectedItem:
         clean_label=label,
         box=BoundingBox(x1=x1, y1=y1, x2=round(x1 + 0.14, 4), y2=round(y1 + 0.17, 4)),
         confidence=0.5,
-        position="upper-left",
+        position=positions[col],
         relative_size="small",
     )
 
 
-def test_direct_path_handles_a_real_28_item_room_exactly_once_each():
-    """The crowded case that motivated the whole policy change: 28 real
-    DetectedItems, including duplicate labels, planned in one shot.
-
-    Built locally rather than read from
-    evaluation/fixtures/reorganise_bedroom02_28items.json on purpose —
-    that fixture exists to drive the LLM evaluation harness, and using it
-    here would make the production path's correctness appear to depend on
-    an evaluation artefact. This test owns its own data.
-    """
-    # duplicate labels included — item_id is the only identity that counts
+def test_a_real_28_item_room_with_duplicate_labels_is_handled_without_a_model():
+    """The crowded case: 28 real DetectedItems, including duplicate
+    labels, through the no-model path. Built locally, not read from
+    evaluation/fixtures/, so the production path's correctness never
+    depends on an evaluation artefact."""
     labels = (
         ["painting", "jewelry", "mirror"]
         + ["picture frame"] * 6
         + ["plant", "shelf", "toy", "bottle", "toy", "monitor", "chair", "bowl", "plate"]
-        + ["speaker", "keyboard", "desk", "mouse", "box", "pillow", "cup", "cup", "bin"]
+        + ["speaker", "keyboard", "desk", "mouse", "box", "pillow", "cup", "cup", "bin", "rug"]
     )
-    assert len(labels) == 27
-    labels.append("rug")
     item_ids = [f"item_{n:03d}" for n in range(1, 29)]
     items = [_grid_item(item_id, i, labels[i]) for i, item_id in enumerate(item_ids)]
-    assert len(items) == 28
-
     analysis = AnalysisResult(
         run_id="run1",
         scene=SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9}),
@@ -650,44 +700,14 @@ def test_direct_path_handles_a_real_28_item_room_exactly_once_each():
     )
 
     result = run_reorganise_pipeline(
-        **_base_kwargs(
-            analysis=analysis,
-            selected_item_ids=list(item_ids),
-            llm_planner=None,
-            user_context="i want a neat room",
-        )
+        **_base_kwargs(analysis=analysis, selected_item_ids=list(item_ids), action_generator=None, user_context="i want a neat room")
     )
 
-    planning = result.planning
-    assert planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
-    assert planning.attempts == 0
-    assert planning.issues == []
-    assert planning.model_name is None and planning.prompt_version is None
-
-    planned = [i for zone in planning.plan.zones for i in zone.item_ids]
-    assert len(planned) == 28
-    assert sorted(planned) == sorted(item_ids)          # exact coverage
-    assert len(planned) == len(set(planned))            # no duplicates
-    assert set(item_ids) - set(planned) == set()        # nothing missing
-    assert set(planned) - set(item_ids) == set()        # nothing invented
-
-    # duplicate labels stayed independent — all six frames are present
-    assert sum(1 for item in items if item.effective_label == "picture frame") == 6
-
-
-def test_direct_path_28_items_is_not_read_from_the_evaluation_fixture():
-    """Guards the boundary the test above documents: the production path's
-    own test data must not be sourced from evaluation/fixtures/.
-
-    Checks for file-reading CALLS rather than for the words "fixture" or
-    "json" — the test above discusses both in its docstring, so a
-    substring search would match its own prose instead of its code."""
-    import ast
-
-    tree = ast.parse(inspect.getsource(test_direct_path_handles_a_real_28_item_room_exactly_once_each))
-    called = {
-        node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-    }
-    assert not called & {"open", "read_text", "read_bytes", "load", "loads", "load_fixture"}
+    assert result.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_DIRECT
+    assert 1 <= len(result.action_plan.actions) <= 5
+    assert result.action_plan.actions[0].title.startswith("Start with the")
+    shown = [item_id for area in result.focus_areas for item_id in area.item_ids]
+    assert len(shown) == len(set(shown)) and set(shown) <= set(item_ids)
+    assert len(result.focus_areas) == 3
+    assert [s.name for s in result.storage_suggestions] == ["Toy or small-item container"]
+    assert result.image_status == "generated"

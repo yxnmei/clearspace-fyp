@@ -139,20 +139,39 @@ function makeGeneratedImage(overrides = {}) {
   };
 }
 
-function makePlanning(overrides = {}) {
+function makeAction(overrides = {}) {
+  return {
+    priority: 1,
+    title: "Clear the desk",
+    instruction: "Group the lamp and the book together on the desk.",
+    ...overrides,
+  };
+}
+
+function makeActionPlan(overrides = {}) {
   return {
     run_id: "run1",
-    plan: {
-      zones: [{ zone_name: "Keep in place", item_ids: ["item_001", "item_002"], instruction: "keep as is" }],
-      image_prompt: "a tidy bedroom",
-      negative_prompt: null,
-    },
-    provenance: "raw_valid",
-    issues: [],
+    actions: [makeAction(), makeAction({ priority: 2, title: "Straighten the lamp" })],
+    provenance: "llm_generated",
     attempts: 1,
     model_name: "phi4-mini",
-    prompt_version: "v1",
-    stage_timings: [{ stage: "reorganise_plan", duration_ms: 12.3 }],
+    prompt_version: "reorganise-actions-v1",
+    was_repaired: false,
+    duration_ms: 12.3,
+    issues: [],
+    ...overrides,
+  };
+}
+
+function makeFocusArea(overrides = {}) {
+  return { area_id: "left", label: "Left side", item_ids: ["item_001", "item_002"], ...overrides };
+}
+
+function makeSuggestion(overrides = {}) {
+  return {
+    name: "Bookends or a compact shelf",
+    reason: "Stands 2 books or papers (book x2) upright so they stay visible instead of piling up.",
+    related_item_ids: ["item_001", "item_002"],
     ...overrides,
   };
 }
@@ -160,7 +179,10 @@ function makePlanning(overrides = {}) {
 function makeGeneratedResponse(overrides = {}) {
   return {
     run_id: "run1",
-    planning: makePlanning(),
+    action_plan: makeActionPlan(),
+    focus_areas: [makeFocusArea()],
+    storage_suggestions: [],
+    image_prompt: "A tidy, well-organised bedroom.",
     image_status: "generated",
     image: makeGeneratedImage(),
     image_unavailable_reason: null,
@@ -170,8 +192,7 @@ function makeGeneratedResponse(overrides = {}) {
 
 function makeUnavailableResponse(reason = "service_unreachable", overrides = {}) {
   return {
-    run_id: "run1",
-    planning: makePlanning(),
+    ...makeGeneratedResponse(),
     image_status: "unavailable",
     image: null,
     image_unavailable_reason: reason,
@@ -182,120 +203,37 @@ function makeUnavailableResponse(reason = "service_unreachable", overrides = {})
 const OPTS = { runId: "run1", selectedItemIds: ["item_001", "item_002"], inputImageSha256: HASH_B };
 
 describe("normaliseGenerateResponse, generated", () => {
-  test("accepts a valid generated response", () => {
+  test("accepts a valid generated response and returns the normalised shape", () => {
     const result = normaliseGenerateResponse(makeGeneratedResponse(), OPTS);
+    expect(result.runId).toBe("run1");
+    expect(result.actionPlan.actions).toHaveLength(2);
+    expect(result.focusAreas).toHaveLength(1);
+    expect(result.storageSuggestions).toEqual([]);
+    expect(result.imagePrompt).toBe("A tidy, well-organised bedroom.");
     expect(result.imageStatus).toBe("generated");
     expect(result.image).toBeTruthy();
     expect(result.imageUnavailableReason).toBeNull();
+    expect(result).not.toHaveProperty("planning");
   });
 
   test("rejects run_id mismatch", () => {
     expect(() => normaliseGenerateResponse(makeGeneratedResponse({ run_id: "other" }), OPTS)).toThrow(/run_id/);
   });
 
-  test("rejects planning.run_id mismatch", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.run_id = "other";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/planning\.run_id/);
+  test("rejects a missing or non-object action_plan", () => {
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ action_plan: undefined }), OPTS)).toThrow(/action_plan/);
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ action_plan: "nope" }), OPTS)).toThrow(/action_plan/);
   });
 
-  test("rejects zones that is not an array", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones = "nope";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/zones/);
-  });
-
-  test("rejects an empty zone_name", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones[0].zone_name = "";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/zone_name/);
-  });
-
-  test("rejects an empty instruction", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones[0].instruction = "  ";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/instruction/);
-  });
-
-  test("rejects an empty zone item_ids array", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones[0].item_ids = [];
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/item_ids/);
-  });
-
-  test("rejects a missing selected item_id (plan omits it)", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones[0].item_ids = ["item_001"]; // item_002 missing
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/omits/);
-  });
-
-  test("rejects an unexpected planned item_id (not in the selection)", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones[0].item_ids = ["item_001", "item_002", "item_999"];
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/unselected/);
-  });
-
-  test("rejects a duplicate planned item_id across zones", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.zones = [
-      { zone_name: "A", item_ids: ["item_001"], instruction: "x" },
-      { zone_name: "B", item_ids: ["item_001", "item_002"], instruction: "y" },
-    ];
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/duplicate/);
+  test("rejects an old zone-plan shaped response outright", () => {
+    const legacy = makeGeneratedResponse();
+    delete legacy.action_plan;
+    legacy.planning = { run_id: "run1", plan: { zones: [] } };
+    expect(() => normaliseGenerateResponse(legacy, OPTS)).toThrow(/action_plan/);
   });
 
   test("rejects an empty image_prompt", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.image_prompt = "";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/image_prompt/);
-  });
-
-  test("rejects a non-string, non-null negative_prompt", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.negative_prompt = 5;
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/negative_prompt/);
-  });
-
-  test("accepts a string negative_prompt", () => {
-    const ok = makeGeneratedResponse();
-    ok.planning.plan.negative_prompt = "blurry";
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
-  });
-
-  test("rejects an unrecognised provenance", () => {
-    expect(() =>
-      normaliseGenerateResponse(makeGeneratedResponse({ planning: makePlanning({ provenance: "made_up" }) }), OPTS)
-    ).toThrow(/provenance/);
-  });
-
-  test("rejects attempts outside {1,2}", () => {
-    expect(() =>
-      normaliseGenerateResponse(makeGeneratedResponse({ planning: makePlanning({ attempts: 3 }) }), OPTS)
-    ).toThrow(/attempts/);
-  });
-
-  test("rejects issues that is not an array", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.issues = "nope";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues/);
-  });
-
-  test("rejects stage_timings that is not an array", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.stage_timings = "nope";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/stage_timings/);
-  });
-
-  test("rejects model_name present with prompt_version null", () => {
-    const bad = makeGeneratedResponse({ planning: makePlanning({ model_name: "phi4-mini", prompt_version: null }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/model_name/);
-  });
-
-  test("accepts both model_name and prompt_version null (deterministic fallback, both calls failed)", () => {
-    const ok = makeGeneratedResponse({
-      planning: makePlanning({ provenance: "deterministic_fallback", attempts: 2, model_name: null, prompt_version: null }),
-    });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ image_prompt: " " }), OPTS)).toThrow(/image_prompt/);
   });
 
   test("rejects image_status generated with a non-null image_unavailable_reason", () => {
@@ -372,9 +310,20 @@ describe("normaliseGenerateResponse, unavailable", () => {
     }
   );
 
-  test("the complete plan is still validated and present even when unavailable", () => {
-    const result = normaliseGenerateResponse(makeUnavailableResponse(), OPTS);
-    expect(result.planning.plan.zones).toHaveLength(1);
+  test("the checklist, focus areas, suggestions and prompt are still validated and present when unavailable", () => {
+    const result = normaliseGenerateResponse(
+      makeUnavailableResponse("timeout", { storage_suggestions: [makeSuggestion()] }),
+      OPTS
+    );
+    expect(result.actionPlan.actions).toHaveLength(2);
+    expect(result.focusAreas).toHaveLength(1);
+    expect(result.storageSuggestions).toHaveLength(1);
+    expect(result.imagePrompt).toBeTruthy();
+  });
+
+  test("an unavailable response is validated as strictly as a generated one", () => {
+    const bad = makeUnavailableResponse("timeout", { focus_areas: [makeFocusArea({ item_ids: ["item_999"] })] });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/unselected/);
   });
 
   test("rejects an unrecognised unavailable reason", () => {
@@ -405,6 +354,374 @@ describe("normaliseGenerateResponse, top-level shape", () => {
   test("rejects an unrecognised image_status", () => {
     expect(() => normaliseGenerateResponse(makeGeneratedResponse({ image_status: "pending" }), OPTS)).toThrow(
       /image_status/
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// action_plan
+// ---------------------------------------------------------------------------
+
+function withPlan(overrides) {
+  return makeGeneratedResponse({ action_plan: makeActionPlan(overrides) });
+}
+
+describe("normaliseGenerateResponse, action_plan actions", () => {
+  test("rejects action_plan.run_id mismatch", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ run_id: "other" }), OPTS)).toThrow(/action_plan\.run_id/);
+  });
+
+  test("rejects actions that is not an array, empty, or longer than five", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions: "nope" }), OPTS)).toThrow(/actions must be an array/);
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [] }), OPTS)).toThrow(/1\.\.5 entries/);
+    const six = [1, 2, 3, 4, 5, 6].map((n) => makeAction({ priority: n }));
+    expect(() => normaliseGenerateResponse(withPlan({ actions: six }), OPTS)).toThrow(/1\.\.5 entries/);
+  });
+
+  test("accepts one to five well-formed actions", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction()] }), OPTS)).not.toThrow();
+    const five = [1, 2, 3, 4, 5].map((n) => makeAction({ priority: n }));
+    expect(() => normaliseGenerateResponse(withPlan({ actions: five }), OPTS)).not.toThrow();
+  });
+
+  test.each([
+    [[makeAction({ priority: 2 }), makeAction({ priority: 1 })], /priority must be 1/],
+    [[makeAction({ priority: 1 }), makeAction({ priority: 3 })], /priority must be 2/],
+    [[makeAction({ priority: 1 }), makeAction({ priority: 1 })], /priority must be 2/],
+    [[makeAction({ priority: "1" })], /priority must be an integer/],
+    [[makeAction({ priority: 1.5 })], /priority must be an integer/],
+  ])("rejects out-of-order, gapped, repeated or non-integer priorities (%j)", (actions, pattern) => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions }), OPTS)).toThrow(pattern);
+  });
+
+  test("rejects blank or oversized titles and instructions", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ title: "  " })] }), OPTS)).toThrow(/title/);
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ title: "x".repeat(81) })] }), OPTS)).toThrow(
+      /title must be 3\.\.80/
+    );
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ instruction: "" })] }), OPTS)).toThrow(
+      /instruction/
+    );
+    expect(() =>
+      normaliseGenerateResponse(withPlan({ actions: [makeAction({ instruction: "x".repeat(301) })] }), OPTS)
+    ).toThrow(/instruction must be 10\.\.300/);
+  });
+
+  // Mirrors app.core.reorganise_actions: title 3..80, instruction 10..300,
+  // measured after trimming. Exact boundaries on both sides.
+  test.each([
+    ["title", 2, false],
+    ["title", 3, true],
+    ["title", 80, true],
+    ["title", 81, false],
+    ["instruction", 9, false],
+    ["instruction", 10, true],
+    ["instruction", 300, true],
+    ["instruction", 301, false],
+  ])("%s of %i trimmed characters is accepted: %s", (field, length, accepted) => {
+    const action = makeAction({ [field]: "x".repeat(length) });
+    const attempt = () => normaliseGenerateResponse(withPlan({ actions: [action] }), OPTS);
+    if (accepted) {
+      expect(attempt).not.toThrow();
+    } else {
+      expect(attempt).toThrow(new RegExp(`${field} must be`));
+    }
+  });
+
+  test("bounds are measured after trimming, so padding neither rescues a short value nor breaks a full one", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ title: "  ab  " })] }), OPTS)).toThrow(
+      /title must be 3\.\.80 characters after trimming, got 2/
+    );
+    expect(() =>
+      normaliseGenerateResponse(withPlan({ actions: [makeAction({ instruction: "   " + "x".repeat(9) + "   " })] }), OPTS)
+    ).toThrow(/instruction must be 10\.\.300 characters after trimming, got 9/);
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ title: "  " + "x".repeat(80) + "  " })] }), OPTS)).not.toThrow();
+    expect(() =>
+      normaliseGenerateResponse(withPlan({ actions: [makeAction({ instruction: " " + "x".repeat(300) + " " })] }), OPTS)
+    ).not.toThrow();
+  });
+
+  test("the same title and instruction bounds apply on the Both contract", () => {
+    const short = makeConfirmedGenerateResponse({ action_plan: makeActionPlan({ actions: [makeAction({ instruction: "too short" })] }) });
+    expect(() => normaliseConfirmedGenerateResponse(short, CONFIRMED_OPTS)).toThrow(/instruction must be 10\.\.300/);
+  });
+
+  test.each([
+    ["item_ids", ["item_001"]],
+    ["zone_name", "Desk"],
+    ["coordinates", [0.1, 0.2]],
+    ["product", "a box"],
+  ])("rejects an action carrying an extra %s field", (key, value) => {
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [makeAction({ [key]: value })] }), OPTS)).toThrow(
+      /exactly the keys/
+    );
+  });
+
+  test("rejects an action missing a field", () => {
+    const action = makeAction();
+    delete action.instruction;
+    expect(() => normaliseGenerateResponse(withPlan({ actions: [action] }), OPTS)).toThrow(/exactly the keys/);
+  });
+});
+
+describe("normaliseGenerateResponse, action_plan provenance rules", () => {
+  test("rejects an unrecognised provenance, including the old zone-planner values", () => {
+    for (const provenance of ["made_up", "raw_valid", "mechanically_repaired", "recovery_used"]) {
+      expect(() => normaliseGenerateResponse(withPlan({ provenance }), OPTS)).toThrow(/provenance/);
+    }
+  });
+
+  test("llm_generated requires one attempt, no issues, a model, a prompt version and a boolean was_repaired", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ attempts: 0 }), OPTS)).toThrow(/attempts must be 1/);
+    expect(() => normaliseGenerateResponse(withPlan({ attempts: 2 }), OPTS)).toThrow(/attempts must be 1/);
+    expect(() =>
+      normaliseGenerateResponse(withPlan({ issues: [{ kind: "invalid_json", detail: "x" }] }), OPTS)
+    ).toThrow(/issues to be empty/);
+    expect(() => normaliseGenerateResponse(withPlan({ model_name: null, prompt_version: null }), OPTS)).toThrow(
+      /model_name and action_plan\.prompt_version to be non-empty/
+    );
+    expect(() => normaliseGenerateResponse(withPlan({ was_repaired: null }), OPTS)).toThrow(/was_repaired must be a boolean/);
+    expect(() => normaliseGenerateResponse(withPlan({ was_repaired: true }), OPTS)).not.toThrow();
+  });
+
+  test("model_name and prompt_version must be both present or both null", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ prompt_version: null }), OPTS)).toThrow(/both be non-empty strings or both be null/);
+    expect(() => normaliseGenerateResponse(withPlan({ model_name: " " }), OPTS)).toThrow(/both be non-empty strings or both be null/);
+  });
+
+  function fallback(overrides = {}) {
+    return withPlan({
+      provenance: "deterministic_fallback",
+      attempts: 1,
+      was_repaired: null,
+      issues: [{ kind: "invalid_json", detail: "checklist model did not return syntactically valid JSON" }],
+      ...overrides,
+    });
+  }
+
+  test("deterministic_fallback requires one attempt, exactly one issue and a null was_repaired", () => {
+    expect(() => normaliseGenerateResponse(fallback(), OPTS)).not.toThrow();
+    expect(() => normaliseGenerateResponse(fallback({ attempts: 0 }), OPTS)).toThrow(/attempts must be 1/);
+    expect(() => normaliseGenerateResponse(fallback({ attempts: 2 }), OPTS)).toThrow(/attempts must be 1/);
+    expect(() => normaliseGenerateResponse(fallback({ issues: [] }), OPTS)).toThrow(/exactly one action_plan issue/);
+    expect(() =>
+      normaliseGenerateResponse(
+        fallback({ issues: [{ kind: "invalid_json", detail: "x" }, { kind: "call_failed", detail: "y" }] }),
+        OPTS
+      )
+    ).toThrow(/exactly one action_plan issue/);
+    expect(() => normaliseGenerateResponse(fallback({ was_repaired: false }), OPTS)).toThrow(/was_repaired to be null/);
+  });
+
+  test("deterministic_fallback may omit the model only when the call itself failed", () => {
+    expect(() =>
+      normaliseGenerateResponse(
+        fallback({ model_name: null, prompt_version: null, issues: [{ kind: "call_failed", detail: "checklist model call failed: RuntimeError" }] }),
+        OPTS
+      )
+    ).not.toThrow();
+    expect(() => normaliseGenerateResponse(fallback({ model_name: null, prompt_version: null }), OPTS)).toThrow(
+      /only when the call itself failed/
+    );
+  });
+
+  test("rejects an issue with an unrecognised kind or blank detail", () => {
+    expect(() => normaliseGenerateResponse(fallback({ issues: [{ kind: "semantic_invalid", detail: "x" }] }), OPTS)).toThrow(
+      /issues\[0\]\.kind/
+    );
+    expect(() => normaliseGenerateResponse(fallback({ issues: [{ kind: "invalid_actions", detail: " " }] }), OPTS)).toThrow(
+      /issues\[0\]\.detail/
+    );
+    expect(() => normaliseGenerateResponse(fallback({ issues: "nope" }), OPTS)).toThrow(/issues must be an array/);
+  });
+
+  function direct(overrides = {}) {
+    return withPlan({
+      provenance: "deterministic_direct",
+      attempts: 0,
+      model_name: null,
+      prompt_version: null,
+      was_repaired: null,
+      issues: [],
+      ...overrides,
+    });
+  }
+
+  test("deterministic_direct accepts zero attempts, no issues, no model, null was_repaired", () => {
+    const result = normaliseGenerateResponse(direct(), OPTS);
+    expect(result.actionPlan.provenance).toBe("deterministic_direct");
+    expect(result.actionPlan.attempts).toBe(0);
+  });
+
+  test("deterministic_direct rejects any evidence of a model call that never happened", () => {
+    expect(() => normaliseGenerateResponse(direct({ attempts: 1 }), OPTS)).toThrow(/attempts must be 0 for deterministic_direct/);
+    expect(() => normaliseGenerateResponse(direct({ model_name: "phi4-mini", prompt_version: "reorganise-actions-v1" }), OPTS)).toThrow(
+      /no model was called/
+    );
+    expect(() =>
+      normaliseGenerateResponse(direct({ issues: [{ kind: "call_failed", detail: "did not happen" }] }), OPTS)
+    ).toThrow(/issues to be empty/);
+    expect(() => normaliseGenerateResponse(direct({ was_repaired: false }), OPTS)).toThrow(/was_repaired to be null/);
+  });
+
+  test("rejects a negative or non-finite duration_ms", () => {
+    expect(() => normaliseGenerateResponse(withPlan({ duration_ms: -1 }), OPTS)).toThrow(/duration_ms/);
+    expect(() => normaliseGenerateResponse(withPlan({ duration_ms: NaN }), OPTS)).toThrow(/duration_ms/);
+    expect(() => normaliseGenerateResponse(withPlan({ duration_ms: "5" }), OPTS)).toThrow(/duration_ms/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// focus_areas
+// ---------------------------------------------------------------------------
+
+describe("normaliseGenerateResponse, focus_areas", () => {
+  test("accepts up to three count-ordered areas covering selected items", () => {
+    const opts = { ...OPTS, selectedItemIds: ["item_001", "item_002", "item_003", "item_004"] };
+    const ok = makeGeneratedResponse({
+      focus_areas: [
+        makeFocusArea({ area_id: "left", item_ids: ["item_001", "item_002"] }),
+        makeFocusArea({ area_id: "centre", label: "Centre", item_ids: ["item_003"] }),
+        makeFocusArea({ area_id: "right", label: "Right side", item_ids: ["item_004"] }),
+      ],
+    });
+    expect(normaliseGenerateResponse(ok, opts).focusAreas).toHaveLength(3);
+  });
+
+  test("rejects a missing, empty or over-long list", () => {
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: undefined }), OPTS)).toThrow(/focus_areas must be an array/);
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [] }), OPTS)).toThrow(/1\.\.3 entries/);
+    const four = ["left", "centre", "right", "other"].map((id) => makeFocusArea({ area_id: id, item_ids: [] }));
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: four }), OPTS)).toThrow(/1\.\.3 entries/);
+  });
+
+  test("rejects an unrecognised or duplicated area_id", () => {
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ area_id: "upper-left" })] }), OPTS)
+    ).toThrow(/area_id/);
+    expect(() =>
+      normaliseGenerateResponse(
+        makeGeneratedResponse({ focus_areas: [makeFocusArea({ item_ids: ["item_001"] }), makeFocusArea({ item_ids: ["item_002"] })] }),
+        OPTS
+      )
+    ).toThrow(/duplicate focus area/);
+  });
+
+  test("rejects an area referencing an unselected item or an item shown twice", () => {
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ item_ids: ["item_001", "item_999"] })] }), OPTS)
+    ).toThrow(/unselected/);
+    expect(() =>
+      normaliseGenerateResponse(
+        makeGeneratedResponse({
+          focus_areas: [
+            makeFocusArea({ area_id: "left", item_ids: ["item_001"] }),
+            makeFocusArea({ area_id: "right", label: "Right side", item_ids: ["item_001"] }),
+          ],
+        }),
+        OPTS
+      )
+    ).toThrow(/duplicate focus area item_id/);
+  });
+
+  test("rejects areas that are not ordered by item count, highest first", () => {
+    const opts = { ...OPTS, selectedItemIds: ["item_001", "item_002", "item_003"] };
+    const bad = makeGeneratedResponse({
+      focus_areas: [
+        makeFocusArea({ area_id: "left", item_ids: ["item_001"] }),
+        makeFocusArea({ area_id: "right", label: "Right side", item_ids: ["item_002", "item_003"] }),
+      ],
+    });
+    expect(() => normaliseGenerateResponse(bad, opts)).toThrow(/highest first/);
+  });
+
+  test("rejects an area with an empty item list, a blank label, or an extra field", () => {
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ item_ids: [] })] }), OPTS)
+    ).toThrow(/must not be empty/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ label: " " })] }), OPTS)
+    ).toThrow(/label/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ x: 0.2 })] }), OPTS)
+    ).toThrow(/exactly the keys/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ focus_areas: [makeFocusArea({ severity: "high" })] }), OPTS)
+    ).toThrow(/exactly the keys/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// storage_suggestions
+// ---------------------------------------------------------------------------
+
+describe("normaliseGenerateResponse, storage_suggestions", () => {
+  test("accepts an empty list and up to three well-formed suggestions tied to selected items", () => {
+    expect(normaliseGenerateResponse(makeGeneratedResponse(), OPTS).storageSuggestions).toEqual([]);
+    const three = makeGeneratedResponse({
+      storage_suggestions: [
+        makeSuggestion(),
+        makeSuggestion({ name: "Compartment tray", related_item_ids: ["item_002"] }),
+        makeSuggestion({ name: "Hooks or a hanging organiser", related_item_ids: ["item_001"] }),
+      ],
+    });
+    expect(normaliseGenerateResponse(three, OPTS).storageSuggestions).toHaveLength(3);
+  });
+
+  test("rejects a missing list or more than three suggestions", () => {
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: undefined }), OPTS)).toThrow(
+      /storage_suggestions must be an array/
+    );
+    const four = ["a", "b", "c", "d"].map((name) => makeSuggestion({ name }));
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: four }), OPTS)).toThrow(/at most 3/);
+  });
+
+  test("rejects a suggestion referencing an unselected item, no items, or duplicate ids", () => {
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ related_item_ids: ["item_999"] })] }), OPTS)
+    ).toThrow(/unselected/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ related_item_ids: [] })] }), OPTS)
+    ).toThrow(/must not be empty/);
+    expect(() =>
+      normaliseGenerateResponse(
+        makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ related_item_ids: ["item_001", "item_001"] })] }),
+        OPTS
+      )
+    ).toThrow(/duplicate/);
+  });
+
+  test("rejects duplicate names case-insensitively, and blank names or reasons", () => {
+    expect(() =>
+      normaliseGenerateResponse(
+        makeGeneratedResponse({ storage_suggestions: [makeSuggestion(), makeSuggestion({ name: "BOOKENDS OR A COMPACT SHELF" })] }),
+        OPTS
+      )
+    ).toThrow(/duplicate storage suggestion name/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ name: " " })] }), OPTS)
+    ).toThrow(/name/);
+    expect(() =>
+      normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ reason: "" })] }), OPTS)
+    ).toThrow(/reason/);
+  });
+
+  test.each([
+    ["price", "9.99"],
+    ["url", "https://example.test/box"],
+    ["brand", "SomeBrand"],
+    ["in_stock", true],
+    ["retailer", "a shop"],
+  ])("rejects a commercial field (%s) rather than displaying it", (key, value) => {
+    const bad = makeGeneratedResponse({ storage_suggestions: [makeSuggestion({ [key]: value })] });
+    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/exactly the keys/);
+  });
+
+  test("a missing key is contract drift too", () => {
+    const suggestion = makeSuggestion();
+    delete suggestion.reason;
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ storage_suggestions: [suggestion] }), OPTS)).toThrow(
+      /exactly the keys/
     );
   });
 });
@@ -509,14 +826,6 @@ describe("normaliseGenerateResponse, caller-supplied selectedItemIds", () => {
   });
 });
 
-describe("normaliseGenerateResponse, negative_prompt strictness", () => {
-  test("rejects an empty-string negative_prompt (must be null or non-empty)", () => {
-    const bad = makeGeneratedResponse();
-    bad.planning.plan.negative_prompt = "   ";
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/negative_prompt/);
-  });
-});
-
 describe("normaliseGenerateResponse, generated image api_version exactness", () => {
   test("rejects an api_version that is a non-empty string but not exactly \"v1\"", () => {
     const bad = makeGeneratedResponse({ image: makeGeneratedImage({ api_version: "v2" }) });
@@ -540,97 +849,6 @@ describe("normaliseGenerateResponse, base64 length/padding strictness", () => {
       const ok = makeGeneratedResponse({ image: makeGeneratedImage({ image: validImage }) });
       expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
     }
-  });
-});
-
-describe("normaliseGenerateResponse, planning.issues field validation", () => {
-  test("rejects an issue with an invalid attempt", () => {
-    const bad = makeGeneratedResponse({
-      planning: makePlanning({
-        provenance: "recovery_used",
-        attempts: 2,
-        issues: [{ attempt: "middle", kind: "invalid_json", detail: "x", conversion_errors: [] }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues\[0\]\.attempt/);
-  });
-
-  test("rejects an issue with an unrecognised kind", () => {
-    const bad = makeGeneratedResponse({
-      planning: makePlanning({
-        provenance: "recovery_used",
-        attempts: 2,
-        issues: [{ attempt: "initial", kind: "made_up_kind", detail: "x", conversion_errors: [] }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues\[0\]\.kind/);
-  });
-
-  test("rejects an issue with a blank detail", () => {
-    const bad = makeGeneratedResponse({
-      planning: makePlanning({
-        provenance: "recovery_used",
-        attempts: 2,
-        issues: [{ attempt: "initial", kind: "invalid_json", detail: "  ", conversion_errors: [] }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues\[0\]\.detail/);
-  });
-
-  test("rejects an issue whose conversion_errors is not an array", () => {
-    const bad = makeGeneratedResponse({
-      planning: makePlanning({
-        provenance: "recovery_used",
-        attempts: 2,
-        issues: [{ attempt: "initial", kind: "semantic_invalid", detail: "x", conversion_errors: "nope" }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/conversion_errors/);
-  });
-
-  test("accepts a well-formed issue", () => {
-    const ok = makeGeneratedResponse({
-      planning: makePlanning({
-        provenance: "recovery_used",
-        attempts: 2,
-        issues: [{ attempt: "initial", kind: "semantic_invalid", detail: "missing item", conversion_errors: [{ kind: "missing_selected_items", detail: "x", item_ids: ["item_001"] }] }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
-  });
-});
-
-describe("normaliseGenerateResponse, the single reorganise_plan stage timing", () => {
-  test("rejects zero stage timings", () => {
-    const bad = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [] }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/stage_timings/);
-  });
-
-  test("rejects more than one stage timing", () => {
-    const bad = makeGeneratedResponse({
-      planning: makePlanning({
-        stage_timings: [
-          { stage: "reorganise_plan", duration_ms: 5 },
-          { stage: "reorganise_plan", duration_ms: 6 },
-        ],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/stage_timings/);
-  });
-
-  test("rejects a stage timing with the wrong stage name", () => {
-    const bad = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [{ stage: "detect_objects", duration_ms: 5 }] }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/stage_timings\[0\]\.stage/);
-  });
-
-  test("rejects a negative or non-finite duration_ms", () => {
-    const bad = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [{ stage: "reorganise_plan", duration_ms: -1 }] }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/duration_ms/);
-  });
-
-  test("accepts exactly one well-formed reorganise_plan timing", () => {
-    const ok = makeGeneratedResponse({ planning: makePlanning({ stage_timings: [{ stage: "reorganise_plan", duration_ms: 12.3 }] }) });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
   });
 });
 
@@ -688,21 +906,18 @@ function makeConfirmationResponse(overrides = {}) {
   };
 }
 
-// The plan reflects ONLY the server-derived confirmed Keep set
-// (["item_001"]), never the full expected_item_ids or any client-supplied
-// selection, there is no selection field in the /generate/confirmed
-// request at all (see api/client.js's generateConfirmedReorganisation).
+// Focus areas and suggestions reflect ONLY the server-derived confirmed
+// Keep set (["item_001"]), never the full expected_item_ids or any
+// client-supplied selection, there is no selection field in the
+// /generate/confirmed request at all (see api/client.js).
 function makeConfirmedGenerateResponse(overrides = {}) {
   return {
     run_id: "run1",
     confirmation: makeConfirmationResponse(),
-    planning: makePlanning({
-      plan: {
-        zones: [{ zone_name: "Keep in place", item_ids: ["item_001"], instruction: "keep as is" }],
-        image_prompt: "a tidy bedroom",
-        negative_prompt: null,
-      },
-    }),
+    action_plan: makeActionPlan(),
+    focus_areas: [makeFocusArea({ item_ids: ["item_001"] })],
+    storage_suggestions: [],
+    image_prompt: "A tidy, well-organised bedroom.",
     image_status: "generated",
     image: makeGeneratedImage(),
     image_unavailable_reason: null,
@@ -724,7 +939,10 @@ describe("normaliseConfirmedGenerateResponse", () => {
     expect(result.confirmation.confirmedKeepIds).toEqual(["item_001"]);
     expect(result.imageStatus).toBe("generated");
     expect(result.image).toBeTruthy();
-    expect(result.planning.plan.zones[0].item_ids).toEqual(["item_001"]);
+    expect(result.actionPlan.actions).toHaveLength(2);
+    expect(result.focusAreas[0].item_ids).toEqual(["item_001"]);
+    expect(result.storageSuggestions).toEqual([]);
+    expect(result.imagePrompt).toBe("A tidy, well-organised bedroom.");
   });
 
   test("rejects run_id mismatch", () => {
@@ -749,10 +967,6 @@ describe("normaliseConfirmedGenerateResponse", () => {
   });
 
   test("rejects when the server's confirmed_keep_ids drifts from the prior /confirm result", () => {
-    // The server now reports item_002 as Keep too, but the client's own
-    // earlier /confirm call only ever reported item_001. Otherwise fully
-    // internally consistent (satisfies normaliseConfirmationResponse's
-    // own checks), so this specifically exercises the drift check.
     const bad = makeConfirmedGenerateResponse({
       confirmation: makeConfirmationResponse({
         confirmed_keep_ids: ["item_001", "item_002"],
@@ -769,20 +983,12 @@ describe("normaliseConfirmedGenerateResponse", () => {
         decision_changed_count: 1,
       }),
     });
-    bad.planning.plan.zones[0].item_ids = ["item_001", "item_002"];
     expect(() =>
       normaliseConfirmedGenerateResponse(bad, { ...CONFIRMED_OPTS, priorConfirmedKeepIds: ["item_001"] })
     ).toThrow(/confirmed_keep_ids/);
   });
 
   test("rejects a priorConfirmedKeepIds in a different order than the response, even with the same set", () => {
-    // The response's own confirmed_keep_ids is internally pinned to
-    // confirmed_decisions order (itself pinned to expected_item_ids
-    // order, see confirmationContract.js), ["item_001", "item_002"] is
-    // the only internally-valid order for "both kept". A caller-supplied
-    // priorConfirmedKeepIds in a different order (however it got that
-    // way) must still be rejected, the cross-check is order-sensitive,
-    // not just set-equality.
     const bothKeep = makeConfirmedGenerateResponse({
       confirmation: makeConfirmationResponse({
         confirmed_keep_ids: ["item_001", "item_002"],
@@ -799,28 +1005,37 @@ describe("normaliseConfirmedGenerateResponse", () => {
         decision_changed_count: 1,
       }),
     });
-    bothKeep.planning.plan.zones[0].item_ids = ["item_001", "item_002"];
     expect(() =>
       normaliseConfirmedGenerateResponse(bothKeep, { ...CONFIRMED_OPTS, priorConfirmedKeepIds: ["item_002", "item_001"] })
     ).toThrow(/confirmed_keep_ids/);
   });
 
-  test("rejects a plan that doesn't exactly match the server-derived confirmed Keep set", () => {
-    const bad = makeConfirmedGenerateResponse();
-    bad.planning.plan.zones[0].item_ids = ["item_001", "item_002"]; // item_002 was never confirmed Keep
+  test("rejects a focus area naming an item that was not confirmed Keep", () => {
+    const bad = makeConfirmedGenerateResponse({ focus_areas: [makeFocusArea({ item_ids: ["item_001", "item_002"] })] });
     expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/unselected/);
   });
 
-  test("rejects a plan that omits a confirmed Keep item", () => {
+  test("rejects a storage suggestion naming a non-Keep item", () => {
     const bad = makeConfirmedGenerateResponse({
-      confirmation: makeConfirmationResponse({ confirmed_keep_ids: ["item_001"] }),
+      storage_suggestions: [makeSuggestion({ related_item_ids: ["item_002"] })],
     });
-    bad.planning.plan.zones[0].item_ids = []; // will fail on empty item_ids first, use a different zone instead
-    bad.planning.plan.zones = [{ zone_name: "Elsewhere", item_ids: ["item_002"], instruction: "n/a" }];
-    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/omits/);
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/unselected/);
   });
 
-  test("a plan-preserving unavailable result is a successful, fully validated result", () => {
+  test("accepts a storage suggestion tied to the confirmed Keep set", () => {
+    const ok = makeConfirmedGenerateResponse({ storage_suggestions: [makeSuggestion({ related_item_ids: ["item_001"] })] });
+    expect(normaliseConfirmedGenerateResponse(ok, CONFIRMED_OPTS).storageSuggestions).toHaveLength(1);
+  });
+
+  test("validates the action plan the same way normaliseGenerateResponse does (reused, not reimplemented)", () => {
+    const bad = makeConfirmedGenerateResponse({ action_plan: makeActionPlan({ attempts: 0 }) });
+    expect(() => normaliseConfirmedGenerateResponse(bad, CONFIRMED_OPTS)).toThrow(/attempts must be 1/);
+    const missing = makeConfirmedGenerateResponse();
+    delete missing.action_plan;
+    expect(() => normaliseConfirmedGenerateResponse(missing, CONFIRMED_OPTS)).toThrow(/action_plan/);
+  });
+
+  test("a checklist-preserving unavailable result is a successful, fully validated result", () => {
     const response = makeConfirmedGenerateResponse({
       image_status: "unavailable",
       image: null,
@@ -831,6 +1046,7 @@ describe("normaliseConfirmedGenerateResponse", () => {
     expect(result.image).toBeNull();
     expect(result.imageUnavailableReason).toBe("service_unreachable");
     expect(result.confirmation.confirmedKeepIds).toEqual(["item_001"]); // confirmation still present
+    expect(result.actionPlan.actions).toHaveLength(2);
   });
 
   test("rejects image_status generated with a non-null image_unavailable_reason", () => {
@@ -850,107 +1066,5 @@ describe("normaliseConfirmedGenerateResponse", () => {
 
   test("rejects a non-object response", () => {
     expect(() => normaliseConfirmedGenerateResponse(null, CONFIRMED_OPTS)).toThrow(/must be an object/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// deterministic_direct, the production provenance
-//
-// Production calls no LLM planner for Reorganise, so the response reports
-// zero attempts, no issues and no model identity. The contract accepts
-// exactly that shape and rejects any response that mixes it with evidence
-// of an LLM call that never happened.
-// ---------------------------------------------------------------------------
-
-function makeDirectPlanning(overrides = {}) {
-  return makePlanning({
-    provenance: "deterministic_direct",
-    attempts: 0,
-    issues: [],
-    model_name: null,
-    prompt_version: null,
-    ...overrides,
-  });
-}
-
-describe("reorganiseContract, deterministic_direct", () => {
-  test("accepts the production shape: zero attempts, no issues, null metadata", () => {
-    const ok = makeGeneratedResponse({ planning: makeDirectPlanning() });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
-  });
-
-  test("normalises to a usable result with the provenance preserved", () => {
-    const result = normaliseGenerateResponse(makeGeneratedResponse({ planning: makeDirectPlanning() }), OPTS);
-    expect(result.planning.provenance).toBe("deterministic_direct");
-    expect(result.planning.attempts).toBe(0);
-    expect(result.planning.issues).toEqual([]);
-    expect(result.planning.model_name).toBeNull();
-    expect(result.planning.prompt_version).toBeNull();
-  });
-
-  test("accepts it on the Both (/generate/confirmed) contract too", () => {
-    // Both's plan covers only the server-derived confirmed Keep set.
-    const ok = makeConfirmedGenerateResponse({
-      planning: makeDirectPlanning({
-        plan: {
-          zones: [{ zone_name: "Keep in place", item_ids: ["item_001"], instruction: "keep as is" }],
-          image_prompt: "a tidy bedroom",
-          negative_prompt: null,
-        },
-      }),
-    });
-    expect(() => normaliseConfirmedGenerateResponse(ok, CONFIRMED_OPTS)).not.toThrow();
-  });
-
-  test("still requires an unavailable image result to normalise cleanly", () => {
-    const ok = makeUnavailableResponse("service_unreachable", { planning: makeDirectPlanning() });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
-  });
-
-  // --- contradictory combinations are rejected ---------------------------
-
-  test.each([1, 2])("rejects deterministic_direct claiming %i attempt(s)", (attempts) => {
-    const bad = makeGeneratedResponse({ planning: makeDirectPlanning({ attempts }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/attempts must be 0 for deterministic_direct/);
-  });
-
-  test("rejects deterministic_direct carrying a failed-attempt issue", () => {
-    const bad = makeGeneratedResponse({
-      planning: makeDirectPlanning({
-        issues: [{ attempt: "initial", kind: "invalid_json", detail: "did not happen", conversion_errors: [] }],
-      }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/issues to be empty/);
-  });
-
-  test("rejects deterministic_direct naming a model", () => {
-    const bad = makeGeneratedResponse({
-      planning: makeDirectPlanning({ model_name: "phi4-mini", prompt_version: "v1" }),
-    });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/no model was called/);
-  });
-
-  // --- the other provenances keep their existing attempt rules -----------
-
-  test.each(["raw_valid", "mechanically_repaired", "recovery_used", "deterministic_fallback"])(
-    "%s still rejects zero attempts",
-    (provenance) => {
-      const bad = makeGeneratedResponse({ planning: makePlanning({ provenance, attempts: 0 }) });
-      expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/attempts must be 1 or 2/);
-    }
-  );
-
-  test.each([
-    ["raw_valid", 1],
-    ["mechanically_repaired", 1],
-    ["recovery_used", 2],
-  ])("%s still accepts its real attempt count of %i", (provenance, attempts) => {
-    const ok = makeGeneratedResponse({ planning: makePlanning({ provenance, attempts }) });
-    expect(() => normaliseGenerateResponse(ok, OPTS)).not.toThrow();
-  });
-
-  test("an unrecognised provenance is still rejected", () => {
-    const bad = makeGeneratedResponse({ planning: makePlanning({ provenance: "deterministic_directish" }) });
-    expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/provenance/);
   });
 });

@@ -173,55 +173,52 @@ def _generation_result(run_id: str, image_bytes: bytes, prompt: str) -> Generati
     )
 
 
-class PlanningSpy:
-    """Wraps the REAL production planning function
-    (plan_reorganisation_direct) and records each call.
+class ChecklistSpy:
+    """Wraps the REAL plan_reorganise_actions and records each call,
+    rather than replacing it with a stub.
 
-    Replaces the former LoaderRecorder/FakePlanner pair: Both no longer
-    resolves or receives a planner at all — run_both_generation() passes
-    llm_planner=None — so there is no loader to record and no planner to
-    fake. `.calls` still answers the two questions these tests actually
-    ask: was planning reached, and with which server-derived selection.
-    Delegating to the real function keeps the success path exercising
-    genuine deterministic planning."""
+    Production injects no checklist model at all: both routes pass
+    action_generator=None, so there is no generator dependency to
+    override. What these tests still need to assert is whether the
+    checklist stage was reached at all (every validation-rejection test
+    asserts it was not), with which selection, and that the generator it
+    was given is None. Delegating to the real function means the success
+    path exercises the genuine deterministic checklist."""
 
     def __init__(self, real):
         self._real = real
         self.calls: list[dict] = []
 
-    def __call__(self, run_id, selected_items, scene_label, user_context):
+    def __call__(self, run_id, selected_items, scene_label, user_context, generator):
         self.calls.append(
-            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
+            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator)
         )
         return self._real(
-            run_id=run_id,
-            selected_items=selected_items,
-            scene_label=scene_label,
-            user_context=user_context,
+            run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator
         )
 
 
-_planning_spy: PlanningSpy | None = None
+_checklist_spy: ChecklistSpy | None = None
 
 
 @pytest.fixture(autouse=True)
-def _spy_on_direct_planning(monkeypatch):
-    global _planning_spy
+def _spy_on_checklist(monkeypatch):
+    global _checklist_spy
     import app.services.reorganise_pipeline_service as pipeline_mod
 
-    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
-    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
-    _planning_spy = spy
+    spy = ChecklistSpy(pipeline_mod.plan_reorganise_actions)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganise_actions", spy)
+    _checklist_spy = spy
     yield
-    _planning_spy = None
+    _checklist_spy = None
 
 
 def _override_generate_deps(generator=None):
-    """Returns (planning_spy, generator). No planner override exists —
-    /generate/confirmed has no planner dependency any more."""
+    """Returns (checklist_spy, generator). No checklist-model override
+    exists: /generate/confirmed has no such dependency."""
     generator = generator or FakeGenerator()
     app.dependency_overrides[get_image_generator_provider] = lambda: generator
-    return _planning_spy, generator
+    return _checklist_spy, generator
 
 
 def _confirmed_generate_body(upload_body: dict, image_bytes: bytes, overrides=None, **field_overrides) -> dict:
@@ -265,17 +262,80 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
 
     assert result["image_status"] == "generated"
     assert result["image"]["api_version"] == IMAGE_GEN_API_VERSION
-    planning = result["planning"]
-    assert planning["provenance"] == "deterministic_direct"
-    assert planning["attempts"] == 0
-    assert planning["issues"] == []
-    assert planning["model_name"] is None
-    assert planning["prompt_version"] is None
-    # the server-derived Keep set is exactly what got planned, once each
-    planned = [i for zone in planning["plan"]["zones"] for i in zone["item_ids"]]
-    assert planned == ["item_001"]
+    plan = result["action_plan"]
+    assert plan["provenance"] == "deterministic_direct"
+    assert plan["attempts"] == 0
+    assert plan["issues"] == []
+    assert plan["model_name"] is None
+    assert plan["prompt_version"] is None
+    assert plan["was_repaired"] is None
+    assert plan["actions"][0]["title"].startswith("Start with the")
+    # the server-derived Keep set is exactly what the focus areas cover
+    assert [area["item_ids"] for area in result["focus_areas"]] == [["item_001"]]
+    assert result["storage_suggestions"] == []
+    assert result["image_prompt"].startswith("A tidy, well-organised bedroom.")
+    assert "book" not in result["image_prompt"]  # the donated book never reaches the visual
+    # the checklist stage ran once with NO generator; the image call still happened once
     assert len(planner.calls) == 1
+    assert planner.calls[0]["generator"] is None
     assert len(generator.calls) == 1
+
+
+def test_generate_confirmed_has_no_checklist_model_dependency_to_override():
+    import inspect
+
+    import app.api.routes as routes
+
+    parameters = inspect.signature(routes.generate_confirmed_reorganisation).parameters
+    assert list(parameters) == ["request", "image_generator"]
+
+
+def test_generate_confirmed_uses_the_same_deterministic_checklist_as_direct_reorganise():
+    from app.core.reorganise_actions import build_deterministic_checklist
+
+    upload_body = _do_both_upload(
+        [
+            {"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"},
+            {"item_number": 2, "label": "book", "decision": "keep", "reason": "reading it"},
+            {"item_number": 3, "label": "cup", "decision": "donate", "reason": "spare"},
+        ]
+    )
+    planner, generator = _override_generate_deps()
+    body = _confirmed_generate_body(upload_body, PNG_BYTES)
+
+    response = client.post("/generate/confirmed", json=body)
+
+    assert response.status_code == 200
+    plan = response.json()["action_plan"]
+    assert plan["provenance"] == "deterministic_direct"
+    assert plan["attempts"] == 0
+    kept = planner.calls[0]["selected_items"]
+    assert [item.item_id for item in kept] == ["item_001", "item_002"]  # server-derived Keep only
+    assert plan["actions"] == [a.model_dump() for a in build_deterministic_checklist(kept, "bedroom")]
+    assert "cup" not in " ".join(a["instruction"] for a in plan["actions"])
+    assert len(generator.calls) == 1
+
+
+def test_generate_confirmed_storage_suggestions_come_only_from_confirmed_keep_items():
+    upload_body = _do_both_upload(
+        [
+            {"item_number": 1, "label": "charger", "decision": "keep", "reason": "daily use"},
+            {"item_number": 2, "label": "cable", "decision": "keep", "reason": "daily use"},
+            {"item_number": 3, "label": "cable", "decision": "sell", "reason": "spare"},
+        ]
+    )
+    _override_generate_deps()
+    body = _confirmed_generate_body(upload_body, PNG_BYTES)
+
+    response = client.post("/generate/confirmed", json=body)
+
+    assert response.status_code == 200
+    result = response.json()
+    suggestions = result["storage_suggestions"]
+    assert [s["name"] for s in suggestions] == ["Cable or technology-accessory organiser"]
+    assert suggestions[0]["related_item_ids"] == ["item_001", "item_002"]  # the Sell cable never counts
+    shown = {item_id for area in result["focus_areas"] for item_id in area["item_ids"]}
+    assert shown == {"item_001", "item_002"}
 
 
 def test_generate_confirmed_overrides_change_the_server_derived_keep_set():
@@ -324,7 +384,7 @@ def test_generate_confirmed_response_run_ids_all_agree():
     assert response.status_code == 200
     result = response.json()
     assert result["run_id"] == upload_body["run_id"]
-    assert result["planning"]["run_id"] == upload_body["run_id"]
+    assert result["action_plan"]["run_id"] == upload_body["run_id"]
     assert result["confirmation"]["run_id"] == upload_body["run_id"]
 
 
@@ -340,7 +400,9 @@ def test_generate_confirmed_unavailable_generation_preserves_plan_and_confirmati
     assert result["image_status"] == "unavailable"
     assert result["image_unavailable_reason"] == "service_unreachable"
     assert result["image"] is None
-    assert result["planning"]["plan"]["zones"]
+    assert result["action_plan"]["actions"]
+    assert result["focus_areas"]
+    assert isinstance(result["storage_suggestions"], list)
     assert result["confirmation"]["confirmed_keep_ids"] == ["item_001"]
 
 
@@ -362,8 +424,7 @@ def test_generate_confirmed_empty_keep_returns_409_and_calls_nothing():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
-    assert planner.calls == []  # planning is never reached
-    assert planner.calls == []
+    assert planner.calls == []  # the checklist call is never reached
     assert generator.calls == []
 
 

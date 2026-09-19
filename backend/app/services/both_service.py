@@ -18,25 +18,27 @@ client-supplied") is enforced:
 
 Neither confirm_declutter_result()/confirmed_keep_ids() (app/core/
 confirmation.py, app/services/confirmation_service.py) nor
-run_reorganise_pipeline()/plan_reorganisation_direct() (app/services/
-reorganise_pipeline_service.py, app/services/reorganise_service.py) is
-modified or reimplemented anywhere in this module — this file only
+run_reorganise_pipeline()/plan_reorganise_actions() (app/services/
+reorganise_pipeline_service.py, app/services/reorganise_actions_service.py)
+is modified or reimplemented anywhere in this module — this file only
 sequences them.
 
-No planner, and no Ollama, anywhere on this path: this module passes
-llm_planner=None to run_reorganise_pipeline(), which builds the
-deterministic plan directly and reports provenance DETERMINISTIC_DIRECT.
-There is no planner loader to resolve and no ollama import to trigger —
-the previous two-level lazy-loading DI existed only to defer that
-import, and became dead weight once the import stopped happening at all.
-See backend/evaluation/README.md for the evaluation that motivated the
-policy, and app/services/reorganise_service.py for the retained LLM path
-(still reachable by passing a planner explicitly, for research).
+No checklist model, and no Ollama, anywhere on this path: this module
+passes action_generator=None to run_reorganise_pipeline(), which builds
+the deterministic checklist directly and reports provenance
+DETERMINISTIC_DIRECT with zero model calls, exactly as Direct Reorganise
+does. There is no generator loader to resolve and no model module to
+import. Both workflows therefore share one checklist, focus-area,
+storage-suggestion and image-prompt implementation through
+run_reorganise_pipeline(). See backend/evaluation/README.md for the two
+real checklist-model runs that motivated this, and
+app/services/reorganise_actions_service.py for the retained one-call
+research path (reachable only by passing a generator explicitly).
 
 An empty-Keep request still short-circuits before anything else runs:
-plan_reorganisation_direct is not called and image_generator is not
-called — see run_both_generation's own docstring for the exact
-call-order guarantee.
+plan_reorganise_actions is not called and image_generator is not called
+— see run_both_generation's own docstring for the exact call-order
+guarantee.
 
 Service/API boundary (same discipline as reorganise_pipeline_service.py):
 this module returns raw internal domain data only — BothGenerationResult
@@ -154,13 +156,13 @@ def run_both_generation(
          (malformed overrides — a duplicate or an override referencing an
          unknown item_id) exactly as /confirm's own caller would see.
       3. If confirmation.confirmed_keep_ids is empty -> EmptyConfirmedKeepError,
-         raised HERE. No planning happens and image_generator is NOT
-         called.
+         raised HERE. plan_reorganise_actions() is NOT called and
+         image_generator is NOT called.
       4. Only now is run_reorganise_pipeline() called, with
          selected_item_ids=confirmation.confirmed_keep_ids — the ONLY
          source of selection this function ever uses — and with
-         llm_planner=None, the explicit production choice: the
-         deterministic plan is built directly, no Ollama call is made,
+         action_generator=None, the explicit production choice: the
+         deterministic checklist is built directly, no model is called,
          and provenance is DETERMINISTIC_DIRECT. image_bytes/
          image_media_type/expected_input_image_sha256 are (re)validated
          inside run_reorganise_pipeline() itself (its own existing
@@ -188,7 +190,7 @@ def run_both_generation(
         image_media_type=image_media_type,
         expected_input_image_sha256=expected_input_image_sha256,
         user_context=user_context,
-        llm_planner=None,  # explicit production choice — see this function's docstring
+        action_generator=None,  # explicit production choice — see this function's docstring
         image_generator=image_generator,
     )
 

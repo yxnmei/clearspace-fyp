@@ -77,6 +77,31 @@ class Settings(BaseSettings):
     # including markdown fences, while still stopping a runaway.
     reorganise_llm_num_predict: int = 1536
 
+    # --- Reorganise action checklist bounds (RESEARCH PATH ONLY) ---
+    # Scoped to app/models/reorganise_actions_llm.py's single chat() call
+    # and nothing else. Production does NOT call the checklist model:
+    # Direct Reorganise and Both build the deterministic checklist
+    # directly (provenance "deterministic_direct"), because the two
+    # authorised real phi4-mini runs (prompts reorganise-actions-v1 and
+    # -v2) passed structural validation and failed human review; see
+    # backend/evaluation/README.md. These bound the retained research
+    # path only, never a live user request, and stay validated so a
+    # future approved test cannot run unbounded. Deliberately their own
+    # knobs, not the 210 s / 1536-token research-planner bounds above: a
+    # 3-to-5-action checklist is a short structured response. The model
+    # is llm_model_name (the configured phi4-mini); no second model is
+    # named.
+    #
+    # 90s: generous for one short response on the CPU-only laptop this
+    # project runs on (both real runs took about 25 s). The ollama
+    # client's own default is None (unbounded).
+    reorganise_actions_llm_timeout_s: float = 90.0
+    # 640 tokens: five actions with an 80-character title and a
+    # 300-character instruction each serialise to roughly 2,000
+    # characters (~500 tokens); 640 leaves headroom while stopping a
+    # runaway generation.
+    reorganise_actions_llm_num_predict: int = 640
+
     # --- marketplace listing drafts (V1 generation bounds) ---
     # Scoped to app/models/listing_llm.py's single per-item chat() call
     # and app/services/listing_service.py's per-item retry budget, and
@@ -237,6 +262,52 @@ class Settings(BaseSettings):
             )
         if v <= 0:
             raise ValueError(f"reorganise_llm_num_predict must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("reorganise_actions_llm_timeout_s", mode="before")
+    @classmethod
+    def _check_reorganise_actions_timeout(cls, v: object) -> object:
+        """Same discipline as _check_reorganise_timeout: a real, finite,
+        strictly-positive number; numeric strings parsed (env vars arrive
+        as strings), bool rejected, nan/inf rejected."""
+        if isinstance(v, bool):
+            raise ValueError("reorganise_actions_llm_timeout_s must be a real number, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("reorganise_actions_llm_timeout_s must not be blank")
+            try:
+                v = float(text)
+            except ValueError as exc:
+                raise ValueError(f"reorganise_actions_llm_timeout_s is not a valid number: {v!r}") from exc
+        elif not isinstance(v, (int, float)):
+            raise ValueError(f"reorganise_actions_llm_timeout_s must be a real number, not {type(v).__name__}")
+        if not math.isfinite(v):
+            raise ValueError("reorganise_actions_llm_timeout_s must be finite — an infinite timeout is unbounded")
+        if v <= 0:
+            raise ValueError(f"reorganise_actions_llm_timeout_s must be greater than zero, got {v!r}")
+        return v
+
+    @field_validator("reorganise_actions_llm_num_predict", mode="before")
+    @classmethod
+    def _check_reorganise_actions_num_predict(cls, v: object) -> object:
+        """A genuine positive WHOLE number. Same discipline as
+        _check_reorganise_num_predict: digit string accepted, bool and
+        float rejected."""
+        if isinstance(v, bool):
+            raise ValueError("reorganise_actions_llm_num_predict must be an integer, not bool")
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                raise ValueError("reorganise_actions_llm_num_predict must not be blank")
+            try:
+                v = int(text)
+            except ValueError as exc:
+                raise ValueError(f"reorganise_actions_llm_num_predict must be a whole number, got {v!r}") from exc
+        elif not isinstance(v, int):
+            raise ValueError(f"reorganise_actions_llm_num_predict must be an integer, not {type(v).__name__}")
+        if v <= 0:
+            raise ValueError(f"reorganise_actions_llm_num_predict must be greater than zero, got {v!r}")
         return v
 
     @field_validator("listing_llm_timeout_s", mode="before")

@@ -17,7 +17,6 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.core.confirmation import ConfirmationInputError
-from app.core.reorganise_schemas import PlanProvenance
 from app.core.schemas import (
     AiDecision,
     AnalysisResult,
@@ -40,6 +39,7 @@ from app.services.both_service import (
 )
 from app.services.confirmation_service import IncompleteDeclutterError
 from app.services.declutter_service import DeclutterResult
+from app.services.reorganise_actions_service import ActionPlanProvenance
 from app.services.reorganise_pipeline_service import ReorganisePipelineInputError
 
 
@@ -56,7 +56,7 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _detected_item(item_id: str, index: int, label: str = "lamp") -> DetectedItem:
+def _detected_item(item_id: str, index: int, label: str = "lamp", position: str = "upper-left") -> DetectedItem:
     return DetectedItem(
         item_id=item_id,
         source_detection_index=index,
@@ -64,14 +64,20 @@ def _detected_item(item_id: str, index: int, label: str = "lamp") -> DetectedIte
         clean_label=label,
         box=BoundingBox(x1=0.05 * index, y1=0.1, x2=0.05 * index + 0.04, y2=0.2),
         confidence=0.9,
-        position="upper-left",
+        position=position,
         relative_size="small",
     )
 
 
-def _analysis_result(run_id: str, item_ids: list[str], labels: list[str] | None = None) -> AnalysisResult:
+def _analysis_result(
+    run_id: str, item_ids: list[str], labels: list[str] | None = None, positions: list[str] | None = None
+) -> AnalysisResult:
     labels = labels or ["lamp"] * len(item_ids)
-    items = [_detected_item(item_id, i, label) for i, (item_id, label) in enumerate(zip(item_ids, labels))]
+    positions = positions or ["upper-left"] * len(item_ids)
+    items = [
+        _detected_item(item_id, i, label, position)
+        for i, (item_id, label, position) in enumerate(zip(item_ids, labels, positions))
+    ]
     return AnalysisResult(
         run_id=run_id,
         scene=SceneClassification(label="bedroom", confidence=0.9, all_scores={"bedroom": 0.9}),
@@ -123,59 +129,41 @@ def _incomplete_declutter(run_id: str = "run1") -> DeclutterResult:
     )
 
 
-def _valid_plan_json(item_ids: list[str]) -> dict:
-    return {
-        "zones": [{"zone_name": "Keep in place", "item_ids": item_ids, "instruction": "keep as is"}],
-        "image_prompt": "a tidy bedroom",
-        "negative_prompt": None,
-    }
+class ChecklistSpy:
+    """Wraps the REAL plan_reorganise_actions and records each call,
+    rather than replacing it with a stub.
 
-
-class FakeLLMResult:
-    def __init__(self, parsed_json, is_valid_json=True, was_repaired=False, model_name="phi4-mini", prompt_version="v1"):
-        self.raw_text = "fake"
-        self.parsed_json = parsed_json
-        self.is_valid_json = is_valid_json
-        self.was_repaired = was_repaired
-        self.model_name = model_name
-        self.prompt_version = prompt_version
-
-
-class PlanningSpy:
-    """Wraps the REAL plan_reorganisation_direct and records each call.
-
-    Replaces the former FakePlanner/LoaderRecorder pair: Both no longer
-    accepts or resolves a planner — run_both_generation() passes
-    llm_planner=None — so there is no loader to record. `.calls` still
-    answers what these tests ask: was planning reached at all, and with
-    which server-derived selection."""
+    Production injects no checklist model at all: run_both_generation() passes
+    action_generator=None, so there is no generator dependency to
+    override. What these tests still need to assert is whether the
+    checklist stage was reached at all (every validation-rejection test
+    asserts it was not), with which selection, and that the generator it
+    was given is None. Delegating to the real function means the success
+    path exercises the genuine deterministic checklist."""
 
     def __init__(self, real):
         self._real = real
         self.calls: list[dict] = []
 
-    def __call__(self, run_id, selected_items, scene_label, user_context):
+    def __call__(self, run_id, selected_items, scene_label, user_context, generator):
         self.calls.append(
-            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context)
+            dict(run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator)
         )
         return self._real(
-            run_id=run_id,
-            selected_items=selected_items,
-            scene_label=scene_label,
-            user_context=user_context,
+            run_id=run_id, selected_items=selected_items, scene_label=scene_label, user_context=user_context, generator=generator
         )
 
 
-_planning_spy: PlanningSpy | None = None
+_planning_spy: ChecklistSpy | None = None
 
 
 @pytest.fixture(autouse=True)
-def _spy_on_direct_planning(monkeypatch):
+def _spy_on_checklist(monkeypatch):
     global _planning_spy
     import app.services.reorganise_pipeline_service as pipeline_mod
 
-    spy = PlanningSpy(pipeline_mod.plan_reorganisation_direct)
-    monkeypatch.setattr(pipeline_mod, "plan_reorganisation_direct", spy)
+    spy = ChecklistSpy(pipeline_mod.plan_reorganise_actions)
+    monkeypatch.setattr(pipeline_mod, "plan_reorganise_actions", spy)
     _planning_spy = spy
     yield
     _planning_spy = None
@@ -279,14 +267,67 @@ def test_success_derives_selection_from_confirmed_keep_ids_only():
     # planning only ever saw the confirmed Keep items, never item_002
     assert [item.item_id for item in loader.calls[0]["selected_items"]] == ["item_001", "item_003"]
     assert result.pipeline.image_status == "generated"
-    # truthful provenance: Both makes no LLM call at all
-    assert result.pipeline.planning.provenance == PlanProvenance.DETERMINISTIC_DIRECT
-    assert result.pipeline.planning.attempts == 0
-    assert result.pipeline.planning.issues == []
-    assert result.pipeline.planning.model_name is None
-    assert result.pipeline.planning.prompt_version is None
+    # truthful provenance: Both makes no checklist-model call at all
+    assert loader.calls[0]["generator"] is None
+    assert result.pipeline.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_DIRECT
+    assert result.pipeline.action_plan.attempts == 0
+    assert result.pipeline.action_plan.issues == []
+    assert result.pipeline.action_plan.model_name is None
+    assert result.pipeline.action_plan.prompt_version is None
+    assert result.pipeline.action_plan.was_repaired is None
+    assert result.pipeline.selected_item_ids == ["item_001", "item_003"]
+    assert result.pipeline.storage_suggestions == []  # lamps: no evidence, nothing invented
     assert len(loader.calls) == 1
     assert len(generator.calls) == 1
+
+
+def test_run_both_generation_accepts_no_checklist_model_or_loader():
+    import inspect
+
+    parameters = inspect.signature(run_both_generation).parameters
+    assert "action_generator_provider" not in parameters
+    assert not any("generator" in name and name != "image_generator" for name in parameters)
+
+
+def test_both_checklist_is_the_same_deterministic_one_direct_reorganise_builds():
+    from app.core.reorganise_actions import build_deterministic_checklist
+
+    analysis = _analysis_result("run1", ["item_001", "item_002", "item_003"], labels=["lamp", "cup", "cup"])
+    declutter = _complete_declutter([("item_001", "keep"), ("item_002", "keep"), ("item_003", "sell")])
+    generator = FakeGenerator()
+
+    result = _run(analysis=analysis, declutter=declutter, image_generator=generator)
+
+    kept = [item for item in analysis.items if item.item_id in ("item_001", "item_002")]
+    assert result.pipeline.action_plan.actions == build_deterministic_checklist(kept, "bedroom")
+    assert result.pipeline.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_DIRECT
+    assert len(generator.calls) == 1  # the single image call still happens
+
+
+def test_both_generator_focus_areas_and_suggestions_see_only_confirmed_keep_items():
+    analysis = _analysis_result(
+        "run1",
+        ["item_001", "item_002", "item_003", "item_004"],
+        labels=["cable", "charger", "cable", "lamp"],
+        positions=["left", "left", "right", "center"],
+    )
+    declutter = _complete_declutter(
+        [("item_001", "keep"), ("item_002", "keep"), ("item_003", "donate"), ("item_004", "keep")]
+    )
+
+    result = _run(analysis=analysis, declutter=declutter)
+
+    assert [item.item_id for item in _planning_spy.calls[0]["selected_items"]] == ["item_001", "item_002", "item_004"]
+    shown = {item_id for area in result.pipeline.focus_areas for item_id in area.item_ids}
+    assert shown == {"item_001", "item_002", "item_004"}
+    assert [(area.area_id, area.item_ids) for area in result.pipeline.focus_areas] == [
+        ("left", ["item_001", "item_002"]),
+        ("centre", ["item_004"]),
+    ]
+    # evidence comes only from confirmed Keep items; the donated cable never counts
+    assert [s.related_item_ids for s in result.pipeline.storage_suggestions] == [["item_001", "item_002"]]
+    # the image prompt lists the kept cable once; the donated cable never reaches it
+    assert result.pipeline.image_prompt.count("- cable") == 1
 
 
 def test_overrides_change_the_derived_keep_set_reaching_the_pipeline():
@@ -339,8 +380,7 @@ def test_empty_confirmed_keep_never_calls_planner_loader_or_generator():
     with pytest.raises(EmptyConfirmedKeepError):
         _run(declutter=declutter, image_generator=generator)
 
-    assert loader.calls == []  # planning is never reached
-    assert loader.calls == []
+    assert loader.calls == []  # the checklist call is never reached
     assert generator.calls == []
 
 
