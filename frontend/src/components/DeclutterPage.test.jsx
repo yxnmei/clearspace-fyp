@@ -189,7 +189,7 @@ describe("DeclutterPage wizard, one view at a time", () => {
 
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     expect(viewedLabel()).toBe("Confirm choices");
-    expect(screen.getByRole("heading", { name: /4\. confirm decisions/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Confirm your choices" })).toBeInTheDocument();
     // Confirm is now a navigable tracker step
     const trackerConfirm = within(nav()).queryAllByRole("button", { name: "Go to Confirm choices" });
     expect(trackerConfirm.length).toBe(0); // it is the current step, so not a button
@@ -251,7 +251,7 @@ describe("DeclutterPage wizard, Confirm is an explicit action", () => {
     expect(client.confirmDecisions).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
     expect(client.confirmDecisions).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
   });
 });
 
@@ -352,18 +352,18 @@ describe("DeclutterPage wizard, state preservation", () => {
     await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
 
     // Navigate away and back, the confirmed summary is still there.
     await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument();
 
     // Now edit a decision on Review, the hook invalidates the confirmation.
     await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
     await user.click(screen.getAllByRole("radio", { name: "Donate" })[0]);
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(screen.queryByRole("heading", { name: /decisions confirmed/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /choices confirmed/i })).not.toBeInTheDocument();
   });
 
   test("a new upload relocks stale downstream steps and starts a fresh Analyse view", async () => {
@@ -667,7 +667,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
       decision === "sell" ? makeConfirmResponseSell(runId) : makeConfirmResponse(runId)
     );
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
   }
 
   test("Continue to Listings appears only after a successful confirmation", async () => {
@@ -681,7 +681,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
 
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
 
     expect(screen.getByRole("button", { name: /continue to listing drafts/i })).toBeInTheDocument();
   });
@@ -763,7 +763,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponseSell("run-a"));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
     client.generateListings.mockResolvedValueOnce(
@@ -839,7 +839,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
 
     await user.click(screen.getByRole("button", { name: /back to confirm/i }));
     expect(viewedLabel()).toBe("Confirm choices");
-    expect(screen.getByText(/decisions confirmed/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
@@ -973,5 +973,109 @@ describe("DeclutterPage wizard, Decide items action bar", () => {
     expect(text).not.toMatch(/item_001|item_009|item_id/);
     expect(text).not.toMatch(/\d+\s*%/);
     expect(text).not.toMatch(/raw_valid|still_invalid|validity/i);
+  });
+});
+
+describe("DeclutterPage wizard, Confirm choices panel", () => {
+  const confirmPanel = () => screen.getByRole("region", { name: /confirm your choices|choices confirmed/i });
+  function visibleText() {
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll("[hidden]").forEach((el) => el.remove());
+    return clone.textContent;
+  }
+
+  test("before confirming there is one panel with live non-zero counts and the Confirm action; no summary panel", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    await user.click(screen.getAllByRole("radio", { name: "Sell" })[0]);
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+
+    expect(screen.getAllByRole("region", { name: /confirm your choices|choices confirmed/i })).toHaveLength(1);
+    expect(within(confirmPanel()).getByText("Sell").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(confirmPanel()).getByText("Changed").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(confirmPanel()).queryByText("Keep")).not.toBeInTheDocument();
+    expect(within(confirmPanel()).queryByText("Donate")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /choices confirmed/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /continue to listing drafts/i })).not.toBeInTheDocument();
+  });
+
+  test("unresolved items on Confirm: the panel names the count and Review unresolved items returns to Decide items with no request", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i })); // Confirm now unlocked
+    expect(viewedLabel()).toBe("Confirm choices");
+
+    // Back on Decide items, a label correction comes back with a second, unresolved item.
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
+    const unresolved = makeUploadResponse("run-a", { unresolved: true });
+    client.overrideItem.mockResolvedValueOnce({ run_id: "run-a", analysis: unresolved.analysis, declutter: unresolved.declutter });
+    await user.click(screen.getAllByRole("button", { name: /wrong label/i })[0]);
+    await user.click(screen.getByRole("button", { name: /submit correction/i }));
+    await waitFor(() => expect(screen.getByText("cable")).toBeInTheDocument());
+
+    // Confirm stays reachable (already acknowledged) but blocked, and says why.
+    await user.click(within(nav()).getByRole("button", { name: "Go to Confirm choices" }));
+    expect(viewedLabel()).toBe("Confirm choices");
+    expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeDisabled();
+    expect(within(confirmPanel()).getByText("1 item still needs a decision before you can confirm.")).toBeInTheDocument();
+
+    await user.click(within(confirmPanel()).getByRole("button", { name: "Review unresolved items" }));
+    expect(viewedLabel()).toBe("Decide items");
+    expect(screen.getByText("cable").closest("li")).toHaveTextContent("Please double check");
+    expect(client.confirmDecisions).not.toHaveBeenCalled();
+    expect(client.overrideItem).toHaveBeenCalledTimes(1);
+  });
+
+  test("after confirming, the same panel becomes Choices confirmed with confirmed counts, no ids, and Continue to Listing drafts only navigates", async () => {
+    const user = userEvent.setup();
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
+
+    expect(screen.getAllByRole("region", { name: /confirm your choices|choices confirmed/i })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: /confirm your choices/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /confirm decisions/i })).not.toBeInTheDocument();
+    expect(within(confirmPanel()).getByRole("status")).toHaveTextContent(/1 decision confirmed/i);
+    expect(within(confirmPanel()).getByText("Keep").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(confirmPanel()).getByText(/listing drafts for the items you confirmed as sell/i)).toBeInTheDocument();
+
+    const text = visibleText();
+    expect(text).not.toMatch(/run-a|item_001|item_id|confirmed keep items/i);
+
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
+    expect(viewedLabel()).toBe("Listing drafts");
+    expect(client.generateListings).not.toHaveBeenCalled();
+    expect(client.confirmDecisions).toHaveBeenCalledTimes(1);
+  });
+
+  test("a confirmation failure stays inline in the same panel and keeps the decisions; retry succeeds", async () => {
+    const user = userEvent.setup();
+    client.confirmDecisions.mockRejectedValueOnce(new Error("Decision confirmation failed"));
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    await user.click(screen.getAllByRole("radio", { name: "Donate" })[0]);
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(confirmPanel()).toContainElement(alert);
+    expect(alert).toHaveTextContent(/decisions and exclusions are unchanged/i);
+    expect(screen.getByRole("heading", { name: /confirm your choices/i })).toBeInTheDocument();
+    expect(within(confirmPanel()).getByText("Donate").closest("div").querySelector("dd")).toHaveTextContent("1");
+
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

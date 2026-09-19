@@ -17,7 +17,6 @@ import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
 import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
-import ConfirmationSummary from "./ConfirmationSummary";
 import ListingsView from "./ListingsView";
 
 // The Declutter workflow as a five-view wizard: Upload → Analyse →
@@ -277,6 +276,9 @@ export default function DeclutterPage() {
         <div hidden={viewed !== "confirm"}>
           {hasAnalysis && (
             <div className="space-y-6">
+              {/* One panel for every confirmation state; it turns into the
+                  success summary in place. "Review unresolved items" is
+                  plain step navigation back to Decide items. */}
               <DeclutterConfirmationPanel
                 counts={counts}
                 changedCount={changedCount}
@@ -286,11 +288,9 @@ export default function DeclutterPage() {
                 confirmationStatus={confirmationStatus}
                 confirmationError={confirmationError}
                 onConfirm={confirm}
+                confirmation={confirmation}
+                onReviewUnresolved={() => goToStep("review")}
               />
-
-              {confirmation && (
-                <ConfirmationSummary confirmation={confirmation} reviewItems={reviewItems} />
-              )}
 
               <WizardNav
                 backLabel="Back to Decide items"

@@ -229,11 +229,11 @@ describe("DeclutterReview", () => {
       response: {},
     };
     const { rerender } = render(<DeclutterReview {...baseProps({ confirmationStatus: "confirmed", confirmation })} />);
-    expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument();
 
     rerender(<DeclutterReview {...baseProps({ confirmationStatus: "idle", confirmation: null })} />);
 
-    expect(screen.queryByRole("heading", { name: /decisions confirmed/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /choices confirmed/i })).not.toBeInTheDocument();
   });
 
   test("hovering an item card highlights its box in the analysed-room panel", async () => {
@@ -551,20 +551,22 @@ describe("DeclutterReview, confirmation handoff copy", () => {
     };
   }
 
-  test("without the prop, ConfirmationSummary's own default wording is shown unchanged", () => {
-    const props = baseProps({ confirmation: makeConfirmation() });
+  test("without the prop, the confirmation panel's own standalone-Declutter wording is shown unchanged", () => {
+    const props = baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() });
     render(<DeclutterReview {...props} />);
-    expect(screen.getByText(/these are the items you confirmed to keep/i)).toBeInTheDocument();
+    expect(screen.getByText(/listing drafts for the items you confirmed as sell/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reorganis/i)).not.toBeInTheDocument();
   });
 
-  test("a configured confirmationNextStepNote is forwarded to ConfirmationSummary", () => {
+  test("a configured confirmationNextStepNote is forwarded to the confirmation panel", () => {
     const props = baseProps({
+      confirmationStatus: "confirmed",
       confirmation: makeConfirmation(),
       confirmationNextStepNote: "These confirmed Keep items will be sent to reorganisation next.",
     });
     render(<DeclutterReview {...props} />);
     expect(screen.getByText(/sent to reorganisation next/i)).toBeInTheDocument();
-    expect(screen.queryByText(/these are the items you confirmed to keep/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/listing drafts for the items you confirmed as sell/i)).not.toBeInTheDocument();
   });
 });
 

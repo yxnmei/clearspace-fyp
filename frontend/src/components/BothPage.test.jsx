@@ -210,7 +210,7 @@ async function reachActions(user, scenario = { decisions: [{ itemId: "item_001",
   await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
   client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse(scenario.confirmed));
   await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
-  await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
   expect(client.generateListings).not.toHaveBeenCalled();
   expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: /continue to results/i }));
@@ -538,5 +538,38 @@ describe("BothPage Decide items action bar", () => {
     const response = makeBothUploadResponse();
     resolveOverride({ run_id: "run1", analysis: response.analysis, declutter: response.declutter });
     await waitFor(() => expect(within(bar()).getByRole("button", { name: /continue to confirm choices/i })).toBeEnabled());
+  });
+});
+
+describe("BothPage Confirm choices panel", () => {
+  const confirmPanel = () => screen.getByRole("region", { name: /confirm your choices|choices confirmed/i });
+
+  test("one panel transforms in place, states Both's independent next actions, and Continue to Results only navigates", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachReview(user, KEEP_AND_SELL.decisions);
+    await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
+
+    expect(screen.getAllByRole("region", { name: /confirm your choices|choices confirmed/i })).toHaveLength(1);
+    expect(within(confirmPanel()).getByText("Keep").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(confirmPanel()).getByText("Sell").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(confirmPanel()).queryByText("Donate")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to results/i })).not.toBeInTheDocument();
+
+    client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse(KEEP_AND_SELL.confirmed));
+    await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /choices confirmed/i })).toBeInTheDocument());
+
+    expect(screen.getAllByRole("region", { name: /confirm your choices|choices confirmed/i })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: /confirm your choices/i })).not.toBeInTheDocument();
+    expect(within(confirmPanel()).getByRole("status")).toHaveTextContent(/2 decisions confirmed/i);
+    expect(within(confirmPanel()).getByText(/tidy up and marketplace listings are separate actions/i)).toBeInTheDocument();
+    expect(within(confirmPanel()).getByText(/neither starts automatically/i)).toBeInTheDocument();
+    expect(confirmPanel().textContent).not.toMatch(/run1|item_00\d|item_id/i);
+
+    await user.click(screen.getByRole("button", { name: /continue to results/i }));
+    expect(currentStep()).toBe("Results");
+    expect(client.generateListings).not.toHaveBeenCalled();
+    expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
   });
 });

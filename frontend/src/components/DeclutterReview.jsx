@@ -1,7 +1,6 @@
 import DeclutterReviewSection from "./DeclutterReviewSection";
 import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
-import ConfirmationSummary from "./ConfirmationSummary";
 import {
   partitionReviewItems,
   deriveReviewCounts,
@@ -32,9 +31,9 @@ export default function DeclutterReview({
   correctLabel = () => {},
   correctingItemId = null,
   correctionError = null,
-  // Forwarded to ConfirmationSummary's `nextStepNote`. Undefined by
-  // default, so Declutter keeps ConfirmationSummary's standalone wording;
-  // Both passes a note pointing at its immediate reorganisation step.
+  // Forwarded to the confirmation panel's `nextStepNote`. Undefined by
+  // default, so the panel keeps its standalone-Declutter wording; Both
+  // passes a note pointing at its own Results screen.
   confirmationNextStepNote,
 }) {
   const { resolvedItems, unresolvedItems, contextualItems } = partitionReviewItems(reviewItems);
@@ -77,15 +76,9 @@ export default function DeclutterReview({
         confirmationStatus={confirmationStatus}
         confirmationError={confirmationError}
         onConfirm={confirm}
+        confirmation={confirmation}
+        nextStepNote={confirmationNextStepNote}
       />
-
-      {confirmation && (
-        <ConfirmationSummary
-          confirmation={confirmation}
-          reviewItems={reviewItems}
-          nextStepNote={confirmationNextStepNote}
-        />
-      )}
     </div>
   );
 }

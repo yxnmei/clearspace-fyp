@@ -18,13 +18,12 @@ import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
 import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
-import ConfirmationSummary from "./ConfirmationSummary";
 import ReorganiseResult from "./ReorganiseResult";
 import ListingsView from "./ListingsView";
 import { Button } from "./ui/button";
 
 const NEXT_STEP_NOTE =
-  "Your confirmed choices are ready. On the next screen, listings and reorganisation are separate actions and neither starts automatically.";
+  "On the Results screen, Tidy up and Marketplace listings are separate actions. Neither starts automatically, and you can run either first.";
 
 // Both uses the same mounted-but-hidden wizard pattern as Declutter. The
 // hook remains the sole owner of workflow, listing and generation state;
@@ -224,6 +223,8 @@ export default function BothPage() {
         <div hidden={viewed !== "confirm"}>
           {hasAnalysis && (
             <div className="space-y-6">
+              {/* The same single panel as the Declutter wizard, with Both's
+                  own next-step note. */}
               <DeclutterConfirmationPanel
                 counts={counts}
                 changedCount={changedCount}
@@ -233,15 +234,10 @@ export default function BothPage() {
                 confirmationStatus={flow.confirmationStatus}
                 confirmationError={flow.confirmationError}
                 onConfirm={flow.confirm}
+                confirmation={flow.confirmation}
+                onReviewUnresolved={() => goToStep("review")}
+                nextStepNote={NEXT_STEP_NOTE}
               />
-
-              {flow.confirmation && (
-                <ConfirmationSummary
-                  confirmation={flow.confirmation}
-                  reviewItems={flow.reviewItems}
-                  nextStepNote={NEXT_STEP_NOTE}
-                />
-              )}
 
               <WizardNav
                 backLabel="Back to Decide items"
