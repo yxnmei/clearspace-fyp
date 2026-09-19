@@ -184,7 +184,7 @@ describe("DeclutterReview", () => {
     render(<DeclutterReview {...props} />);
 
     expect(screen.getByText("cable")).toBeInTheDocument();
-    expect(screen.getByText(/no valid ai decision was produced/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeDisabled();
   });
 
@@ -442,7 +442,7 @@ describe("DeclutterReview", () => {
     expect(screen.getByText("charger")).toBeInTheDocument();
     expect(screen.queryByText("cable")).not.toBeInTheDocument();
     expect(screen.getByText("Corrected by you")).toBeInTheDocument();
-    expect(screen.getByText(/no valid ai decision was produced/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
   });
 
   test("contextual items display effective_label but offer no correction control", () => {

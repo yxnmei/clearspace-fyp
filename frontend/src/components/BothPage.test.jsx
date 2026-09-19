@@ -489,3 +489,54 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument();
   });
 });
+
+describe("BothPage Decide items action bar", () => {
+  const bar = () => screen.getByRole("region", { name: /decision summary and navigation/i });
+
+  test("Decide items has exactly one Back and one Continue, in the shared sticky bar, with live counts", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachReview(user, [
+      { itemId: "item_001", decision: "keep" },
+      { itemId: "item_002", decision: "sell" },
+      { itemId: "item_003", decision: "keep" },
+    ]);
+
+    expect(screen.getAllByRole("button", { name: /back to analyse room/i })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /continue to confirm choices/i })).toHaveLength(1);
+    expect(bar().className).toMatch(/sticky/);
+    expect(within(bar()).getByText("3 items")).toBeInTheDocument();
+    expect(within(bar()).getByText("Keep").nextElementSibling).toHaveTextContent("2");
+    expect(within(bar()).getByText("Sell").nextElementSibling).toHaveTextContent("1");
+    expect(within(bar()).queryByText("Donate")).not.toBeInTheDocument();
+
+    // change one decision: the counts follow, no request is made
+    await user.click(screen.getAllByRole("radio", { name: "Donate" })[0]);
+    expect(within(bar()).getByText("Keep").nextElementSibling).toHaveTextContent("1");
+    expect(within(bar()).getByText("Donate").nextElementSibling).toHaveTextContent("1");
+    expect(client.confirmDecisions).not.toHaveBeenCalled();
+    expect(client.overrideItem).not.toHaveBeenCalled();
+    expect(within(bar()).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(bar()).getByRole("button", { name: /continue to confirm choices/i })).toBeEnabled();
+  });
+
+  test("the bar explains a blocked Continue while a label correction is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveOverride;
+    client.overrideItem.mockImplementationOnce(() => new Promise((r) => { resolveOverride = r; }));
+    render(<BothPage />);
+    await reachReview(user);
+
+    await user.click(screen.getAllByRole("button", { name: /wrong label/i })[0]);
+    await user.click(screen.getByRole("button", { name: /submit correction/i }));
+
+    await waitFor(() => expect(within(bar()).getByRole("status")).toHaveTextContent(/label correction is in progress/i));
+    const cont = within(bar()).getByRole("button", { name: /continue to confirm choices/i });
+    expect(cont).toBeDisabled();
+    expect(cont).toHaveAttribute("aria-describedby", within(bar()).getByRole("status").id);
+
+    const response = makeBothUploadResponse();
+    resolveOverride({ run_id: "run1", analysis: response.analysis, declutter: response.declutter });
+    await waitFor(() => expect(within(bar()).getByRole("button", { name: /continue to confirm choices/i })).toBeEnabled());
+  });
+});

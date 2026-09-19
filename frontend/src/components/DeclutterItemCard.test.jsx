@@ -274,12 +274,8 @@ describe("DeclutterItemCard", () => {
   });
 
   describe("segmented decision controls", () => {
-    const CATEGORY = {
-      Keep: { on: /border-green-600/, off: /border-green-200/, accent: /accent-green-600/ },
-      Sell: { on: /border-blue-600/, off: /border-blue-200/, accent: /accent-blue-600/ },
-      Donate: { on: /border-amber-600/, off: /border-amber-200/, accent: /accent-amber-600/ },
-      Discard: { on: /border-red-600/, off: /border-red-200/, accent: /accent-red-600/ },
-    };
+    const TOKEN = { Keep: "keep", Sell: "sell", Donate: "donate", Discard: "discard" };
+    const segmentOf = (radio) => radio.nextElementSibling; // the visible, peer-styled segment
 
     test("stay native radios inside the fieldset, not tabs or div buttons", () => {
       render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
@@ -292,56 +288,60 @@ describe("DeclutterItemCard", () => {
       expect(radios.filter((r) => r.checked)).toHaveLength(1);
     });
 
-    test.each([
-      ["Keep", "green"],
-      ["Sell", "blue"],
-      ["Donate", "amber"],
-      ["Discard", "red"],
-    ])("%s uses its %s category colour (radio accent + label border/text/hover)", (label, colour) => {
-      render(
-        <DeclutterItemCard
-          item={makeReviewItem({ review_decision: null })}
-          onDecisionChange={vi.fn()}
-          onExcludedChange={vi.fn()}
-        />
-      );
-      const radio = screen.getByRole("radio", { name: label });
-      const segment = radio.closest("label").className;
-      // unselected: light category border, category text, matching hover
-      expect(segment).toMatch(CATEGORY[label].off);
-      expect(segment).toMatch(new RegExp(`text-${colour}-800`));
-      expect(segment).toMatch(new RegExp(`hover:bg-${colour}-50`));
-      // colour is not the only cue, the visible label text is still there
-      expect(radio.closest("label")).toHaveTextContent(label);
-      // the native radio accent carries the same category colour
-      expect(radio.className).toMatch(CATEGORY[label].accent);
+    test("the four options are one cohesive control in a single row of four at every breakpoint", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      const track = screen.getByRole("radio", { name: "Keep" }).closest("label").parentElement;
+      expect(track.className).toMatch(/\bgrid\b/);
+      expect(track.className).toMatch(/\bgrid-cols-4\b/);
+      expect(track.className).not.toMatch(/\bgrid-cols-2\b/);
+      expect(track.querySelectorAll("label")).toHaveLength(4);
+      expect(track.className).not.toMatch(/overflow-x-auto/);
     });
 
-    test.each([
-      ["Keep", "green"],
-      ["Sell", "blue"],
-      ["Donate", "amber"],
-      ["Discard", "red"],
-    ])("the selected %s decision gets the stronger %s treatment; the rest stay light", (label, colour) => {
-      render(
-        <DeclutterItemCard
-          item={makeReviewItem({ review_decision: label.toLowerCase() })}
-          onDecisionChange={vi.fn()}
-          onExcludedChange={vi.fn()}
-        />
-      );
-      const chosen = screen.getByRole("radio", { name: label });
-      expect(chosen).toBeChecked();
-      const chosenSegment = chosen.closest("label").className;
-      expect(chosenSegment).toMatch(CATEGORY[label].on); // stronger category border
-      expect(chosenSegment).toMatch(new RegExp(`bg-${colour}-50`)); // tinted background
-
-      for (const other of ["Keep", "Sell", "Donate", "Discard"].filter((l) => l !== label)) {
-        const seg = screen.getByRole("radio", { name: other }).closest("label").className;
-        expect(seg).toMatch(CATEGORY[other].off);
-        expect(seg).not.toMatch(CATEGORY[other].on);
+    test.each(["Keep", "Sell", "Donate", "Discard"])(
+      "%s shows an icon, its text label and its decision colour token, never colour alone",
+      (label) => {
+        render(
+          <DeclutterItemCard
+            item={makeReviewItem({ review_decision: label.toLowerCase() })}
+            onDecisionChange={vi.fn()}
+            onExcludedChange={vi.fn()}
+          />
+        );
+        const radio = screen.getByRole("radio", { name: label });
+        const segment = segmentOf(radio);
+        expect(segment.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+        expect(segment).toHaveTextContent(label);
+        expect(segment.className).toMatch(new RegExp(`text-decision-${TOKEN[label]}`));
+        expect(segment.className).toMatch(new RegExp(`border-decision-${TOKEN[label]}`));
+        // no raw palette classes remain
+        expect(segment.className).not.toMatch(/green|blue|amber|red-\d/);
       }
-    });
+    );
+
+    test.each(["Keep", "Sell", "Donate", "Discard"])(
+      "the selected %s decision gets the stronger treatment; the rest stay neutral until hovered",
+      (label) => {
+        render(
+          <DeclutterItemCard
+            item={makeReviewItem({ review_decision: label.toLowerCase() })}
+            onDecisionChange={vi.fn()}
+            onExcludedChange={vi.fn()}
+          />
+        );
+        const chosen = screen.getByRole("radio", { name: label });
+        expect(chosen).toBeChecked();
+        expect(segmentOf(chosen).className).toMatch(/\bbg-surface\b/);
+
+        for (const other of ["Keep", "Sell", "Donate", "Discard"].filter((l) => l !== label)) {
+          const seg = segmentOf(screen.getByRole("radio", { name: other })).className;
+          expect(seg).toMatch(/border-transparent/);
+          expect(seg).toMatch(/text-muted-foreground/);
+          expect(seg).toMatch(new RegExp(`hover:text-decision-${TOKEN[other]}`));
+          expect(seg).not.toMatch(new RegExp(`border-decision-${TOKEN[other]}`));
+        }
+      }
+    );
 
     test.each([
       ["Keep", "keep"],
@@ -364,10 +364,30 @@ describe("DeclutterItemCard", () => {
       expect(onDecisionChange).toHaveBeenCalledWith("item_042", decision);
     });
 
-    test("each radio keeps a visible keyboard focus ring", () => {
+    test("arrow keys move between the native radios and select, calling back with item_id", async () => {
+      const user = userEvent.setup();
+      const onDecisionChange = vi.fn();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ item_id: "item_042", review_decision: "keep" })}
+          onDecisionChange={onDecisionChange}
+          onExcludedChange={vi.fn()}
+        />
+      );
+
+      await user.tab();
+      expect(screen.getByRole("radio", { name: "Keep" })).toHaveFocus();
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByRole("radio", { name: "Sell" })).toHaveFocus();
+      expect(onDecisionChange).toHaveBeenCalledWith("item_042", "sell");
+    });
+
+    test("the visible segment carries the keyboard focus ring for its hidden radio", () => {
       render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
       for (const label of ["Keep", "Sell", "Donate", "Discard"]) {
-        expect(screen.getByRole("radio", { name: label }).className).toMatch(/focus-visible:ring-2/);
+        const radio = screen.getByRole("radio", { name: label });
+        expect(radio.className).toMatch(/\bpeer\b/);
+        expect(segmentOf(radio).className).toMatch(/peer-focus-visible:ring-2/);
       }
     });
 
@@ -400,6 +420,119 @@ describe("DeclutterItemCard", () => {
       expect(screen.getByText("Changed")).toBeInTheDocument();
       expect(screen.getByText("Excluded")).toBeInTheDocument();
       expect(screen.getByText(/AI suggests:/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("compact row content", () => {
+    test("hides raw item_id, detection confidence and item_validity from the visible row", () => {
+      const { container } = render(
+        <DeclutterItemCard
+          item={makeReviewItem({ item_id: "item_007", confidence: 0.45, item_validity: "raw_valid" })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      const text = container.textContent;
+      expect(text).not.toMatch(/item_007|item_id/);
+      expect(text).not.toMatch(/45\s*%|detection confidence/i);
+      expect(text).not.toMatch(/%/);
+      expect(text).not.toMatch(/raw_valid|validity/i);
+      expect(container.querySelector("code")).toBeNull();
+      // the number badge (derived from item_id) still links the row to its box
+      expect(screen.getByText("7")).toBeInTheDocument();
+    });
+
+    test("keeps position and relative size as a concise disambiguation line", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      expect(screen.getByText("upper-left, small")).toBeInTheDocument();
+    });
+
+    test("the AI suggestion and reason stay present but secondary, with the decision's icon and name", () => {
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ ai_decision: "donate", ai_reason: "still usable by someone else" })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+        />
+      );
+      const line = screen.getByText(/AI suggests:/i).closest("p");
+      expect(line).toHaveTextContent(/AI suggests: Donate, still usable by someone else/);
+      expect(line.className).toMatch(/text-xs/);
+      expect(line.className).toMatch(/text-muted-foreground/);
+      expect(line.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+    });
+  });
+
+  describe("responsive card grid", () => {
+    const classesOf = (el) => el.className.split(/\s+/);
+
+    test("is one CSS grid: two columns below md, three from md up, with no responsive hide/show duplicates", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      const grid = screen.getByTestId("item-card-grid");
+      const classes = classesOf(grid);
+      expect(classes).toContain("grid");
+      expect(classes).toContain("grid-cols-[auto_minmax(0,1fr)]");
+      expect(classes).toContain("md:grid-cols-[auto_minmax(0,1fr)_auto]");
+      expect(grid.querySelector(".hidden, [class*='md:hidden'], [class*='sm:hidden']")).toBeNull();
+    });
+
+    test("the single DecisionControl spans both mobile columns on its own row, and moves to the right-hand column from md", () => {
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      const groups = screen.getAllByRole("group");
+      expect(groups).toHaveLength(1); // one fieldset, one radio group
+      expect(screen.getAllByRole("radio")).toHaveLength(4);
+      const control = groups[0];
+      expect(control.parentElement).toBe(screen.getByTestId("item-card-grid"));
+      const classes = classesOf(control);
+      // mobile: full card width beneath the thumbnail + info row
+      for (const cls of ["col-span-2", "col-start-1", "row-start-2"]) expect(classes).toContain(cls);
+      // desktop: third column, first row, right-aligned
+      for (const cls of ["md:col-span-1", "md:col-start-3", "md:row-start-1", "md:justify-self-end"]) expect(classes).toContain(cls);
+      // nothing inside clips a label
+      expect(control.querySelector("[class*='overflow-hidden']")).toBeNull();
+    });
+
+    test("thumbnail and item info share the first row; the secondary lines follow on their own row", () => {
+      render(
+        <DeclutterItemCard item={makeReviewItem({ box: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 } })} imageUrl="blob:room" onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />
+      );
+      const thumb = screen.getByTestId("item-crop-thumbnail");
+      for (const cls of ["col-start-1", "row-start-1"]) expect(classesOf(thumb)).toContain(cls);
+
+      const info = screen.getByText("picture frame").closest("div");
+      for (const cls of ["col-start-2", "row-start-1"]) expect(classesOf(info)).toContain(cls);
+
+      const secondary = screen.getByText(/AI suggests:/i).closest("p").parentElement;
+      for (const cls of ["col-span-2", "col-start-1", "row-start-3", "md:col-start-2", "md:row-start-2"]) {
+        expect(classesOf(secondary)).toContain(cls);
+      }
+      expect(secondary).toContainElement(screen.getByRole("checkbox"));
+      expect(secondary).toContainElement(screen.getByRole("button", { name: /wrong label/i }));
+    });
+
+    test("the grid changes nothing about identity or callbacks: item_id keys the group, exclusion and correction", async () => {
+      const user = userEvent.setup();
+      const onDecisionChange = vi.fn();
+      const onExcludedChange = vi.fn();
+      const onCorrectLabel = vi.fn();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ item_id: "item_021", review_decision: null })}
+          onDecisionChange={onDecisionChange}
+          onExcludedChange={onExcludedChange}
+          onCorrectLabel={onCorrectLabel}
+        />
+      );
+      expect(screen.getByRole("radio", { name: "Keep" })).toHaveAttribute("name", "decision-item_021");
+      await user.click(screen.getByRole("radio", { name: "Donate" }));
+      expect(onDecisionChange).toHaveBeenCalledWith("item_021", "donate");
+      await user.click(screen.getByRole("checkbox"));
+      expect(onExcludedChange).toHaveBeenCalledWith("item_021", true);
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      await user.clear(screen.getByLabelText(/corrected label/i));
+      await user.type(screen.getByLabelText(/corrected label/i), "poster");
+      await user.click(screen.getByRole("button", { name: /submit correction/i }));
+      expect(onCorrectLabel).toHaveBeenCalledWith("item_021", "poster");
     });
   });
 

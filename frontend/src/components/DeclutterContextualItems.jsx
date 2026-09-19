@@ -1,11 +1,13 @@
 import { Layers } from "lucide-react";
+import { itemNumberLabel } from "../utils/format";
 import { cn } from "../lib/cn";
 
-// The contextual / non-expected items section. Rendered by DeclutterReview
-// only when there is at least one contextual item. These items never
-// receive a Declutter decision; they are kept visibly secondary, and
-// exist here only so an overlay box click can still reach them. Ref
-// registration and activation still live in DeclutterReview.
+// The contextual / non-expected items section. Rendered only when there
+// is at least one contextual item. These items never receive a Declutter
+// decision; they are kept visibly secondary, and exist here only so an
+// overlay box click can still reach them. Ref registration and
+// activation live in the composing review section. Raw item_id is not
+// rendered; the number badge keeps the link to the detection box.
 export default function DeclutterContextualItems({
   items,
   activeItemId,
@@ -40,10 +42,16 @@ export default function DeclutterContextualItems({
                 active ? "border-primary ring-1 ring-primary" : "border-border"
               )}
             >
-              <span className="font-medium text-foreground">{item.effective_label ?? item.clean_label}</span>{" "}
-              <span className="text-muted-foreground">
-                (item_id: <code>{item.item_id}</code>, {item.position}, {item.relative_size})
+              <span className="mr-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted-foreground text-[11px] font-semibold text-background">
+                {itemNumberLabel(item.item_id)}
               </span>
+              <span className="font-medium text-foreground">{item.effective_label ?? item.clean_label}</span>
+              {(item.position || item.relative_size) && (
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {[item.position, item.relative_size].filter(Boolean).join(", ")}
+                </span>
+              )}
             </li>
           );
         })}

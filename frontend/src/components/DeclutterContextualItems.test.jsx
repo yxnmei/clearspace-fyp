@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import DeclutterContextualItems from "./DeclutterContextualItems";
@@ -64,5 +64,16 @@ describe("DeclutterContextualItems", () => {
     );
     expect(screen.getByText("hoodie")).toBeInTheDocument();
     expect(screen.queryByText("box")).not.toBeInTheDocument();
+  });
+
+  test("keeps the number badge and location but hides raw item_id, confidence and validity", () => {
+    const { container } = render(
+      <DeclutterContextualItems {...baseProps({ items: [makeItem({ item_id: "item_099", confidence: 0.9, item_validity: null })] })} />
+    );
+    const row = screen.getByText("wall").closest("li");
+    expect(within(row).getByText("99")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/center, large/);
+    expect(container.textContent).not.toMatch(/item_099|item_id|%|validity|confidence|double check/i);
+    expect(container.querySelector("code")).toBeNull();
   });
 });

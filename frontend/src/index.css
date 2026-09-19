@@ -44,6 +44,15 @@
     --error: 0 62% 45%;
     --error-foreground: 0 30% 97%;
 
+    /* Decision categories (Keep / Sell / Donate / Discard). Used for the
+     * decision control, badges and count summaries, always beside an icon
+     * and a text label, never as the only cue. Kept separate from the
+     * brand/semantic colours above so success/error stay free for status. */
+    --decision-keep: 152 45% 30%;
+    --decision-sell: 221 62% 42%;
+    --decision-donate: 30 80% 36%;
+    --decision-discard: 0 62% 42%;
+
     /* Shape */
     --radius: 0.75rem;
   }

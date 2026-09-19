@@ -15,6 +15,7 @@ import WizardNav from "./WizardNav";
 import DeclutterUploadForm from "./DeclutterUploadForm";
 import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
+import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
 import ConfirmationSummary from "./ConfirmationSummary";
 import ListingsView from "./ListingsView";
@@ -80,6 +81,7 @@ export default function DeclutterPage() {
   const { resolvedItems, unresolvedItems, contextualItems } = partitionReviewItems(reviewItems);
   const { counts, changedCount, excludedCount } = deriveReviewCounts(resolvedItems);
   const unresolvedCount = unresolvedItems.length;
+  const decideItemCount = resolvedItems.length + unresolvedCount;
   const totalDurationMs = totalStageDurationMs(analysis);
   const confirmDisabled = isConfirmBlocked({ confirmationStatus, declutter, unresolvedCount, correctingItemId });
 
@@ -248,13 +250,24 @@ export default function DeclutterPage() {
                 correctionError={correctionError}
                 enableBackToTop
               />
-              <WizardNav
+              {/* The sticky summary bar is this view's ONLY Back / Continue
+                  pair. The Continue guard is unchanged; the bar just says
+                  why it is disabled. */}
+              <DecisionActionBar
+                totalCount={decideItemCount}
+                counts={counts}
                 backLabel="Back to Analyse room"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
                 continueLabel="Continue to Confirm choices"
                 onContinue={handleContinue}
                 continueDisabled={!wizard.canContinueFromReview || wizard.navigationLocked}
+                blockedReason={describeContinueBlocker({
+                  hasAnalysis,
+                  navigationLocked: wizard.navigationLocked,
+                  correctingItemId,
+                  unresolvedCount,
+                })}
               />
             </>
           )}

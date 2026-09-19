@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import DeclutterReviewSection from "./DeclutterReviewSection";
@@ -82,7 +82,7 @@ describe("DeclutterReviewSection", () => {
       />
     );
     expect(screen.getByText("lamp")).toBeInTheDocument();
-    expect(screen.getByText(/no valid ai decision was produced for this item/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
     expect(screen.getByText(/detected for context only/i)).toBeInTheDocument();
     // contextual items get no decision radios
     const contextualRow = screen.getByText("wall").closest("li");
@@ -201,7 +201,7 @@ describe("DeclutterReviewSection, decision filters", () => {
       />
     );
     await user.click(chip("Keep"));
-    expect(screen.getByText(/no valid ai decision was produced for this item/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
   });
 
   test("a decision filter with no matching items shows a concise empty state", async () => {
@@ -242,5 +242,69 @@ describe("DeclutterReviewSection, decision filters", () => {
     expect(props.setDecisionOverride).not.toHaveBeenCalled();
     expect(props.setItemExcluded).not.toHaveBeenCalled();
     expect(props.correctLabel).not.toHaveBeenCalled();
+  });
+
+  test("shows Please double check only on genuinely unresolved rows, and keeps it visible under every filter", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeclutterReviewSection
+        {...baseProps({ reviewItems: [...rowsFixture(), unresolvedItem({ item_id: "item_050", clean_label: "mystery cable", effective_label: "mystery cable" })] })}
+      />
+    );
+    expect(screen.getAllByText("Please double check")).toHaveLength(1);
+    expect(screen.getByText("mystery cable").closest("li")).toHaveTextContent("Please double check");
+
+    for (const label of ["Keep", "Sell", "Donate", "Discard", "All"]) {
+      await user.click(chip(label));
+      expect(screen.getByText("mystery cable")).toBeInTheDocument();
+      expect(screen.getAllByText("Please double check")).toHaveLength(1);
+    }
+  });
+
+  test("renders no raw item ids, confidence percentages or validity values anywhere in the review workspace", () => {
+    const { container } = render(
+      <DeclutterReviewSection
+        {...baseProps({
+          reviewItems: [
+            ...rowsFixture(),
+            unresolvedItem({ item_id: "item_050", clean_label: "mystery cable", effective_label: "mystery cable" }),
+            contextualItem({ item_id: "item_099" }),
+          ],
+        })}
+      />
+    );
+    expect(container.textContent).not.toMatch(/item_0\d\d|item_id|\d+\s*%|raw_valid|still_invalid|validity/i);
+    expect(container.querySelector("code")).toBeNull();
+    // overlay boxes are still keyed and named by item_id, so the boxes and rows stay linked
+    expect(screen.getAllByRole("button", { name: /^detection \d+:/i }).length).toBeGreaterThan(0);
+  });
+
+  test("Back to top is lifted above the sticky decision bar's bottom slot, at both breakpoints", () => {
+    const observers = [];
+    const originalIO = global.IntersectionObserver;
+    global.IntersectionObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.elements = [];
+        observers.push(this);
+      }
+      observe(el) {
+        this.elements.push(el);
+      }
+      disconnect() {}
+    };
+    try {
+      render(<DeclutterReviewSection {...baseProps({ reviewItems: rowsFixture() })} enableBackToTop />);
+      // scroll past the top sentinel: the first observer watches it
+      act(() => observers[0].callback([{ isIntersecting: false }]));
+      const button = screen.getByRole("button", { name: /back to top/i });
+      const classes = button.className.split(/\s+/);
+      expect(classes).toContain("fixed");
+      expect(classes).toContain("bottom-44");
+      expect(classes).toContain("sm:bottom-24");
+      expect(classes).not.toContain("bottom-6");
+    } finally {
+      global.IntersectionObserver = originalIO;
+    }
   });
 });

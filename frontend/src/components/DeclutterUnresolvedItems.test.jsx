@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import DeclutterUnresolvedItems from "./DeclutterUnresolvedItems";
@@ -37,7 +37,7 @@ describe("DeclutterUnresolvedItems", () => {
     render(<DeclutterUnresolvedItems {...baseProps()} />);
     expect(screen.getByRole("heading", { name: /unresolved items \(1\)/i })).toBeInTheDocument();
     expect(screen.getByText(/confirmation is blocked until every item is resolved/i)).toBeInTheDocument();
-    expect(screen.getByText(/no valid ai decision was produced for this item/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
   });
 
   test("shows the effective label and a Corrected by you badge only for user-corrected items", () => {
@@ -112,5 +112,17 @@ describe("DeclutterUnresolvedItems", () => {
     const toggles = screen.getAllByRole("button", { name: /wrong label/i });
     expect(toggles).toHaveLength(2);
     toggles.forEach((b) => expect(b).toBeDisabled());
+  });
+
+  test("flags each genuinely unresolved item with Please double check, keeps its number badge, and hides raw item_id", () => {
+    const { container } = render(
+      <DeclutterUnresolvedItems {...baseProps({ items: [makeItem({ item_id: "item_012" })] })} />
+    );
+    const row = screen.getByText("cable").closest("li");
+    expect(within(row).getByText("Please double check")).toBeInTheDocument();
+    expect(within(row).getByText("12")).toBeInTheDocument();
+    expect(within(row).getByText("center, small")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/item_012|item_id|%|validity|confidence/i);
+    expect(container.querySelector("code")).toBeNull();
   });
 });

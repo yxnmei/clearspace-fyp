@@ -47,6 +47,12 @@ export default {
           DEFAULT: withOpacity("--error"),
           foreground: withOpacity("--error-foreground"),
         },
+        decision: {
+          keep: withOpacity("--decision-keep"),
+          sell: withOpacity("--decision-sell"),
+          donate: withOpacity("--decision-donate"),
+          discard: withOpacity("--decision-discard"),
+        },
       },
       fontFamily: {
         // Manrope is the primary UI typeface, bundled via @fontsource/manrope

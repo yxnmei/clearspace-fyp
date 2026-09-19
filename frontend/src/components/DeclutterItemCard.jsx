@@ -1,46 +1,11 @@
 import { useState } from "react";
 import { Pencil } from "lucide-react";
-import { decisionColor, formatConfidence, itemNumberLabel } from "../utils/format";
+import { itemNumberLabel } from "../utils/format";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import ItemCropThumbnail from "./ItemCropThumbnail";
+import DecisionControl, { DECISION_OPTIONS_BY_VALUE } from "./DecisionControl";
 import { cn } from "../lib/cn";
-
-const DECISIONS = [
-  { value: "keep", label: "Keep" },
-  { value: "sell", label: "Sell" },
-  { value: "donate", label: "Donate" },
-  { value: "discard", label: "Discard" },
-];
-
-// Keep / Sell / Donate / Discard reuse the green / blue / amber / red
-// category mapping already used by the detection-overlay boxes
-// (decisionColor / decisionBorderColor). Colour is only a secondary cue,
-// every control keeps its visible text label and its native checked
-// radio. Class strings are written out in full so Tailwind's scanner
-// keeps them; nothing here is built by interpolation.
-const DECISION_STYLES = {
-  keep: {
-    unselected: "border-green-200 text-green-800 hover:bg-green-50",
-    selected: "border-green-600 bg-green-50 text-green-900",
-    accent: "accent-green-600",
-  },
-  sell: {
-    unselected: "border-blue-200 text-blue-800 hover:bg-blue-50",
-    selected: "border-blue-600 bg-blue-50 text-blue-900",
-    accent: "accent-blue-600",
-  },
-  donate: {
-    unselected: "border-amber-200 text-amber-800 hover:bg-amber-50",
-    selected: "border-amber-600 bg-amber-50 text-amber-900",
-    accent: "accent-amber-600",
-  },
-  discard: {
-    unselected: "border-red-200 text-red-800 hover:bg-red-50",
-    selected: "border-red-600 bg-red-50 text-red-900",
-    accent: "accent-red-600",
-  },
-};
 
 // Shared by DeclutterItemCard (resolved items) and DeclutterReview's
 // unresolved-items list, a label correction is available for both, so
@@ -122,11 +87,18 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   );
 }
 
-// One compact row per resolved, expected item. Decision controls call
-// back to useDeclutterFlow's setDecisionOverride/setItemExcluded, keyed
-// only by item.item_id (never clean_label, two items sharing a label
-// render as two independent rows with independent state, purely by
-// item_id).
+// One compact row per resolved, expected item: thumbnail, number badge,
+// the effective label with its status badges, a short position / size
+// line, the segmented decision control, then a secondary line with the
+// AI suggestion and reason, the exclusion checkbox and the collapsed
+// label correction. Raw item_id, detection confidence and item_validity
+// are deliberately NOT rendered; item_id stays the row's identity for
+// the key, every callback and the overlay link.
+//
+// Decision controls call back to useDeclutterFlow's setDecisionOverride/
+// setItemExcluded, keyed only by item.item_id (never clean_label, two
+// items sharing a label render as two independent rows with independent
+// state, purely by item_id).
 //
 // isActive/onActivate/onDeactivate/registerRef link this row to its box
 // in AnalysedRoomPanel (owned by the parent, not this component):
@@ -152,8 +124,9 @@ export default function DeclutterItemCard({
   correctionDisabled = false,
   correctionError = null,
 }) {
-  const groupName = `decision-${item.item_id}`;
   const displayLabel = item.effective_label ?? item.clean_label;
+  const suggestion = item.ai_decision ? DECISION_OPTIONS_BY_VALUE[item.ai_decision] ?? null : null;
+  const whereBits = [item.position, item.relative_size].filter((v) => typeof v === "string" && v !== "");
 
   return (
     <li
@@ -165,82 +138,63 @@ export default function DeclutterItemCard({
       onFocus={onActivate}
       onBlur={onDeactivate}
       className={cn(
-        "rounded-card border bg-surface p-3 shadow-card transition-colors",
+        "rounded-card border bg-surface p-3 transition-colors",
         isActive ? "border-primary ring-1 ring-primary" : "border-border"
       )}
     >
-      <div className="flex gap-3">
-        <ItemCropThumbnail imageUrl={imageUrl} box={item.box} className="mt-0.5" />
+      {/* One CSS grid, two placements. Below md: row 1 = thumbnail | item
+          info, row 2 = the decision control spanning BOTH columns (the full
+          card width, so four options fit without clipping), row 3 = the
+          secondary lines. From md: thumbnail | info | control on row 1,
+          secondary lines under the info on row 2. One control instance,
+          moved by grid placement only. */}
+      <div
+        data-testid="item-card-grid"
+        className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 md:grid-cols-[auto_minmax(0,1fr)_auto] md:gap-x-4"
+      >
+        <ItemCropThumbnail imageUrl={imageUrl} box={item.box} className="col-start-1 row-start-1 mt-0.5" />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
-            <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-                {itemNumberLabel(item.item_id)}
-              </span>
-              {displayLabel}
-            </p>
-            <div className="flex flex-wrap gap-1">
-              {item.label_source === "user" && <Badge variant="primary">Corrected by you</Badge>}
-              {item.decision_changed && <Badge variant="warning">Changed</Badge>}
-              {item.review_excluded && <Badge variant="outline">Excluded</Badge>}
-            </div>
-          </div>
-
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            item_id: <code>{item.item_id}</code> · {item.position}, {item.relative_size} ·{" "}
-            {formatConfidence(item.confidence)} detection confidence
-          </p>
-
-          <p className="mt-1 text-xs">
-            <span className={cn("font-medium", decisionColor(item.ai_decision))}>
-              AI suggests: {item.ai_decision}
+        <div className="col-start-2 row-start-1 min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-foreground">
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+              {itemNumberLabel(item.item_id)}
             </span>
-            {item.ai_reason && <span className="text-muted-foreground">, {item.ai_reason}</span>}
-            <span className="ml-1.5 text-[11px] text-muted-foreground/70">({item.item_validity})</span>
+            <span className="min-w-0 break-words">{displayLabel}</span>
+            {item.label_source === "user" && <Badge variant="primary">Corrected by you</Badge>}
+            {item.decision_changed && <Badge variant="warning">Changed</Badge>}
+            {item.review_excluded && <Badge variant="outline">Excluded</Badge>}
           </p>
+          {whereBits.length > 0 && (
+            <p className="mt-0.5 text-xs text-muted-foreground">{whereBits.join(", ")}</p>
+          )}
+        </div>
 
-          <fieldset className="mt-2">
-            <legend className="mb-1 text-xs font-medium text-foreground">Your decision</legend>
-            <div className="flex flex-wrap gap-1.5">
-              {DECISIONS.map(({ value, label }) => {
-                const selected = item.review_decision === value;
-                const style = DECISION_STYLES[value];
-                return (
-                  <label
-                    key={value}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-1.5 rounded-control border px-2.5 py-1 text-sm font-medium transition-colors",
-                      selected ? style.selected : style.unselected
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name={groupName}
-                      value={value}
-                      checked={selected}
-                      onChange={() => onDecisionChange(item.item_id, value)}
-                      className={cn(
-                        "h-3.5 w-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
-                        style.accent
-                      )}
-                    />
-                    {label}
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
+        <DecisionControl
+          itemId={item.item_id}
+          itemLabel={displayLabel}
+          value={item.review_decision}
+          onChange={onDecisionChange}
+          className="col-span-2 col-start-1 row-start-2 md:col-span-1 md:col-start-3 md:row-start-1 md:justify-self-end"
+        />
+
+        <div className="col-span-2 col-start-1 row-start-3 min-w-0 md:col-start-2 md:row-start-2">
+          <p className="text-xs text-muted-foreground">
+            <span className={cn("inline-flex items-center gap-1 font-medium", suggestion ? suggestion.text : "text-foreground")}>
+              {suggestion && <suggestion.Icon aria-hidden="true" width={12} height={12} />}
+              AI suggests: {suggestion ? suggestion.label : item.ai_decision}
+            </span>
+            {item.ai_reason && <span>, {item.ai_reason}</span>}
+          </p>
 
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input
                 type="checkbox"
                 checked={item.review_excluded}
                 onChange={(event) => onExcludedChange(item.item_id, event.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
-              Exclude this item, it will not be sent for confirmation or reach later stages
+              Exclude this item from later steps
             </label>
 
             <LabelCorrectionControl

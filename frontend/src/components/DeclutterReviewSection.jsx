@@ -231,10 +231,14 @@ export default function DeclutterReviewSection({
       {enableBackToTop && (
         <>
           <span ref={bottomSentinelRef} aria-hidden="true" className="block h-px w-full" />
+          {/* Lifted clear of the sticky DecisionActionBar the pages render
+              directly below this section (taller when its controls stack
+              on mobile), so the two never share the bottom-right corner. */}
           <BackToTopButton
             scrollTargetRef={workspaceRef}
             topSentinelRef={topSentinelRef}
             bottomSentinelRef={bottomSentinelRef}
+            className="bottom-44 sm:bottom-24"
           />
         </>
       )}

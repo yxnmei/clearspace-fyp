@@ -16,6 +16,7 @@ import ImageGenStatusBanner from "./ImageGenStatusBanner";
 import DeclutterUploadForm from "./DeclutterUploadForm";
 import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
+import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
 import ConfirmationSummary from "./ConfirmationSummary";
 import ReorganiseResult from "./ReorganiseResult";
@@ -40,6 +41,7 @@ export default function BothPage() {
   const { resolvedItems, unresolvedItems, contextualItems } = partitionReviewItems(flow.reviewItems);
   const { counts, changedCount, excludedCount } = deriveReviewCounts(resolvedItems);
   const unresolvedCount = unresolvedItems.length;
+  const decideItemCount = resolvedItems.length + unresolvedCount;
   const totalDurationMs = totalStageDurationMs(flow.analysis);
   const confirmDisabled = isConfirmBlocked({
     confirmationStatus: flow.confirmationStatus,
@@ -197,13 +199,23 @@ export default function BothPage() {
                 correctionError={flow.correctionError}
                 enableBackToTop
               />
-              <WizardNav
+              {/* Same shared bar as the Declutter wizard: the only Back /
+                  Continue pair on this screen, guard unchanged. */}
+              <DecisionActionBar
+                totalCount={decideItemCount}
+                counts={counts}
                 backLabel="Back to Analyse room"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
                 continueLabel="Continue to Confirm choices"
                 onContinue={handleContinue}
                 continueDisabled={!wizard.canContinueFromReview || wizard.navigationLocked}
+                blockedReason={describeContinueBlocker({
+                  hasAnalysis,
+                  navigationLocked: wizard.navigationLocked,
+                  correctingItemId: flow.correctingItemId,
+                  unresolvedCount,
+                })}
               />
             </>
           )}

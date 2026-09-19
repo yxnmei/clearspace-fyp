@@ -205,7 +205,7 @@ describe("DeclutterPage wizard, Review → Confirm gating", () => {
     await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     expect(screen.getByRole("button", { name: /continue to confirm/i })).toBeDisabled();
-    expect(screen.getByText(/no valid ai decision was produced for this item/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not suggest an action for this item/i)).toBeInTheDocument();
     // tracker never unlocked Confirm
     expect(trackerSteps().find((s) => s.label === "Confirm choices").button).toBeNull();
   });
@@ -878,5 +878,100 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
 
     expect(screen.queryByText(/reorganis/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DeclutterPage wizard, Decide items action bar", () => {
+  // Text of everything currently on screen: the non-viewed wizard views
+  // are `hidden`, so they are dropped before reading.
+  function visibleText() {
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll("[hidden]").forEach((el) => el.remove());
+    return clone.textContent;
+  }
+  const bar = () => screen.getByRole("region", { name: /decision summary and navigation/i });
+
+  test("Decide items has exactly one Back and one Continue control, both inside the sticky bar", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+
+    const backs = screen.getAllByRole("button", { name: /back to analyse room/i });
+    const continues = screen.getAllByRole("button", { name: /continue to confirm choices/i });
+    expect(backs).toHaveLength(1);
+    expect(continues).toHaveLength(1);
+    expect(bar()).toContainElement(backs[0]);
+    expect(bar()).toContainElement(continues[0]);
+    expect(bar().className).toMatch(/sticky/);
+  });
+
+  test("the bar's counts follow the current decisions live, and Back returns to Analyse room", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+
+    expect(within(bar()).getByText("1 item")).toBeInTheDocument();
+    expect(within(bar()).getByText("Keep").nextElementSibling).toHaveTextContent("1");
+    expect(within(bar()).queryByText("Sell")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "Sell" }));
+    expect(within(bar()).getByText("Sell").nextElementSibling).toHaveTextContent("1");
+    expect(within(bar()).queryByText("Keep")).not.toBeInTheDocument();
+    expect(client.confirmDecisions).not.toHaveBeenCalled();
+
+    await user.click(within(bar()).getByRole("button", { name: /back to analyse room/i }));
+    expect(viewedLabel()).toBe("Analyse room");
+  });
+
+  test("an unresolved item is counted, flagged Please double check, and the disabled Continue says why", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a", { unresolved: true }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+
+    expect(within(bar()).getByText("2 items")).toBeInTheDocument();
+    expect(screen.getByText("cable").closest("li")).toHaveTextContent("Please double check");
+    expect(screen.getAllByText("Please double check")).toHaveLength(1);
+
+    const cont = within(bar()).getByRole("button", { name: /continue to confirm choices/i });
+    expect(cont).toBeDisabled();
+    const reason = within(bar()).getByRole("status");
+    expect(reason).toHaveTextContent("1 item still needs a decision.");
+    expect(cont).toHaveAttribute("aria-describedby", reason.id);
+    // Back stays available while only Continue is blocked
+    expect(within(bar()).getByRole("button", { name: /back to analyse room/i })).toBeEnabled();
+  });
+
+  test("a label correction in flight is explained by the bar, then the reason clears", async () => {
+    const user = userEvent.setup();
+    let resolveOverride;
+    client.overrideItem.mockImplementationOnce(() => new Promise((r) => { resolveOverride = r; }));
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a"));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+
+    await user.click(screen.getAllByRole("button", { name: /wrong label/i })[0]);
+    await user.click(screen.getByRole("button", { name: /submit correction/i }));
+
+    await waitFor(() => expect(within(bar()).getByRole("status")).toHaveTextContent(/label correction is in progress/i));
+    expect(within(bar()).getByRole("button", { name: /continue to confirm choices/i })).toBeDisabled();
+
+    resolveOverride({ run_id: "run-a", analysis: makeUploadResponse("run-a").analysis, declutter: makeUploadResponse("run-a").declutter });
+    await waitFor(() => expect(within(bar()).getByRole("button", { name: /continue to confirm choices/i })).toBeEnabled());
+    expect(within(bar()).queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  test("Decide items shows no raw item ids, confidence percentages or validity values", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterPage />);
+    await analyseFrom(user, makeUploadResponse("run-a", { unresolved: true }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+
+    const text = visibleText();
+    expect(text).not.toMatch(/item_001|item_009|item_id/);
+    expect(text).not.toMatch(/\d+\s*%/);
+    expect(text).not.toMatch(/raw_valid|still_invalid|validity/i);
   });
 });
