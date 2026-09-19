@@ -105,14 +105,14 @@ function currentStep() {
 
 async function analyseRoom() {
   await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-  await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+  await userEvent.click(screen.getByRole("button", { name: /^analyse room$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
 }
 
 async function continueToGenerate() {
-  await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+  await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
   expect(screen.getByRole("heading", { name: /review items for your reorganisation plan/i })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: /continue to generate/i }));
+  await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
   expect(screen.getByRole("heading", { name: /generate reorganisation plan/i })).toBeInTheDocument();
 }
 
@@ -126,29 +126,29 @@ describe("ReorganisePage screen-by-screen flow", () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     render(<ReorganisePage />);
 
-    expect(currentStep()).toBe("Upload");
+    expect(currentStep()).toBe("Upload photo");
     expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
 
     await analyseRoom();
-    expect(currentStep()).toBe("Analyse");
+    expect(currentStep()).toBe("Analyse room");
     expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
-    expect(currentStep()).toBe("Review");
+    await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
+    expect(currentStep()).toBe("Select items");
     expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /back to analyse/i }));
-    expect(currentStep()).toBe("Analyse");
+    expect(currentStep()).toBe("Analyse room");
   });
 
   test("Review requires an included item before Generate is unlocked", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
     render(<ReorganisePage />);
     await analyseRoom();
-    await userEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+    await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
 
     await userEvent.click(document.getElementById("reorganise-item-item_001"));
-    expect(screen.getByRole("button", { name: /continue to generate/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue to tidy plan/i })).toBeDisabled();
   });
 
   test("completes Upload → Analyse → Review → Generate without health blocking", async () => {
@@ -164,7 +164,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
-    expect(currentStep()).toBe("Generate");
+    expect(currentStep()).toBe("Tidy plan");
     expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
   });
 
@@ -178,7 +178,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
-    expect(currentStep()).toBe("Generate");
+    expect(currentStep()).toBe("Tidy plan");
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
   });
 
@@ -227,8 +227,8 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
     expect(screen.queryByText(/room plan/i)).not.toBeInTheDocument();
     // the wizard is unchanged: Generate is the viewed step and Back still works
-    expect(currentStep()).toBe("Generate");
-    expect(screen.getByRole("button", { name: /back to review/i })).toBeEnabled();
+    expect(currentStep()).toBe("Tidy plan");
+    expect(screen.getByRole("button", { name: /back to select items/i })).toBeEnabled();
   });
 
   test("a response whose focus area names an unselected item is rejected as a generation error", async () => {

@@ -122,7 +122,7 @@ const viewedLabel = () => trackerSteps().find((s) => s.current)?.label;
 async function analyseFrom(user, response) {
   client.uploadImage.mockResolvedValueOnce(response);
   await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-  await user.click(screen.getByRole("button", { name: /analyse room/i }));
+  await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
 }
 
@@ -131,7 +131,7 @@ async function analyseFrom(user, response) {
 describe("DeclutterPage wizard, one view at a time", () => {
   test("Upload is the initial view; Analyse/Review/Confirm content is not shown", () => {
     render(<DeclutterPage />);
-    expect(viewedLabel()).toBe("Upload");
+    expect(viewedLabel()).toBe("Upload photo");
     expect(screen.getByRole("heading", { name: /1\. upload a room photo/i })).toBeInTheDocument();
     expect(screen.getByText(/get ai-suggested keep \/ sell \/ donate \/ discard decisions/i)).toBeInTheDocument();
 
@@ -150,13 +150,13 @@ describe("DeclutterPage wizard, one view at a time", () => {
     render(<DeclutterPage />);
 
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
 
     expect(client.uploadImage).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse"));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
     expect(screen.getByRole("status")).toHaveTextContent(/object detection and item reasoning are running/i);
     // Upload form is no longer visible
-    expect(screen.queryByRole("button", { name: /analyse room/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^analyse room$/i })).not.toBeInTheDocument();
 
     resolveUpload();
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
@@ -167,9 +167,9 @@ describe("DeclutterPage wizard, one view at a time", () => {
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
 
-    expect(viewedLabel()).toBe("Analyse");
+    expect(viewedLabel()).toBe("Analyse room");
     expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /continue to review/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeEnabled();
     // Review content still hidden until the user continues
     expect(screen.queryByRole("img", { name: /detected item outlines/i })).not.toBeInTheDocument();
   });
@@ -179,21 +179,21 @@ describe("DeclutterPage wizard, one view at a time", () => {
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
 
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
-    expect(viewedLabel()).toBe("Review");
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    expect(viewedLabel()).toBe("Decide items");
     expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
     expect(screen.getAllByRole("img")).toHaveLength(1); // one full-size analysed-room image
 
     // Confirm is still locked in the tracker until acknowledged
-    expect(trackerSteps().find((s) => s.label === "Confirm").button).toBeNull();
+    expect(trackerSteps().find((s) => s.label === "Confirm choices").button).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(viewedLabel()).toBe("Confirm");
+    expect(viewedLabel()).toBe("Confirm choices");
     expect(screen.getByRole("heading", { name: /4\. confirm decisions/i })).toBeInTheDocument();
     // Confirm is now a navigable tracker step
-    const trackerConfirm = within(nav()).queryAllByRole("button", { name: "Go to Confirm" });
+    const trackerConfirm = within(nav()).queryAllByRole("button", { name: "Go to Confirm choices" });
     expect(trackerConfirm.length).toBe(0); // it is the current step, so not a button
-    expect(within(nav()).getByRole("button", { name: "Go to Review" })).toBeInTheDocument();
+    expect(within(nav()).getByRole("button", { name: "Go to Decide items" })).toBeInTheDocument();
   });
 });
 
@@ -202,12 +202,12 @@ describe("DeclutterPage wizard, Review → Confirm gating", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a", { unresolved: true }));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     expect(screen.getByRole("button", { name: /continue to confirm/i })).toBeDisabled();
     expect(screen.getByText(/no valid ai decision was produced for this item/i)).toBeInTheDocument();
     // tracker never unlocked Confirm
-    expect(trackerSteps().find((s) => s.label === "Confirm").button).toBeNull();
+    expect(trackerSteps().find((s) => s.label === "Confirm choices").button).toBeNull();
   });
 
   test("Continue to Confirm is blocked while a label correction is in flight", async () => {
@@ -216,7 +216,7 @@ describe("DeclutterPage wizard, Review → Confirm gating", () => {
     client.overrideItem.mockImplementationOnce(() => new Promise((r) => { resolveOverride = r; }));
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     const wrongLabelButtons = screen.getAllByRole("button", { name: /wrong label/i });
     await user.click(wrongLabelButtons[0]);
@@ -234,7 +234,7 @@ describe("DeclutterPage wizard, Confirm is an explicit action", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
 
     expect(client.confirmDecisions).not.toHaveBeenCalled();
@@ -245,7 +245,7 @@ describe("DeclutterPage wizard, Confirm is an explicit action", () => {
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
 
     expect(client.confirmDecisions).not.toHaveBeenCalled();
@@ -260,14 +260,14 @@ describe("DeclutterPage wizard, tracker navigation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
-    expect(viewedLabel()).toBe("Review");
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
+    expect(viewedLabel()).toBe("Decide items");
 
     client.uploadImage.mockClear();
-    await user.click(within(nav()).getByRole("button", { name: "Go to Analyse" }));
-    expect(viewedLabel()).toBe("Analyse");
-    await user.click(within(nav()).getByRole("button", { name: "Go to Upload" }));
-    expect(viewedLabel()).toBe("Upload");
+    await user.click(within(nav()).getByRole("button", { name: "Go to Analyse room" }));
+    expect(viewedLabel()).toBe("Analyse room");
+    await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
+    expect(viewedLabel()).toBe("Upload photo");
 
     expect(client.uploadImage).not.toHaveBeenCalled();
     expect(client.confirmDecisions).not.toHaveBeenCalled();
@@ -277,15 +277,15 @@ describe("DeclutterPage wizard, tracker navigation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     // Before any upload: only Upload is unlocked.
-    expect(within(nav()).queryByRole("button", { name: "Go to Analyse" })).toBeNull();
-    expect(within(nav()).queryByRole("button", { name: "Go to Review" })).toBeNull();
-    expect(within(nav()).queryByRole("button", { name: "Go to Confirm" })).toBeNull();
+    expect(within(nav()).queryByRole("button", { name: "Go to Analyse room" })).toBeNull();
+    expect(within(nav()).queryByRole("button", { name: "Go to Decide items" })).toBeNull();
+    expect(within(nav()).queryByRole("button", { name: "Go to Confirm choices" })).toBeNull();
 
     await analyseFrom(user, makeUploadResponse("run-a"));
     // Review is unlocked (analysis succeeded); Confirm is still locked.
-    expect(within(nav()).getByRole("button", { name: "Go to Upload" })).toBeInTheDocument();
-    expect(within(nav()).getByRole("button", { name: "Go to Review" })).toBeInTheDocument();
-    expect(within(nav()).queryByRole("button", { name: "Go to Confirm" })).toBeNull();
+    expect(within(nav()).getByRole("button", { name: "Go to Upload photo" })).toBeInTheDocument();
+    expect(within(nav()).getByRole("button", { name: "Go to Decide items" })).toBeInTheDocument();
+    expect(within(nav()).queryByRole("button", { name: "Go to Confirm choices" })).toBeNull();
   });
 
   test("navigation is not offered while the analysis request is in flight", async () => {
@@ -296,15 +296,15 @@ describe("DeclutterPage wizard, tracker navigation", () => {
     );
     render(<DeclutterPage />);
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse"));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
 
     // No tracker buttons at all while uploading; Back is disabled.
     expect(within(nav()).queryAllByRole("button")).toHaveLength(0);
     expect(screen.getByRole("button", { name: /back to upload/i })).toBeDisabled();
 
     resolveUpload();
-    await waitFor(() => expect(within(nav()).getByRole("button", { name: "Go to Upload" })).toBeInTheDocument());
+    await waitFor(() => expect(within(nav()).getByRole("button", { name: "Go to Upload photo" })).toBeInTheDocument());
   });
 
   test("Back/Continue controls track availability with the tracker", async () => {
@@ -314,9 +314,9 @@ describe("DeclutterPage wizard, tracker navigation", () => {
 
     // On Analyse: Back to Upload enabled, Continue to Review enabled.
     expect(screen.getByRole("button", { name: /back to upload/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /continue to review/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeEnabled();
 
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     expect(screen.getByRole("button", { name: /back to analyse/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /continue to confirm/i })).toBeEnabled();
   });
@@ -327,7 +327,7 @@ describe("DeclutterPage wizard, state preservation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     // change the item to Sell and mark it excluded
     await user.click(screen.getByRole("radio", { name: "Sell" }));
@@ -335,9 +335,9 @@ describe("DeclutterPage wizard, state preservation", () => {
     expect(screen.getByRole("radio", { name: "Sell" })).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(viewedLabel()).toBe("Confirm");
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
-    expect(viewedLabel()).toBe("Review");
+    expect(viewedLabel()).toBe("Confirm choices");
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
+    expect(viewedLabel()).toBe("Decide items");
 
     // Still Sell, still excluded.
     expect(screen.getByRole("radio", { name: "Sell" })).toBeChecked();
@@ -349,18 +349,18 @@ describe("DeclutterPage wizard, state preservation", () => {
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
 
     // Navigate away and back, the confirmed summary is still there.
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument();
 
     // Now edit a decision on Review, the hook invalidates the confirmation.
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
     await user.click(screen.getAllByRole("radio", { name: "Donate" })[0]);
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     expect(screen.queryByRole("heading", { name: /decisions confirmed/i })).not.toBeInTheDocument();
@@ -370,31 +370,31 @@ describe("DeclutterPage wizard, state preservation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
     // Confirm is now unlocked (viewing it); step back so it shows as a button.
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
-    expect(within(nav()).getByRole("button", { name: "Go to Confirm" })).toBeInTheDocument();
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
+    expect(within(nav()).getByRole("button", { name: "Go to Confirm choices" })).toBeInTheDocument();
 
     // Back to Upload, submit a new photo, hold the request in flight.
-    await user.click(within(nav()).getByRole("button", { name: "Go to Upload" }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
     let resolveUpload;
     client.uploadImage.mockImplementationOnce(
       () => new Promise((r) => { resolveUpload = () => r(makeUploadResponse("run-b")); })
     );
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room-b.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
 
     // Straight to a fresh Analyse view; every downstream step relocked.
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse"));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
     expect(within(nav()).queryAllByRole("button")).toHaveLength(0); // locked while uploading
     expect(screen.queryByRole("heading", { name: /2\. analysis summary/i })).not.toBeInTheDocument();
 
     resolveUpload();
     // The new analysis re-unlocks Review, but Confirm stays locked until
     // the user acknowledges the new review.
-    await waitFor(() => expect(within(nav()).getByRole("button", { name: "Go to Review" })).toBeInTheDocument());
-    expect(within(nav()).queryByRole("button", { name: "Go to Confirm" })).toBeNull();
+    await waitFor(() => expect(within(nav()).getByRole("button", { name: "Go to Decide items" })).toBeInTheDocument());
+    expect(within(nav()).queryByRole("button", { name: "Go to Confirm choices" })).toBeNull();
     expect(client.uploadImage).toHaveBeenCalledTimes(2);
   });
 
@@ -402,12 +402,12 @@ describe("DeclutterPage wizard, state preservation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
-    await user.click(within(nav()).getByRole("button", { name: "Go to Upload" }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
     // still analysed, Review is still reachable, nothing was re-uploaded
-    expect(within(nav()).getByRole("button", { name: "Go to Review" })).toBeInTheDocument();
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
+    expect(within(nav()).getByRole("button", { name: "Go to Decide items" })).toBeInTheDocument();
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
     expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
     expect(client.uploadImage).toHaveBeenCalledTimes(1);
   });
@@ -463,7 +463,7 @@ describe("DeclutterPage wizard, Review decision filters", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeThreeItemResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     await user.click(chip("Sell"));
     expect(screen.getByText("old chair")).toBeInTheDocument();
@@ -483,15 +483,15 @@ describe("DeclutterPage wizard, Review decision filters", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeThreeItemResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     await user.click(chip("Discard"));
     expect(chip("Discard")).toHaveAttribute("aria-pressed", "true");
 
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(viewedLabel()).toBe("Confirm");
-    await user.click(within(nav()).getByRole("button", { name: "Go to Review" }));
-    expect(viewedLabel()).toBe("Review");
+    expect(viewedLabel()).toBe("Confirm choices");
+    await user.click(within(nav()).getByRole("button", { name: "Go to Decide items" }));
+    expect(viewedLabel()).toBe("Decide items");
 
     expect(chip("Discard")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("broken mug")).toBeInTheDocument();
@@ -506,7 +506,7 @@ describe("DeclutterPage wizard, Review decision filters", () => {
     response.analysis.items[1].effective_label = "lamp";
     render(<DeclutterPage />);
     await analyseFrom(user, response);
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     // Two "lamp" rows, one Keep (item_001) and one Sell (item_002).
     await user.click(chip("Keep"));
@@ -526,7 +526,7 @@ describe("DeclutterPage wizard, Analyse view state wording", () => {
     );
     render(<DeclutterPage />);
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Analysing your room" })).toBeInTheDocument());
 
@@ -536,8 +536,8 @@ describe("DeclutterPage wizard, Analyse view state wording", () => {
 
     // second run fails
     client.uploadImage.mockImplementationOnce(() => Promise.reject(new Error("network down")));
-    await user.click(within(nav()).getByRole("button", { name: "Go to Upload" }));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Analysis unsuccessful" })).toBeInTheDocument());
     rejectUpload?.(new Error("ignored"));
   });
@@ -548,13 +548,13 @@ describe("DeclutterPage wizard, analysed image lifecycle", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     const firstSrc = screen.getByRole("img", { name: /detected item outlines/i }).getAttribute("src");
     expect(firstSrc).toBeTruthy();
 
-    await user.click(within(nav()).getByRole("button", { name: "Go to Upload" }));
+    await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
     await analyseFrom(user, makeUploadResponse("run-b"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     const secondSrc = screen.getByRole("img", { name: /detected item outlines/i }).getAttribute("src");
     expect(secondSrc).not.toBe(firstSrc);
@@ -567,7 +567,7 @@ describe("DeclutterPage wizard, overlay linking on compact rows", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
     const row = screen.getByText("lamp").closest("li");
     await user.hover(row);
@@ -587,8 +587,8 @@ describe("DeclutterPage wizard, carried-over checks", () => {
   test("the stepper still starts on Upload with nothing complete", () => {
     render(<DeclutterPage />);
     const steps = trackerSteps();
-    expect(steps.map((s) => s.label)).toEqual(["Upload", "Analyse", "Review", "Confirm", "Listings"]);
-    expect(steps.find((s) => s.current).label).toBe("Upload");
+    expect(steps.map((s) => s.label)).toEqual(["Upload photo", "Analyse room", "Decide items", "Confirm choices", "Listing drafts"]);
+    expect(steps.find((s) => s.current).label).toBe("Upload photo");
     expect(steps.filter((s) => s.current)).toHaveLength(1);
   });
 });
@@ -655,9 +655,9 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
   async function toConfirmed(user, { decision = "keep", runId = "run-a" } = {}) {
     client.uploadImage.mockResolvedValueOnce(makeUploadResponse(runId));
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     if (decision !== "keep") {
       const label = decision.charAt(0).toUpperCase() + decision.slice(1);
       await user.click(screen.getByRole("radio", { name: label }));
@@ -674,16 +674,16 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
 
-    expect(screen.queryByRole("button", { name: /continue to listings/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to listing drafts/i })).not.toBeInTheDocument();
 
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponse("run-a"));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
 
-    expect(screen.getByRole("button", { name: /continue to listings/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue to listing drafts/i })).toBeInTheDocument();
   });
 
   test("navigating to Listings alone makes no listing request", async () => {
@@ -691,9 +691,9 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
 
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
-    expect(viewedLabel()).toBe("Listings");
+    expect(viewedLabel()).toBe("Listing drafts");
     expect(client.generateListings).not.toHaveBeenCalled();
   });
 
@@ -701,7 +701,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "keep" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
     expect(screen.getByText(/did not confirm any items as sell/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /generate listing drafts/i })).not.toBeInTheDocument();
@@ -712,7 +712,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
     let resolveListings;
     client.generateListings.mockImplementationOnce(
@@ -732,7 +732,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
     client.generateListings.mockRejectedValueOnce(new Error("Listing service unreachable"));
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
@@ -752,9 +752,9 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     render(<DeclutterPage />);
     client.uploadImage.mockResolvedValueOnce(makeUploadResponse("run-a"));
     await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /continue to review/i }));
+    await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     // Captured while Review is the viewed step, the analysed-room <img>
     // is out of the accessibility tree (and unqueryable by role) once
     // this view is hidden behind a later step.
@@ -764,7 +764,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     client.confirmDecisions.mockResolvedValueOnce(makeConfirmResponseSell("run-a"));
     await user.click(screen.getByRole("button", { name: /confirm decisions/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
 
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
@@ -788,7 +788,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
     );
@@ -830,7 +830,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
     );
@@ -838,10 +838,10 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /back to confirm/i }));
-    expect(viewedLabel()).toBe("Confirm");
+    expect(viewedLabel()).toBe("Confirm choices");
     expect(screen.getByText(/decisions confirmed/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
     expect(client.generateListings).toHaveBeenCalledTimes(1);
   });
@@ -850,7 +850,7 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
     );
@@ -858,19 +858,19 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /back to confirm/i }));
-    await user.click(screen.getByRole("button", { name: /back to review/i }));
-    expect(within(nav()).getByRole("button", { name: "Go to Listings" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /back to decide items/i }));
+    expect(within(nav()).getByRole("button", { name: "Go to Listing drafts" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Donate" }));
 
-    expect(within(nav()).queryByRole("button", { name: "Go to Listings" })).toBeNull();
+    expect(within(nav()).queryByRole("button", { name: "Go to Listing drafts" })).toBeNull();
   });
 
   test("no Reorganise wording or action ever appears in standalone Declutter", async () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await toConfirmed(user, { decision: "sell" });
-    await user.click(screen.getByRole("button", { name: /continue to listings/i }));
+    await user.click(screen.getByRole("button", { name: /continue to listing drafts/i }));
     client.generateListings.mockResolvedValueOnce(
       makeListingsResponse("run-a", makeConfirmResponseSell("run-a"), [makeDraft()])
     );

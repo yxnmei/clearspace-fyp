@@ -147,7 +147,7 @@ export default function BothPage() {
                 className="flex items-start gap-2 rounded-card border border-error/30 bg-error/10 p-4 text-sm text-error"
               >
                 <TriangleAlert aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0" />
-                <span>{flow.error} Go back to Upload and try again.</span>
+                <span>{flow.error} Go back to Upload photo and try again.</span>
               </p>
             )}
 
@@ -158,7 +158,7 @@ export default function BothPage() {
               >
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
                 <span>
-                  ClearSpace finished analysing your room. Continue to Review to check each detected item and
+                  ClearSpace finished analysing your room. Continue to Decide items to check each detected item and
                   the action it suggests.
                 </span>
               </p>
@@ -174,10 +174,10 @@ export default function BothPage() {
             )}
 
             <WizardNav
-              backLabel="Back to Upload"
+              backLabel="Back to Upload photo"
               onBack={() => goToStep("upload")}
               backDisabled={wizard.navigationLocked}
-              continueLabel="Continue to Review"
+              continueLabel="Continue to Decide items"
               onContinue={handleContinue}
               continueDisabled={!(viewed === "analyse" && wizard.canContinue)}
             />
@@ -198,10 +198,10 @@ export default function BothPage() {
                 enableBackToTop
               />
               <WizardNav
-                backLabel="Back to Analyse"
+                backLabel="Back to Analyse room"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
-                continueLabel="Continue to Confirm"
+                continueLabel="Continue to Confirm choices"
                 onContinue={handleContinue}
                 continueDisabled={!wizard.canContinueFromReview || wizard.navigationLocked}
               />
@@ -232,10 +232,10 @@ export default function BothPage() {
               )}
 
               <WizardNav
-                backLabel="Back to Review"
+                backLabel="Back to Decide items"
                 onBack={() => goToStep("review")}
                 backDisabled={wizard.navigationLocked}
-                continueLabel="Continue to Reorganise"
+                continueLabel="Continue to Results"
                 onContinue={hasConfirmation ? handleContinue : undefined}
                 continueDisabled={!(viewed === "confirm" && wizard.canContinue)}
               />
@@ -326,7 +326,7 @@ export default function BothPage() {
               />
 
               <WizardNav
-                backLabel="Back to Confirm"
+                backLabel="Back to Confirm choices"
                 onBack={() => goToStep("confirm")}
                 backDisabled={wizard.navigationLocked}
               />

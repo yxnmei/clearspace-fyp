@@ -11,17 +11,17 @@ const labels = (steps) => steps.map((s) => s.label);
 describe("WORKFLOW_STEPS, each workflow's exact sequence", () => {
   test("Declutter: Upload → Analyse → Review → Confirm → Listings", () => {
     expect(ids(WORKFLOW_STEPS.declutter)).toEqual(["upload", "analyse", "review", "confirm", "listings"]);
-    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload", "Analyse", "Review", "Confirm", "Listings"]);
+    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload photo", "Analyse room", "Decide items", "Confirm choices", "Listing drafts"]);
   });
 
   test("Direct Reorganise: Upload → Analyse → Review → Generate", () => {
     expect(ids(WORKFLOW_STEPS.reorganise)).toEqual(["upload", "analyse", "review", "generate"]);
-    expect(labels(WORKFLOW_STEPS.reorganise)).toEqual(["Upload", "Analyse", "Review", "Generate"]);
+    expect(labels(WORKFLOW_STEPS.reorganise)).toEqual(["Upload photo", "Analyse room", "Select items", "Tidy plan"]);
   });
 
   test("Both: Upload → Analyse → Review → Confirm → Reorganise", () => {
     expect(ids(WORKFLOW_STEPS.both)).toEqual(["upload", "analyse", "review", "confirm", "reorganise"]);
-    expect(labels(WORKFLOW_STEPS.both)).toEqual(["Upload", "Analyse", "Review", "Confirm", "Reorganise"]);
+    expect(labels(WORKFLOW_STEPS.both)).toEqual(["Upload photo", "Analyse room", "Decide items", "Confirm choices", "Results"]);
   });
 });
 

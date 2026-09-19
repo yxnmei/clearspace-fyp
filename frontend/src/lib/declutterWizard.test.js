@@ -21,11 +21,11 @@ describe("DECLUTTER_WIZARD_STEPS", () => {
       "listings",
     ]);
     expect(DECLUTTER_WIZARD_STEPS.map((s) => s.label)).toEqual([
-      "Upload",
-      "Analyse",
-      "Review",
-      "Confirm",
-      "Listings",
+      "Upload photo",
+      "Analyse room",
+      "Decide items",
+      "Confirm choices",
+      "Listing drafts",
     ]);
   });
 });
@@ -130,8 +130,8 @@ describe("deriveDeclutterWizard, unlocking", () => {
 
   test("provides a factual stage ordinal and the next step label, never a percentage", () => {
     const w = deriveDeclutterWizard({ ...analysed, viewedStep: "review" });
-    expect(w.ordinalText).toBe("Step 3 of 5 · Review");
-    expect(w.nextStepLabel).toBe("Confirm");
+    expect(w.ordinalText).toBe("Step 3 of 5 · Decide items");
+    expect(w.nextStepLabel).toBe("Confirm choices");
     expect(JSON.stringify(w)).not.toMatch(/%|percent/i);
   });
 });
@@ -169,7 +169,7 @@ describe("deriveDeclutterWizard, Listings step (Stage 4B)", () => {
     const w = deriveDeclutterWizard({ ...confirmedBase, viewedStep: "confirm" });
     expect(w.canContinue).toBe(true);
     expect(w.continueTargetId).toBe("listings");
-    expect(w.nextStepLabel).toBe("Listings");
+    expect(w.nextStepLabel).toBe("Listing drafts");
   });
 
   test("confirming alone does not navigate to or complete Listings (no automatic generation)", () => {

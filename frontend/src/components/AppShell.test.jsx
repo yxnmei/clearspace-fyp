@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import AppShell from "./AppShell";
@@ -46,6 +46,42 @@ describe("AppShell", () => {
     expect(main.className).toMatch(/mx-auto/);
     expect(main.className).toMatch(/px-4/);
     expect(main.className).toMatch(/sm:px-6/);
+  });
+
+  test("no workflow breadcrumb chip unless workflowName is provided", () => {
+    render(<AppShell onBack={vi.fn()}>x</AppShell>);
+    const header = screen.getByRole("banner");
+    expect(within(header).queryByText(/workflow:/i)).not.toBeInTheDocument();
+    expect(header).not.toHaveTextContent(/declutter|reorganise|both/i);
+  });
+
+  test("names the active workflow in the header breadcrumb, once, and only from sm up (the mobile stepper carries it below sm)", () => {
+    render(
+      <AppShell onBack={vi.fn()} workflowName="Declutter">
+        x
+      </AppShell>
+    );
+    const header = screen.getByRole("banner");
+    expect(within(header).getByText(/^clearspace$/i)).toBeInTheDocument();
+    const chip = within(header).getByText("Declutter");
+    expect(within(header).getAllByText("Declutter")).toHaveLength(1);
+    expect(chip.className).toMatch(/\bhidden\b/);
+    expect(chip.className).toMatch(/sm:inline-flex/);
+    // the chip is a label, never a control
+    expect(within(header).queryByRole("button", { name: /declutter/i })).not.toBeInTheDocument();
+    expect(within(header).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  test("keeps the Back to workflows control alongside the breadcrumb", async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    render(
+      <AppShell onBack={onBack} workflowName="Both">
+        x
+      </AppShell>
+    );
+    await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   test("the decorative background layer is hidden from assistive tech", () => {

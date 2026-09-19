@@ -1,10 +1,16 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "./ui/button";
 
-// The Back / Continue control row shared by the Declutter wizard's
-// Analyse, Review and Confirm views. It only renders and disables
-// buttons, the availability rules and the actual step change live in
-// DeclutterPage / lib/declutterWizard.
+// The Back / Continue control row shared by the wizard views of every
+// workflow. It only renders and disables buttons, the availability rules
+// and the actual step change live in the pages / lib derivations.
+//
+// Layout: below sm the controls stack vertically, Back first, each one
+// full width with its icon and label centred (the Button primitive already
+// centres its content). From sm up they return to one row at their natural
+// widths, Back on the left and Continue on the right; `sm:ml-auto` keeps
+// Continue on the right even when there is no Back control, so no empty
+// placeholder element is needed on either breakpoint.
 export default function WizardNav({
   backLabel,
   onBack,
@@ -14,18 +20,27 @@ export default function WizardNav({
   continueDisabled = false,
 }) {
   return (
-    <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+    <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       {onBack ? (
-        <Button type="button" variant="outline" onClick={onBack} disabled={backDisabled}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onBack}
+          disabled={backDisabled}
+          className="w-full sm:w-auto"
+        >
           <ArrowLeft aria-hidden="true" width={16} height={16} />
           {backLabel}
         </Button>
-      ) : (
-        <span />
-      )}
+      ) : null}
 
       {onContinue ? (
-        <Button type="button" onClick={onContinue} disabled={continueDisabled}>
+        <Button
+          type="button"
+          onClick={onContinue}
+          disabled={continueDisabled}
+          className="w-full sm:ml-auto sm:w-auto"
+        >
           {continueLabel}
           <ArrowRight aria-hidden="true" width={16} height={16} />
         </Button>

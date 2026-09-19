@@ -77,7 +77,7 @@ export default function ListingsView({
           generate.
         </p>
         <p className="mt-2 text-sm text-muted-foreground">
-          If you want listing drafts, go back to Review and change an item's decision to Sell, then
+          If you want listing drafts, go back to Decide items and change an item's decision to Sell, then
           confirm again.
         </p>
       </Frame>

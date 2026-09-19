@@ -2,27 +2,31 @@
 // three workflows. Declutter has additional listing-specific rules in
 // declutterWizard.js; Direct Reorganise and Both use the helpers here.
 
+// Step ids are the stable identity used by every page, hook-derived
+// unlock rule and test; only the labels are user-facing. Labels name the
+// action of each screen ("Decide items", not "Review") so the same word
+// never means two different things across workflows.
 const DECLUTTER_STEPS = [
-  { id: "upload", label: "Upload" },
-  { id: "analyse", label: "Analyse" },
-  { id: "review", label: "Review" },
-  { id: "confirm", label: "Confirm" },
-  { id: "listings", label: "Listings" },
+  { id: "upload", label: "Upload photo" },
+  { id: "analyse", label: "Analyse room" },
+  { id: "review", label: "Decide items" },
+  { id: "confirm", label: "Confirm choices" },
+  { id: "listings", label: "Listing drafts" },
 ];
 
 const REORGANISE_STEPS = [
-  { id: "upload", label: "Upload" },
-  { id: "analyse", label: "Analyse" },
-  { id: "review", label: "Review" },
-  { id: "generate", label: "Generate" },
+  { id: "upload", label: "Upload photo" },
+  { id: "analyse", label: "Analyse room" },
+  { id: "review", label: "Select items" },
+  { id: "generate", label: "Tidy plan" },
 ];
 
 const BOTH_STEPS = [
-  { id: "upload", label: "Upload" },
-  { id: "analyse", label: "Analyse" },
-  { id: "review", label: "Review" },
-  { id: "confirm", label: "Confirm" },
-  { id: "reorganise", label: "Reorganise" },
+  { id: "upload", label: "Upload photo" },
+  { id: "analyse", label: "Analyse room" },
+  { id: "review", label: "Decide items" },
+  { id: "confirm", label: "Confirm choices" },
+  { id: "reorganise", label: "Results" },
 ];
 
 export const WORKFLOW_STEPS = {
@@ -51,21 +55,21 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
   switch (viewedStepId) {
     case "upload":
       if (uploadError) return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
-      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Review.", false];
+      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Select items.", false];
       return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
     case "analyse":
       if (phase === "analysing") return ["Analysing your room, scene and objects.", "This can take up to two minutes, no action needed yet.", true];
-      if (uploadError) return ["That analysis didn't go through.", "Go back to Upload and try again.", false];
-      if (hasAnalysis) return ["Analysis complete.", "Continue to Review to check the detected items.", false];
+      if (uploadError) return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
+      if (hasAnalysis) return ["Analysis complete.", "Continue to Select items to check the detected items.", false];
       return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
     case "review":
       if (selectedItemCount === 0) return ["Nothing is included in the reorganisation plan.", "Include at least one actionable item to continue.", false];
-      return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Generate.", false];
+      return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Tidy plan.", false];
     case "generate":
       if (phase === "generating") return ["Writing your checklist and generating a preview…", "This can take several minutes, no action needed yet.", true];
       if (phase === "result") return ["Your reorganisation is complete.", "Review your checklist, focus areas, storage suggestions and visual preview below.", false];
       if (phase === "selecting" && uploadError == null) return ["Ready to generate your reorganisation plan.", "Press Generate reorganisation plan when you are ready.", false];
-      return ["Plan generation is ready.", "Return to Review if you want to change the included items.", false];
+      return ["Plan generation is ready.", "Return to Select items if you want to change the included items.", false];
     default:
       return ["", "", false];
   }
@@ -166,22 +170,22 @@ function describeBothStep({
   switch (viewedStepId) {
     case "upload":
       if (status === "error") return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
-      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Review.", false];
+      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Decide items.", false];
       return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
     case "analyse":
       if (status === "uploading") return ["Analysing your room, scene, objects and item reasoning.", "This can take up to two minutes, no action needed yet.", true];
-      if (status === "error") return ["That analysis didn't go through.", "Go back to Upload and try again.", false];
+      if (status === "error") return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
       return hasAnalysis
-        ? ["Analysis complete.", "Continue to Review to check each item.", false]
+        ? ["Analysis complete.", "Continue to Decide items to check each item.", false]
         : ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
     case "review":
       if (correctingItemId !== null) return ["A label correction is in progress.", "Continue becomes available once it finishes.", false];
       if (unresolvedCount > 0) return ["Some items still need a valid decision.", "Resolve every item before continuing.", false];
-      return ["ClearSpace suggested an action for each item.", "Change anything you want, then continue to Confirm.", false];
+      return ["ClearSpace suggested an action for each item.", "Change anything you want, then continue to Confirm choices.", false];
     case "confirm":
       if (confirmationStatus === "confirming") return ["Confirming your decisions…", "This finishes in a moment.", true];
       if (confirmationStatus === "error") return ["That confirmation didn't go through.", "Your review is unchanged. Try again below.", false];
-      if (hasConfirmation) return ["Your decisions are locked in.", "Continue to the final actions when you are ready.", false];
+      if (hasConfirmation) return ["Your decisions are locked in.", "Continue to Results when you are ready.", false];
       return ["Ready to confirm.", "Press Confirm decisions when your review is ready.", false];
     case "reorganise":
       if (generationStatus === "generating") return ["Writing your checklist and generating a preview…", "Listings remain independently available on this screen.", true];

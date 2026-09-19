@@ -199,9 +199,9 @@ function currentStep() {
 async function reachReview(user, decisions = [{ itemId: "item_001", decision: "keep" }]) {
   client.uploadImage.mockResolvedValueOnce(makeBothUploadResponse({ decisions }));
   await user.upload(screen.getByLabelText(/room photo/i), makeFile());
-  await user.click(screen.getByRole("button", { name: /analyse room/i }));
+  await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
-  await user.click(screen.getByRole("button", { name: /continue to review/i }));
+  await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
   expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
 }
 
@@ -213,7 +213,7 @@ async function reachActions(user, scenario = { decisions: [{ itemId: "item_001",
   await waitFor(() => expect(screen.getByRole("heading", { name: /decisions confirmed/i })).toBeInTheDocument());
   expect(client.generateListings).not.toHaveBeenCalled();
   expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: /continue to reorganise/i }));
+  await user.click(screen.getByRole("button", { name: /continue to results/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /marketplace listing drafts/i })).toBeInTheDocument());
 }
 
@@ -221,7 +221,7 @@ describe("BothPage screen-by-screen flow", () => {
   test("owns one health request and starts on Upload", async () => {
     render(<BothPage />);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
-    expect(currentStep()).toBe("Upload");
+    expect(currentStep()).toBe("Upload photo");
     expect(screen.queryByRole("heading", { name: /review your declutter decisions/i })).not.toBeInTheDocument();
   });
 
@@ -230,28 +230,28 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     await reachReview(user);
 
-    expect(currentStep()).toBe("Review");
+    expect(currentStep()).toBe("Decide items");
     expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /confirm decisions/i })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /continue to confirm/i }));
-    expect(currentStep()).toBe("Confirm");
+    expect(currentStep()).toBe("Confirm choices");
     expect(screen.getByRole("button", { name: /confirm decisions/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /back to review/i }));
-    expect(currentStep()).toBe("Review");
+    await user.click(screen.getByRole("button", { name: /back to decide items/i }));
+    expect(currentStep()).toBe("Decide items");
   });
 
   test("lists all five steps and keeps future screens locked", () => {
     render(<BothPage />);
     expect(within(stepper()).getAllByRole("listitem").map((item) => item.textContent.replace(/\d+/g, "").trim())).toEqual([
-      "Upload",
-      "Analyse",
-      "Review",
-      "Confirm",
-      "Reorganise",
+      "Upload photo",
+      "Analyse room",
+      "Decide items",
+      "Confirm choices",
+      "Results",
     ]);
-    expect(within(stepper()).queryByRole("button", { name: /go to review/i })).not.toBeInTheDocument();
+    expect(within(stepper()).queryByRole("button", { name: /go to decide items/i })).not.toBeInTheDocument();
   });
 
   test("full flow explicitly generates a reorganisation plan on the final screen", async () => {
@@ -260,7 +260,7 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    expect(currentStep()).toBe("Reorganise");
+    expect(currentStep()).toBe("Results");
     expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
@@ -303,7 +303,7 @@ describe("BothPage screen-by-screen flow", () => {
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /start over/i }));
-    expect(currentStep()).toBe("Upload");
+    expect(currentStep()).toBe("Upload photo");
     expect(screen.getByLabelText(/room photo/i)).toBeInTheDocument();
     expect(URL.revokeObjectURL).toHaveBeenCalled();
   });
@@ -418,7 +418,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
     // listings stay available after the visual, and navigation is unchanged
     expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Marketplace listing drafts"));
-    expect(currentStep()).toBe("Reorganise");
+    expect(currentStep()).toBe("Results");
     expect(screen.getByRole("button", { name: /back to confirm/i })).toBeEnabled();
   });
 

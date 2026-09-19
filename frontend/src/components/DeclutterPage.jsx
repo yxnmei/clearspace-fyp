@@ -196,7 +196,7 @@ export default function DeclutterPage() {
               >
                 <TriangleAlert aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0" />
                 <span>
-                  {error} Your photo and context are still on the Upload step. Go back to Upload and try again.
+                  {error} Your photo and context are still on the Upload photo step. Go back to Upload photo and try again.
                 </span>
               </p>
             )}
@@ -208,7 +208,7 @@ export default function DeclutterPage() {
               >
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
                 <span>
-                  ClearSpace finished analysing your room. Continue to Review to check each detected item and
+                  ClearSpace finished analysing your room. Continue to Decide items to check each detected item and
                   the action it suggests.
                 </span>
               </p>
@@ -224,10 +224,10 @@ export default function DeclutterPage() {
             )}
 
             <WizardNav
-              backLabel="Back to Upload"
+              backLabel="Back to Upload photo"
               onBack={() => goToStep("upload")}
               backDisabled={wizard.navigationLocked || !wizard.unlockedStepIds.includes("upload")}
-              continueLabel="Continue to Review"
+              continueLabel="Continue to Decide items"
               onContinue={handleContinue}
               continueDisabled={!(viewed === "analyse" && wizard.canContinue)}
             />
@@ -249,10 +249,10 @@ export default function DeclutterPage() {
                 enableBackToTop
               />
               <WizardNav
-                backLabel="Back to Analyse"
+                backLabel="Back to Analyse room"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
-                continueLabel="Continue to Confirm"
+                continueLabel="Continue to Confirm choices"
                 onContinue={handleContinue}
                 continueDisabled={!wizard.canContinueFromReview || wizard.navigationLocked}
               />
@@ -280,7 +280,7 @@ export default function DeclutterPage() {
               )}
 
               <WizardNav
-                backLabel="Back to Review"
+                backLabel="Back to Decide items"
                 onBack={() => goToStep("review")}
                 backDisabled={wizard.navigationLocked}
                 // Continue to Listings appears only once there is a
@@ -290,7 +290,7 @@ export default function DeclutterPage() {
                 // generation stays an explicit action on the Listings
                 // view (ListingsView's own "Generate listing drafts"
                 // button).
-                continueLabel="Continue to Listings"
+                continueLabel="Continue to Listing drafts"
                 onContinue={confirmationStatus === "confirmed" && confirmation ? handleContinue : undefined}
                 continueDisabled={!(viewed === "confirm" && wizard.canContinue)}
               />
@@ -319,7 +319,7 @@ export default function DeclutterPage() {
               />
 
               <WizardNav
-                backLabel="Back to Confirm"
+                backLabel="Back to Confirm choices"
                 onBack={() => goToStep("confirm")}
                 backDisabled={wizard.navigationLocked}
               />

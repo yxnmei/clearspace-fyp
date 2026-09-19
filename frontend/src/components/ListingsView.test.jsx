@@ -120,7 +120,7 @@ describe("ListingsView", () => {
       const { generateListingDrafts } = renderView({ confirmation, listingStatus: "idle" });
 
       expect(screen.getByText(/did not confirm any items as sell/i)).toBeInTheDocument();
-      expect(screen.getByText(/go back to review and change an item's decision to sell/i)).toBeInTheDocument();
+      expect(screen.getByText(/go back to decide items and change an item's decision to sell/i)).toBeInTheDocument();
       expect(screen.queryByRole("button")).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByRole("status")).not.toBeInTheDocument();

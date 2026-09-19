@@ -25,13 +25,22 @@ import BothPage from "./components/BothPage";
 // not universal: each workflow page renders its own WorkflowProgress
 // stepper from its own hook state, since the three workflows have
 // different state machines. The workflow-selection screen shows none.
+const WORKFLOW_NAMES = {
+  declutter: "Declutter",
+  reorganise: "Reorganise",
+  both: "Both",
+};
+
 export default function App() {
   const [mode, setMode] = useState("choose"); // "choose" | "declutter" | "reorganise" | "both"
 
   const backToChoose = mode === "choose" ? undefined : () => setMode("choose");
+  // The header breadcrumb chip; undefined on the chooser, where there is
+  // no workflow to name yet.
+  const workflowName = WORKFLOW_NAMES[mode];
 
   return (
-    <AppShell onBack={backToChoose}>
+    <AppShell onBack={backToChoose} workflowName={workflowName}>
       {mode === "choose" && <PathSelector onChoose={setMode} />}
 
       {mode === "declutter" && <DeclutterPage />}

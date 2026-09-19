@@ -4,7 +4,7 @@ import { WORKFLOW_STEPS } from "./workflowProgress";
 // model. It owns no state: DeclutterPage passes in the flow snapshot plus
 // the two page-owned pieces of presentation state (which step is being
 // viewed, and whether the user has acknowledged Review by pressing
-// Continue to Confirm), and gets back everything WorkflowProgress and the
+// Continue to Confirm choices), and gets back everything WorkflowProgress and the
 // Back/Continue controls need.
 //
 // Navigation never depends on this module doing anything with the network
@@ -38,7 +38,7 @@ function describeViewedStep({
       if (hasAnalysis) {
         return {
           statusText: "Your analysed room is still here.",
-          nextActionText: "Submit a new photo to start over, or use the tracker to return to your review.",
+          nextActionText: "Submit a new photo to start over, or return to Decide items.",
           processing: false,
         };
       }
@@ -58,14 +58,14 @@ function describeViewedStep({
       if (status === "error") {
         return {
           statusText: "That analysis didn't go through.",
-          nextActionText: "Go back to Upload and try again.",
+          nextActionText: "Go back to Upload photo and try again.",
           processing: false,
         };
       }
       if (hasAnalysis) {
         return {
           statusText: "Analysis complete.",
-          nextActionText: "Continue to Review to check each item.",
+          nextActionText: "Continue to Decide items to check each item.",
           processing: false,
         };
       }
@@ -78,20 +78,20 @@ function describeViewedStep({
       if (correctingItemId !== null) {
         return {
           statusText: "A label correction is in progress.",
-          nextActionText: "Continue to Confirm becomes available once it finishes.",
+          nextActionText: "Continue to Confirm choices becomes available once it finishes.",
           processing: false,
         };
       }
       if (unresolvedCount > 0) {
         return {
           statusText: "Some items still need a valid decision.",
-          nextActionText: "Resolve every unresolved item, then Continue to Confirm.",
+          nextActionText: "Resolve every unresolved item, then Continue to Confirm choices.",
           processing: false,
         };
       }
       return {
         statusText: "ClearSpace suggested an action for each item it found.",
-        nextActionText: "Change anything you want, then Continue to Confirm.",
+        nextActionText: "Change anything you want, then Continue to Confirm choices.",
         processing: false,
       };
     case "confirm":
@@ -105,7 +105,7 @@ function describeViewedStep({
       if (confirmationStatus === "confirmed" && hasConfirmation) {
         return {
           statusText: "Your decisions are locked in.",
-          nextActionText: "The confirmed summary is below. Continue to Listings when you are ready.",
+          nextActionText: "The confirmed summary is below. Continue to Listing drafts when you are ready.",
           processing: false,
         };
       }

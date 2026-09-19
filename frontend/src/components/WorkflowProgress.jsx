@@ -1,4 +1,5 @@
 import { Check, Loader2 } from "lucide-react";
+import PathChip from "./PathChip";
 import { cn } from "../lib/cn";
 
 // Workflow progress tracker. It renders already-derived presentation data
@@ -11,22 +12,24 @@ import { cn } from "../lib/cn";
 //     (`viewedStepId`), which gets the current-step highlight and
 //     `aria-current="step"` even when it is also completed.
 //
-// Non-navigable steppers (Reorganise, Both) pass neither `onStepSelect`
-// nor the id lists and get exactly the old behaviour: check derived from
-// `currentStepId` / `isComplete`, and no buttons. Wizard steppers
-// (Declutter) pass `onStepSelect` plus the id lists; completed unlocked
-// steps that are not the viewed step become real navigation buttons,
-// unless `navigationLocked` (a safety-critical request is processing).
+// Non-navigable steppers pass neither `onStepSelect` nor the id lists and
+// get the plain behaviour: check derived from `currentStepId` /
+// `isComplete`, and no buttons. Wizard steppers pass `onStepSelect` plus
+// the id lists; completed unlocked steps that are not the viewed step
+// become real navigation buttons, unless `navigationLocked` (a
+// safety-critical request is processing).
 //
-// Visual language:
-//   - completed: solid green circle, white check, green label, solid
-//     green connector behind it;
-//   - viewed (current): deep-green filled circle, bold label on a pale
-//     mint pill, the strongest state;
-//   - future locked: neutral outlined circle, muted label, dashed
-//     connector, aria-disabled and never focusable.
-// Connectors sit on the circle centre-line only, one z-layer back, so a
-// label is never crossed by a line.
+// Two presentations of the SAME props, switched by CSS only (one DOM):
+//   - from sm up, the full step row: completed = solid green circle with
+//     a check, viewed (current) = deep-green circle and bold label on a
+//     pale pill, upcoming = outlined circle and muted label; connectors
+//     sit on the circle centre-line one z-layer back, solid green once
+//     the previous step is done, dashed otherwise;
+//   - below sm, a compact summary instead of a squeezed row: the path
+//     chip, "Step X of N", a progress bar and the current step's title.
+//     Backward navigation there is the screen's own Back control; the
+//     step buttons remain in the DOM but are not displayed.
+// The status / next-action lines below are shared by both.
 export default function WorkflowProgress({
   workflowName,
   steps,
@@ -50,6 +53,8 @@ export default function WorkflowProgress({
   const viewed = !navigable && isComplete ? null : (viewedStepId ?? currentStepId);
   const viewedIndex = steps.findIndex((step) => step.id === (viewedStepId ?? currentStepId));
   const viewedLabel = viewedIndex >= 0 ? steps[viewedIndex].label : "";
+  const stepNumber = (viewedIndex >= 0 ? viewedIndex : 0) + 1;
+  const stepCount = steps.length;
 
   function isStepCompleted(step, index) {
     if (completedStepIds) return completedStepIds.includes(step.id);
@@ -67,7 +72,33 @@ export default function WorkflowProgress({
       aria-label={`${workflowName} workflow progress`}
       className="mx-auto w-full max-w-4xl rounded-card border border-border bg-surface p-4 sm:p-5"
     >
-      <ol className="flex items-stretch overflow-x-auto pb-1">
+      {/* Mobile summary (below sm). No list, no buttons, no percentage. */}
+      <div className="sm:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <PathChip workflowName={workflowName} />
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Step {stepNumber} of {stepCount}
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label={`${workflowName} workflow progress`}
+          aria-valuemin={1}
+          aria-valuemax={stepCount}
+          aria-valuenow={stepNumber}
+          aria-valuetext={`Step ${stepNumber} of ${stepCount}: ${viewedLabel}`}
+          className="mt-3 h-1.5 w-full overflow-hidden rounded-pill bg-surface-muted"
+        >
+          <div
+            className="h-full rounded-pill bg-primary transition-[width]"
+            style={{ width: `${(stepNumber / stepCount) * 100}%` }}
+          />
+        </div>
+        <p className="mt-3 text-base font-semibold text-foreground">{viewedLabel}</p>
+      </div>
+
+      {/* Full step row (sm and up). */}
+      <ol className="hidden items-start sm:flex">
         {steps.map((step, index) => {
           const completed = isStepCompleted(step, index);
           const isViewed = step.id === viewed;
@@ -93,7 +124,7 @@ export default function WorkflowProgress({
           const label = (
             <span
               className={cn(
-                "mt-1.5 whitespace-nowrap rounded-pill px-2 py-0.5 text-xs transition-colors",
+                "mt-2 rounded-pill px-2 py-0.5 text-center text-xs leading-tight transition-colors",
                 isViewed
                   ? "bg-accent font-bold text-accent-foreground"
                   : completed
@@ -127,7 +158,7 @@ export default function WorkflowProgress({
               key={step.id}
               aria-current={isViewed ? "step" : undefined}
               aria-disabled={navigable && isFuture ? "true" : undefined}
-              className="relative flex min-w-[5.25rem] flex-1 flex-col items-center"
+              className="relative flex min-w-0 flex-1 flex-col items-center"
             >
               {index > 0 && (
                 <span
@@ -146,9 +177,9 @@ export default function WorkflowProgress({
         })}
       </ol>
 
-      <div className="mt-3 border-t border-border pt-3 text-center">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Step {(viewedIndex >= 0 ? viewedIndex : 0) + 1} of {steps.length} · {viewedLabel}
+      <div className="mt-4 border-t border-border pt-3 text-center">
+        <p className="hidden text-xs font-medium uppercase tracking-wide text-muted-foreground sm:block">
+          Step {stepNumber} of {stepCount} · {viewedLabel}
         </p>
         <p
           aria-live="polite"

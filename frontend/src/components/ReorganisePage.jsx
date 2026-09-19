@@ -108,21 +108,21 @@ export default function ReorganisePage() {
             {flow.uploadError && (
               <p role="alert" className="flex items-start gap-2 rounded-card border border-error/30 bg-error/10 p-4 text-sm text-error">
                 <TriangleAlert aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0" />
-                <span>{flow.uploadError} Go back to Upload and try again.</span>
+                <span>{flow.uploadError} Go back to Upload photo and try again.</span>
               </p>
             )}
             {hasAnalysis && flow.phase !== "analysing" && (
               <p role="status" className="flex items-start gap-2 rounded-card border border-success/30 bg-success/10 p-4 text-sm text-foreground">
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
-                <span>ClearSpace finished analysing your room. Continue to Review to check the detected items.</span>
+                <span>ClearSpace finished analysing your room. Continue to Select items to check the detected items.</span>
               </p>
             )}
             {hasAnalysis && <ReorganiseAnalysisSummary analysis={flow.analysis} />}
             <WizardNav
-              backLabel="Back to Upload"
+              backLabel="Back to Upload photo"
               onBack={() => goToStep("upload")}
               backDisabled={wizard.navigationLocked}
-              continueLabel="Continue to Review"
+              continueLabel="Continue to Select items"
               onContinue={handleContinue}
               continueDisabled={!(viewed === "analyse" && wizard.canContinue)}
             />
@@ -141,10 +141,10 @@ export default function ReorganisePage() {
                 enableBackToTop
               />
               <WizardNav
-                backLabel="Back to Analyse"
+                backLabel="Back to Analyse room"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
-                continueLabel="Continue to Generate"
+                continueLabel="Continue to Tidy plan"
                 onContinue={handleContinue}
                 continueDisabled={!(viewed === "review" && wizard.canContinue)}
               />
@@ -201,7 +201,7 @@ export default function ReorganisePage() {
               )}
 
               <WizardNav
-                backLabel="Back to Review"
+                backLabel="Back to Select items"
                 onBack={() => goToStep("review")}
                 backDisabled={wizard.navigationLocked}
               />

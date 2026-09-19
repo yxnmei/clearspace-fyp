@@ -71,9 +71,9 @@ describe("WorkflowProgress, structure and semantics", () => {
 
   test("no step label uses underline or line-through styling (never strikethrough-like)", () => {
     renderProgress({ currentStepId: "review" });
-    const nav = screen.getByRole("navigation", { name: /workflow progress/i });
+    const list = screen.getByRole("list");
     for (const label of ["Upload", "Analyse", "Review", "Confirm"]) {
-      const el = within(nav).getByText(label);
+      const el = within(list).getByText(label);
       expect(el.className).not.toMatch(/underline|line-through/);
     }
   });
@@ -147,22 +147,106 @@ describe("WorkflowProgress, structure and semantics", () => {
     expect(screen.getByText("Step 3 of 4 · Review")).toBeInTheDocument();
   });
 
-  test("mobile treatment: every step label stays in the DOM (no responsive hiding)", () => {
-    // Labels are always rendered; the row scrolls rather than dropping steps.
+  test("the full step row keeps every label in the DOM and is displayed from sm up, never squeezed onto mobile", () => {
     renderProgress();
-    for (const label of ["Upload", "Analyse", "Review", "Confirm"]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    }
     const list = screen.getByRole("list");
-    expect(list.className).toMatch(/overflow-x-auto/);
+    for (const label of ["Upload", "Analyse", "Review", "Confirm"]) {
+      expect(within(list).getByText(label)).toBeInTheDocument();
+    }
+    expect(list.className).toMatch(/\bhidden\b/);
+    expect(list.className).toMatch(/sm:flex/);
+    expect(list.className).not.toMatch(/overflow-x-auto/);
   });
 
-  test("wider bordered surface, roughly max-w-4xl, with a horizontally scrollable step row", () => {
+  test("wider bordered surface, roughly max-w-4xl", () => {
     renderProgress();
     const nav = screen.getByRole("navigation", { name: /workflow progress/i });
     expect(nav.className).toMatch(/max-w-4xl/);
     expect(nav.className).toMatch(/border/);
-    expect(screen.getByRole("list").className).toMatch(/overflow-x-auto/);
+  });
+});
+
+describe("WorkflowProgress, mobile summary", () => {
+  // One DOM, two presentations: the summary block is display-only below
+  // sm. jsdom cannot prove the breakpoint switch, so these assert the
+  // block's content, semantics and classes; the visual switch is checked
+  // by hand.
+  function summary() {
+    return screen.getByRole("progressbar").parentElement;
+  }
+
+  test("shows the path chip, a factual step ordinal, a progress bar and the current step title", () => {
+    renderProgress({ currentStepId: "review" });
+    const block = summary();
+    expect(block.className).toMatch(/sm:hidden/);
+    expect(within(block).getByText("Declutter")).toBeInTheDocument();
+    expect(within(block).getByText("Step 3 of 4")).toBeInTheDocument();
+    expect(within(block).getByText("Review")).toBeInTheDocument();
+
+    const bar = screen.getByRole("progressbar", { name: /declutter workflow progress/i });
+    expect(bar).toHaveAttribute("aria-valuemin", "1");
+    expect(bar).toHaveAttribute("aria-valuemax", "4");
+    expect(bar).toHaveAttribute("aria-valuenow", "3");
+    expect(bar).toHaveAttribute("aria-valuetext", "Step 3 of 4: Review");
+  });
+
+  test("the summary carries no list, no buttons and no percentage text", () => {
+    renderProgress({ currentStepId: "review", onStepSelect: vi.fn(), completedStepIds: ["upload", "analyse"], unlockedStepIds: ["upload", "analyse", "review"] });
+    const block = summary();
+    expect(within(block).queryAllByRole("listitem")).toHaveLength(0);
+    expect(within(block).queryAllByRole("button")).toHaveLength(0);
+    expect(block.textContent).not.toMatch(/%|\bpercent\b/i);
+  });
+
+  test("the progress bar counts steps 1..N: first step is min 1 / now 1 / max N, a middle step reports its own number, and the final step's now equals max", () => {
+    const { rerender } = renderProgress({ currentStepId: "upload" });
+    let bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuemin", "1");
+    expect(bar).toHaveAttribute("aria-valuenow", "1");
+    expect(bar).toHaveAttribute("aria-valuemax", "4");
+    expect(within(summary()).getByText("Step 1 of 4")).toBeInTheDocument();
+
+    rerender(
+      <WorkflowProgress
+        workflowName="Declutter"
+        steps={DECLUTTER_STEPS}
+        currentStepId="analyse"
+        isComplete={false}
+        processing={false}
+        statusText="s"
+        nextActionText="n"
+      />
+    );
+    bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuemin", "1");
+    expect(bar).toHaveAttribute("aria-valuenow", "2");
+    expect(bar).toHaveAttribute("aria-valuemax", "4");
+    expect(within(summary()).getByText("Step 2 of 4")).toBeInTheDocument();
+
+    rerender(
+      <WorkflowProgress
+        workflowName="Declutter"
+        steps={DECLUTTER_STEPS}
+        currentStepId="confirm"
+        isComplete
+        processing={false}
+        statusText="s"
+        nextActionText="n"
+      />
+    );
+    expect(within(summary()).getByText("Step 4 of 4")).toBeInTheDocument();
+    expect(within(summary()).getByText("Confirm")).toBeInTheDocument();
+    bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuemin", "1");
+    expect(bar).toHaveAttribute("aria-valuenow", "4");
+    expect(bar.getAttribute("aria-valuenow")).toBe(bar.getAttribute("aria-valuemax"));
+  });
+
+  test("the desktop ordinal line is display-only from sm up, so the step ordinal is never shown twice at one breakpoint", () => {
+    renderProgress({ currentStepId: "review" });
+    const desktopOrdinal = screen.getByText("Step 3 of 4 · Review");
+    expect(desktopOrdinal.className).toMatch(/\bhidden\b/);
+    expect(desktopOrdinal.className).toMatch(/sm:block/);
   });
 });
 
