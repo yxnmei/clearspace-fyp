@@ -111,7 +111,7 @@ async function analyseRoom() {
 
 async function continueToGenerate() {
   await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
-  expect(screen.getByRole("heading", { name: /review items for your reorganisation plan/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /choose items for your tidy plan/i })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
   expect(screen.getByRole("heading", { name: /generate reorganisation plan/i })).toBeInTheDocument();
 }
@@ -127,11 +127,11 @@ describe("ReorganisePage screen-by-screen flow", () => {
     render(<ReorganisePage />);
 
     expect(currentStep()).toBe("Upload photo");
-    expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /choose items for your tidy plan/i })).not.toBeInTheDocument();
 
     await analyseRoom();
     expect(currentStep()).toBe("Analyse room");
-    expect(screen.queryByRole("heading", { name: /review items for your reorganisation plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /choose items for your tidy plan/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
     expect(currentStep()).toBe("Select items");
@@ -149,6 +149,38 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await userEvent.click(document.getElementById("reorganise-item-item_001"));
     expect(screen.getByRole("button", { name: /continue to tidy plan/i })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/include at least one item/i);
+  });
+
+  test("selection survives Back and forward navigation, Continue only navigates once selection is valid, and no API is called", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
+    expect(currentStep()).toBe("Select items");
+    expect(document.getElementById("reorganise-item-item_001")).toBeChecked();
+
+    // exclude the only item, go back, come forward: still excluded, still blocked
+    await userEvent.click(document.getElementById("reorganise-item-item_001"));
+    expect(document.getElementById("reorganise-item-item_001")).not.toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: /back to analyse/i }));
+    expect(currentStep()).toBe("Analyse room");
+    await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
+    expect(currentStep()).toBe("Select items");
+    expect(document.getElementById("reorganise-item-item_001")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /continue to tidy plan/i })).toBeDisabled();
+
+    // include it again: Continue navigates to Tidy plan without generating anything
+    await userEvent.click(document.getElementById("reorganise-item-item_001"));
+    expect(document.getElementById("reorganise-item-item_001")).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
+    expect(currentStep()).toBe("Tidy plan");
+    expect(client.generateReorganisation).not.toHaveBeenCalled();
+    expect(client.uploadImage).toHaveBeenCalledTimes(1);
+
+    // and the selection is still there on the way back
+    await userEvent.click(screen.getByRole("button", { name: /back to select items/i }));
+    expect(document.getElementById("reorganise-item-item_001")).toBeChecked();
   });
 
   test("completes Upload → Analyse → Review → Generate without health blocking", async () => {
