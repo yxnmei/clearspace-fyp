@@ -246,18 +246,23 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: /your reorganisation checklist/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
+    expect(within(checklist).getByRole("checkbox", { name: /clear the desk/i })).not.toBeChecked();
     const areas = screen.getByRole("region", { name: /areas to focus on/i });
-    expect(within(areas).getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    expect(within(areas).getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
     const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
     expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("Your reorganisation checklist")).toBeLessThan(headings.indexOf("Areas to focus on"));
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(headings.indexOf("Checklist")).toBeLessThan(headings.indexOf("Visual preview"));
+    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Areas to focus on"));
     expect(headings.indexOf("Areas to focus on")).toBeLessThan(headings.indexOf("Storage suggestions"));
-    expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
     expect(screen.queryByText(/room plan/i)).not.toBeInTheDocument();
+    // checking a step is local only: no request, no navigation change
+    await userEvent.click(within(checklist).getByRole("checkbox", { name: /clear the desk/i }));
+    expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
+    expect(client.generateReorganisation).toHaveBeenCalledTimes(1);
     // the wizard is unchanged: Generate is the viewed step and Back still works
     expect(currentStep()).toBe("Tidy plan");
     expect(screen.getByRole("button", { name: /back to select items/i })).toBeEnabled();
@@ -275,7 +280,7 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
-    expect(screen.queryByRole("heading", { name: /your reorganisation checklist/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
   });
 
@@ -302,12 +307,14 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
 
     await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
-    expect(screen.getByText(/did not return a usable checklist/i)).toBeInTheDocument();
+    // the fallback is not explained to the user in technical terms; the checklist just works
+    expect(screen.queryByText(/did not return a usable checklist|ai assistant|call_failed|deterministic/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/took too long/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /areas to focus on/i })).toBeInTheDocument();
     expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
   });
 
-  test("the production response shows zero checklist model calls and deterministic_direct, truthfully", async () => {
+  test("the production response renders as a plain checklist with no provenance, model or call details shown", async () => {
     // What the backend actually returns: no checklist model is called.
     const response = makeGeneratedResponse();
     response.action_plan = {
@@ -332,14 +339,9 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
-    expect(screen.getByText(/without the ai assistant/i)).toBeInTheDocument();
-    expect(screen.queryByText(/suggested by the ai assistant/i)).not.toBeInTheDocument();
-    const details = screen.getByText("Checklist details").closest("details");
-    expect(details).toHaveTextContent("deterministic_direct");
-    expect(within(details).getByText("Model calls").closest("div")).toHaveTextContent("0");
-    expect(within(details).getByText("Model").closest("div")).toHaveTextContent("n/a");
-    expect(within(details).getByText("Prompt version").closest("div")).toHaveTextContent("n/a");
-    expect(details).not.toHaveTextContent("phi4-mini");
+    expect(screen.queryByText(/ai assistant|deterministic|model call|prompt version|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
+    expect(document.querySelector("details")).toBeNull();
+    expect(screen.getByText("0 of 2 completed")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
   });
 });

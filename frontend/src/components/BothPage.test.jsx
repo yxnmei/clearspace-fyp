@@ -406,18 +406,20 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
 
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: /your reorganisation checklist/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
     const areas = screen.getByRole("region", { name: /areas to focus on/i });
-    expect(within(areas).getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    expect(within(areas).getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
     const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
     expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
+    const subheadings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(subheadings.indexOf("Checklist")).toBeLessThan(subheadings.indexOf("Visual preview"));
+    expect(subheadings.indexOf("Visual preview")).toBeLessThan(subheadings.indexOf("Areas to focus on"));
+    expect(subheadings.indexOf("Areas to focus on")).toBeLessThan(subheadings.indexOf("Storage suggestions"));
+    // listings stay available after the tidy plan, and navigation is unchanged
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("Your reorganisation checklist")).toBeLessThan(headings.indexOf("Areas to focus on"));
-    expect(headings.indexOf("Storage suggestions")).toBeLessThan(headings.indexOf("Visual preview"));
-    // listings stay available after the visual, and navigation is unchanged
-    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Marketplace listings"));
+    expect(headings.indexOf("Your tidy plan")).toBeLessThan(headings.indexOf("Marketplace listings"));
     expect(currentStep()).toBe("Results");
     expect(screen.getByRole("button", { name: /back to confirm/i })).toBeEnabled();
   });
@@ -436,8 +438,9 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
 
     await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: "Left side" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
     expect(screen.getByText("Compartment tray")).toBeInTheDocument();
+    expect(screen.queryByText(/service_unreachable|reason code|technical detail/i)).not.toBeInTheDocument();
   });
 
   test("a response whose storage suggestion names a non-Keep item is rejected as a generation error", async () => {
@@ -451,12 +454,12 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
-    expect(screen.queryByRole("heading", { name: /your reorganisation checklist/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
     // listings remain independently available regardless
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
   });
 
-  test("the production response shows zero checklist model calls and deterministic_direct, truthfully", async () => {
+  test("the production response renders as a plain checklist with no provenance shown, and checking steps leaves listings alone", async () => {
     const user = userEvent.setup();
     const response = makeGeneratedResponse(KEEP);
     response.action_plan = {
@@ -478,15 +481,19 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
-    expect(screen.getByText(/without the ai assistant/i)).toBeInTheDocument();
-    const details = screen.getByText("Checklist details").closest("details");
-    expect(details).toHaveTextContent("deterministic_direct");
-    expect(within(details).getByText("Model calls").closest("div")).toHaveTextContent("0");
-    expect(within(details).getByText("Model").closest("div")).toHaveTextContent("n/a");
-    expect(details).not.toHaveTextContent("phi4-mini");
+    expect(screen.queryByText(/ai assistant|deterministic|model call|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
+    expect(document.querySelector("details")).toBeNull();
     // listings and the visual are unaffected
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
+
+    // checking a checklist step is local presentation only: no listing or generation request follows
+    await user.click(screen.getByRole("checkbox", { name: /start with the left side/i }));
+    expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
+    expect(client.generateListings).not.toHaveBeenCalled();
+    expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
+    // this scenario confirmed no Sell items, so the listings panel keeps its own empty state untouched
+    expect(screen.getByRole("region", { name: "Marketplace listings" })).toHaveTextContent(/did not confirm any items as sell/i);
   });
 });
 

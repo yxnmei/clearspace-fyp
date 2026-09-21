@@ -1,12 +1,15 @@
+import { ImageOff, RotateCcw } from "lucide-react";
 import ReorganiseChecklist from "./ReorganiseChecklist";
 import FocusAreas from "./FocusAreas";
 import StorageSuggestions from "./StorageSuggestions";
+import { Button } from "./ui/button";
+import { cn } from "../lib/cn";
 
 // Renders the normalised generate response (useReorganiseFlow's
-// generateResult, or useBothFlow's) in a fixed order: the checklist, the
-// focus areas, the storage suggestions, then the visual preview. The
-// first three are ALWAYS shown; the generated/unavailable image is the
-// only part that varies by image_status. Direct Reorganise and Both both
+// generateResult, or useBothFlow's) as one tidy plan: the heading, then
+// the interactive checklist beside the Before / AI preview from lg up
+// (stacked below), then the focus areas and, only when present, the
+// storage suggestions, then Start over. Direct Reorganise and Both both
 // render this one component, so neither duplicates any of it.
 //
 // The visual is an impression built from a deterministic prompt (room
@@ -20,137 +23,119 @@ import StorageSuggestions from "./StorageSuggestions";
 // non-trivial CPU cost, for what looks like a cheap "try again". Start
 // over (a full reset) is the only recovery action offered until a
 // future backend contract supports a genuinely cheap retry.
+//
+// Technical fields (model, seed, ControlNet, service/API version, timing,
+// prompt, hashes, provenance, attempts, unavailable reason codes) remain
+// in the normalised result and its contract; they are simply not shown.
 const UNAVAILABLE_REASON_COPY = {
-  service_unreachable: "The image-generation service could not be reached.",
-  timeout: "The image-generation request took too long and timed out.",
-  request_failed: "The connection to the image-generation service failed.",
-  service_error: "The image-generation service reported an error.",
-  invalid_response: "The image-generation service returned an unexpected response.",
+  service_unreachable: "The image service could not be reached.",
+  timeout: "The image took too long to generate.",
+  request_failed: "The connection to the image service failed.",
+  service_error: "The image service reported a problem.",
+  invalid_response: "The image service sent back something ClearSpace could not use.",
 };
 
-function GenerationDetails({ image, imagePrompt }) {
+function VisualPreview({ imageStatus, image, imageUnavailableReason, originalImageUrl }) {
+  if (imageStatus !== "generated") {
+    return (
+      <section
+        aria-labelledby="visual-preview-unavailable-heading"
+        className="rounded-card border border-warning/40 bg-warning/10 p-4 sm:p-5"
+      >
+        <h3 id="visual-preview-unavailable-heading" className="flex items-center gap-2 text-lg font-semibold text-foreground">
+          <ImageOff aria-hidden="true" width={18} height={18} className="shrink-0 text-warning" />
+          Visual preview unavailable
+        </h3>
+        <p className="mt-1 text-sm text-foreground">
+          {UNAVAILABLE_REASON_COPY[imageUnavailableReason] ?? "The visual preview could not be generated."} Your
+          checklist is complete and ready to use without it.
+        </p>
+      </section>
+    );
+  }
+
   return (
-    <details className="rounded-control border border-border bg-surface-muted p-3 text-sm text-foreground">
-      <summary className="cursor-pointer font-medium">Generation details</summary>
-      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
-        <div>
-          <dt className="text-muted-foreground">Base model</dt>
-          <dd>{image.base_model}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">ControlNet model</dt>
-          <dd>{image.controlnet_model}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Service version</dt>
-          <dd>{image.service_version}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Generation time</dt>
-          <dd>{(image.generation_ms / 1000).toFixed(1)}s</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Seed</dt>
-          <dd>{image.seed}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Denoise / ControlNet scale</dt>
-          <dd>
-            {image.denoise_strength} / {image.controlnet_conditioning_scale}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">API version</dt>
-          <dd>{image.api_version}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Depth-conditioned</dt>
-          <dd>{image.depth_map_used ? "Yes" : "No"}</dd>
-        </div>
-      </dl>
-      <div className="mt-3">
-        <p className="text-muted-foreground">Image prompt (sent to the image-generation model):</p>
-        <p className="whitespace-pre-wrap">{imagePrompt}</p>
+    <section
+      aria-labelledby="visual-preview-heading"
+      className="rounded-card border border-border bg-surface p-4 shadow-card sm:p-5"
+    >
+      <h3 id="visual-preview-heading" className="text-lg font-semibold text-foreground">
+        Visual preview
+      </h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        An AI-generated impression of a tidier version of your room. It may not preserve every object or its exact
+        placement.
+      </p>
+      {/* Side by side from sm; back to a stack in the narrower lg column
+          beside the checklist, side by side again from xl. */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+        <figure>
+          <figcaption className="mb-1 text-sm font-medium text-foreground">Before</figcaption>
+          {originalImageUrl ? (
+            <img
+              src={originalImageUrl}
+              alt="The original room photo you uploaded"
+              className="w-full rounded-card border border-border bg-surface-muted object-contain"
+            />
+          ) : (
+            <p className="rounded-card border border-border bg-surface-muted p-3 text-sm text-muted-foreground">
+              Original photo unavailable.
+            </p>
+          )}
+        </figure>
+        <figure>
+          <figcaption className="mb-1 text-sm font-medium text-foreground">AI preview</figcaption>
+          <img
+            src={`data:${image.image_media_type};base64,${image.image}`}
+            alt="AI-generated impression of a tidier version of the room"
+            className="w-full rounded-card border border-border bg-surface-muted object-contain"
+          />
+        </figure>
       </div>
-      <div className="mt-3 space-y-1 break-all font-mono text-xs text-muted-foreground">
-        <p>Prompt hash: {image.prompt_sha256}</p>
-        <p>Input-image hash: {image.input_image_sha256}</p>
-      </div>
-    </details>
+    </section>
   );
 }
 
 export default function ReorganiseResult({ generateResult, items, originalImageUrl, onStartOver }) {
-  const { actionPlan, focusAreas, storageSuggestions, imagePrompt, imageStatus, image, imageUnavailableReason } =
-    generateResult;
+  const { actionPlan, focusAreas, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
+  const hasStorage = Array.isArray(storageSuggestions) && storageSuggestions.length > 0;
+  // A real, stable primitive identity for this result: a different run
+  // remounts the checklist, so its local completion starts empty.
+  const resultKey = generateResult.runId ?? actionPlan.run_id;
 
   return (
-    <div className="mt-6 space-y-6">
-      <ReorganiseChecklist actionPlan={actionPlan} />
+    <section aria-labelledby="tidy-plan-heading" className="mt-6 space-y-6">
+      <header>
+        <h2 id="tidy-plan-heading" className="text-title font-semibold tracking-tight text-foreground">
+          Your tidy plan
+        </h2>
+        <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+          Work through the checklist at your own pace. The visual preview is an impression of a tidier room, not a
+          precise placement plan.
+        </p>
+      </header>
 
-      <FocusAreas focusAreas={focusAreas} items={items} />
+      <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+        <ReorganiseChecklist key={resultKey} actionPlan={actionPlan} />
+        <VisualPreview
+          imageStatus={imageStatus}
+          image={image}
+          imageUnavailableReason={imageUnavailableReason}
+          originalImageUrl={originalImageUrl}
+        />
+      </div>
 
-      <StorageSuggestions storageSuggestions={storageSuggestions} items={items} />
+      <div className={cn("grid gap-6 lg:items-start", hasStorage && "lg:grid-cols-2")}>
+        <FocusAreas focusAreas={focusAreas} items={items} />
+        <StorageSuggestions storageSuggestions={storageSuggestions} items={items} />
+      </div>
 
-      {imageStatus === "generated" ? (
-        <section aria-labelledby="visual-preview-heading" className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6">
-          <h2 id="visual-preview-heading" className="text-lg font-semibold text-foreground">
-            Visual preview
-          </h2>
-          <p className="mt-1 mb-4 text-sm text-muted-foreground">
-            An AI-generated impression of a tidier version of your room, made from your selected items and notes.
-            Objects and layout may not be preserved exactly, and the picture does not follow the checklist step by
-            step.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="mb-1 text-sm font-medium text-foreground">Before</p>
-              {originalImageUrl && (
-                <img
-                  src={originalImageUrl}
-                  alt="The original room photo you uploaded"
-                  className="w-full rounded-card border border-border object-contain"
-                />
-              )}
-            </div>
-            <div>
-              <p className="mb-1 text-sm font-medium text-foreground">Reorganised</p>
-              <img
-                src={`data:${image.image_media_type};base64,${image.image}`}
-                alt="AI-generated impression of a tidier version of the room"
-                className="w-full rounded-card border border-border object-contain"
-              />
-            </div>
-          </div>
-          <div className="mt-3">
-            <GenerationDetails image={image} imagePrompt={imagePrompt} />
-          </div>
-        </section>
-      ) : (
-        <section aria-labelledby="visual-preview-unavailable-heading" className="rounded-card border border-warning/40 bg-warning/10 p-5 sm:p-6">
-          <h2 id="visual-preview-unavailable-heading" className="text-lg font-semibold text-foreground">
-            Visual preview unavailable
-          </h2>
-          <p className="mt-1 text-sm text-foreground">
-            {UNAVAILABLE_REASON_COPY[imageUnavailableReason] ?? "The visual preview could not be generated."} Your
-            checklist, focus areas and storage suggestions above are complete and unaffected.
-          </p>
-          <details className="mt-2 text-xs text-muted-foreground">
-            <summary className="cursor-pointer">Technical detail</summary>
-            <p className="mt-1">Reason code: {imageUnavailableReason}</p>
-            <p className="mt-1">Image prompt that would have been sent:</p>
-            <p className="whitespace-pre-wrap">{imagePrompt}</p>
-          </details>
-        </section>
-      )}
-
-      <button
-        type="button"
-        onClick={onStartOver}
-        className="rounded-control border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-      >
-        Start over
-      </button>
-    </div>
+      <div>
+        <Button type="button" variant="outline" size="sm" onClick={onStartOver}>
+          <RotateCcw aria-hidden="true" width={14} height={14} />
+          Start over
+        </Button>
+      </div>
+    </section>
   );
 }

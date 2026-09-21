@@ -1,103 +1,117 @@
-// "Your reorganisation checklist": the numbered action cards of a
-// Reorganise result. Shared by Direct Reorganise and Both through
-// ReorganiseResult so the rendering exists exactly once.
+import { useState } from "react";
+import { cn } from "../lib/cn";
+
+// "Checklist": the actions of a Reorganise result as a locally interactive
+// checklist. Shared by Direct Reorganise and Both through ReorganiseResult
+// so the rendering exists exactly once.
 //
-// The checklist is prose the user reads and acts on, not an item
-// partition: no card is joined to an item_id, and nothing here hides or
-// invents an action. Where the checklist came from is said plainly in one
-// sentence; the technical record (provenance value, attempts, model,
-// prompt version, duration, the single issue if any) stays in a collapsed
-// disclosure. Raw model output never reaches the client at all.
-const SOURCE_COPY = {
-  llm_generated: "Suggested by the AI assistant from your selected items and notes. Read each step before you follow it.",
-  deterministic_fallback:
-    "The AI assistant did not return a usable checklist this time, so this one is built directly from where your selected items sit in the photo.",
-  deterministic_direct: "Built directly from where your selected items sit in the photo, without the AI assistant.",
-};
-
-const ISSUE_COPY = {
-  call_failed: "The AI assistant could not be reached or did not answer in time.",
-  invalid_json: "The AI assistant's reply was not valid JSON.",
-  invalid_actions: "The AI assistant's reply did not match the checklist rules.",
-};
-
-function ChecklistDetails({ actionPlan }) {
-  return (
-    <details className="rounded-control border border-border bg-surface-muted p-3 text-sm text-foreground">
-      <summary className="cursor-pointer font-medium">Checklist details</summary>
-      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
-        <div>
-          <dt className="text-muted-foreground">Provenance</dt>
-          <dd>{actionPlan.provenance}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Model calls</dt>
-          <dd>{actionPlan.attempts}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Model</dt>
-          <dd>{actionPlan.model_name ?? "n/a"}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Prompt version</dt>
-          <dd>{actionPlan.prompt_version ?? "n/a"}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Checklist duration</dt>
-          <dd>{(actionPlan.duration_ms / 1000).toFixed(2)}s</dd>
-        </div>
-      </dl>
-      {actionPlan.issues.length > 0 && (
-        <div className="mt-3">
-          <p className="text-muted-foreground">Why the AI checklist was not used:</p>
-          <ul className="list-inside list-disc">
-            {actionPlan.issues.map((issue, i) => (
-              <li key={i}>
-                {ISSUE_COPY[issue.kind] ?? "The AI assistant's reply could not be used."}{" "}
-                <span className="text-muted-foreground">({issue.kind})</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </details>
-  );
-}
-
+// Completion is presentation state only: a Set of completed priorities
+// held in this component. Checking an action never mutates actionPlan,
+// never calls a hook, the backend or any generation action, and is never
+// persisted. ReorganiseResult mounts this component with a key derived
+// from the result's run identity, so a different generated result (or
+// Start over, which unmounts the result) always starts from an empty
+// checklist. Provenance, model, prompt, duration and issue details stay
+// in the normalised response but are not rendered here.
 export default function ReorganiseChecklist({ actionPlan }) {
+  const [completed, setCompleted] = useState(() => new Set());
+
+  const total = actionPlan.actions.length;
+  const completedCount = actionPlan.actions.filter((action) => completed.has(action.priority)).length;
+  const percent = total === 0 ? 0 : Math.round((completedCount / total) * 100);
+
+  function toggle(priority) {
+    setCompleted((current) => {
+      const next = new Set(current);
+      if (next.has(priority)) next.delete(priority);
+      else next.add(priority);
+      return next;
+    });
+  }
+
   return (
     <section
       aria-labelledby="reorganise-checklist-heading"
-      className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6"
+      className="rounded-card border border-border bg-surface p-4 shadow-card sm:p-5"
     >
-      <h2 id="reorganise-checklist-heading" className="text-lg font-semibold text-foreground">
-        Your reorganisation checklist
-      </h2>
+      <h3 id="reorganise-checklist-heading" className="text-lg font-semibold text-foreground">
+        Checklist
+      </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        {SOURCE_COPY[actionPlan.provenance] ?? SOURCE_COPY.deterministic_direct}
+        Work through these steps in order. Check off each one as you finish.
       </p>
-      <ol className="mt-4 space-y-3" aria-label="Checklist actions">
-        {actionPlan.actions.map((action) => (
-          <li
-            key={action.priority}
-            className="flex gap-3 rounded-card border border-border bg-surface-muted p-4"
-          >
-            <span
-              data-testid="checklist-step-number"
-              className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
-            >
-              {action.priority}
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground">{action.title}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{action.instruction}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
+
       <div className="mt-3">
-        <ChecklistDetails actionPlan={actionPlan} />
+        <p className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="font-medium text-foreground">
+            {completedCount} of {total} completed
+          </span>
+          <span className="tabular-nums text-muted-foreground">{percent}%</span>
+        </p>
+        <div
+          role="progressbar"
+          aria-label="Checklist progress"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={completedCount}
+          aria-valuetext={`${completedCount} of ${total} completed`}
+          className="mt-1.5 h-2 w-full overflow-hidden rounded-pill bg-surface-muted"
+        >
+          <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${percent}%` }} />
+        </div>
       </div>
+
+      <ol className="mt-4 space-y-2" aria-label="Checklist actions">
+        {actionPlan.actions.map((action) => {
+          const done = completed.has(action.priority);
+          const inputId = `checklist-action-${actionPlan.run_id}-${action.priority}`;
+          return (
+            <li key={action.priority}>
+              {/* The whole row is the checkbox's label, so it is one
+                  comfortable target while the native checkbox keeps
+                  keyboard and screen-reader semantics. */}
+              <label
+                htmlFor={inputId}
+                className={cn(
+                  "flex min-h-14 cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors",
+                  done ? "border-primary/40 bg-accent/40" : "border-border bg-surface-muted"
+                )}
+              >
+                <input
+                  type="checkbox"
+                  id={inputId}
+                  checked={done}
+                  onChange={() => toggle(action.priority)}
+                  className="mt-0.5 h-5 w-5 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                />
+                <span
+                  data-testid="checklist-step-number"
+                  className={cn(
+                    "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+                    done ? "bg-primary/70 text-primary-foreground" : "bg-primary text-primary-foreground"
+                  )}
+                >
+                  {action.priority}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      "block text-sm font-semibold",
+                      done ? "text-muted-foreground line-through" : "text-foreground"
+                    )}
+                  >
+                    {action.title}
+                  </span>
+                  <span className={cn("mt-0.5 block text-sm", done ? "text-muted-foreground/80" : "text-muted-foreground")}>
+                    {action.instruction}
+                  </span>
+                  {done && <span className="sr-only">Completed</span>}
+                </span>
+              </label>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
