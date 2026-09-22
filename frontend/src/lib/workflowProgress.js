@@ -188,12 +188,14 @@ function describeBothStep({
       if (hasConfirmation) return ["Your decisions are locked in.", "Continue to Results when you are ready.", false];
       return ["Ready to confirm.", "Press Confirm decisions when your review is ready.", false];
     case "reorganise":
-      if (generationStatus === "generating") return ["Writing your checklist and generating a preview…", "Listings remain independently available on this screen.", true];
-      if (listingStatus === "generating") return ["Generating your listing drafts…", "Reorganisation remains independently available on this screen.", true];
-      if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "The reorganisation plan and other drafts are unaffected.", true];
-      if (generationStatus === "error") return ["The reorganisation didn't finish.", "Your confirmed choices are unchanged. Try again below.", false];
-      if (generationStatus === "done") return ["Your reorganisation is complete.", "Your checklist, preview and listing actions are below.", false];
-      return ["Choose your next action.", "Generate listings and a reorganisation independently, in either order.", false];
+      // Results: Tidy up and Marketplace listings are independent, so the
+      // busy text for one always says the other remains available.
+      if (generationStatus === "generating") return ["Creating your tidy plan…", "Listings remain independently available on this screen.", true];
+      if (listingStatus === "generating") return ["Generating your listing drafts…", "Tidy up remains independently available on this screen.", true];
+      if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "Tidy up and your other drafts are unaffected.", true];
+      if (generationStatus === "error") return ["The tidy plan didn't finish.", "Your confirmed choices are unchanged. Try again below.", false];
+      if (generationStatus === "done") return ["Your tidy plan is ready.", "Your checklist, preview and listing actions are below.", false];
+      return ["Choose your next action.", "Create a tidy plan or listing drafts independently, in either order.", false];
     default:
       return ["", "", false];
   }

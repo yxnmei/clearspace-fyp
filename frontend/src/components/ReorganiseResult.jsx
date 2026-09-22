@@ -103,7 +103,15 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
 // `items` is still passed by both pages for the contract join; nothing
 // rendered here needs it any more (focus areas are not shown and the
 // storage cards carry their own grounded reason), so it is not read.
-export default function ReorganiseResult({ generateResult, originalImageUrl, onStartOver }) {
+//
+// `heading` defaults to Direct Reorganise's "Your tidy plan"; Both passes
+// "Tidy up" so this section IS its Tidy up result section. Start over is
+// rendered only when `onStartOver` is supplied: Direct Reorganise supplies
+// it (a reset of that one workflow), Both does not, because there a
+// whole-workflow reset inside the tidy plan would read as a Tidy-only
+// action, so Both renders one global Start over after both result
+// sections instead.
+export default function ReorganiseResult({ generateResult, originalImageUrl, onStartOver, heading = "Your tidy plan" }) {
   const { actionPlan, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
   // A real, stable primitive identity for this result: a different run
   // remounts the checklist, so its local completion starts empty.
@@ -113,7 +121,7 @@ export default function ReorganiseResult({ generateResult, originalImageUrl, onS
     <section aria-labelledby="tidy-plan-heading" className="mt-6 space-y-6">
       <header>
         <h2 id="tidy-plan-heading" className="text-title font-semibold tracking-tight text-foreground">
-          Your tidy plan
+          {heading}
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           Work through the checklist at your own pace. The visual preview is an impression of a tidier space, not a
@@ -136,12 +144,14 @@ export default function ReorganiseResult({ generateResult, originalImageUrl, onS
           related_item_ids stay in the result but are not displayed. */}
       <StorageSuggestions storageSuggestions={storageSuggestions} />
 
-      <div>
-        <Button type="button" variant="outline" size="sm" onClick={onStartOver}>
-          <RotateCcw aria-hidden="true" width={14} height={14} />
-          Start over
-        </Button>
-      </div>
+      {onStartOver ? (
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={onStartOver}>
+            <RotateCcw aria-hidden="true" width={14} height={14} />
+            Start over
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

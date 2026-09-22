@@ -19,7 +19,7 @@ export default function ImageGenStatusBanner({ status, recheck }) {
   const message =
     status === "checking"
       ? "Checking image-generation availability…"
-      : "Visual preview is currently unavailable. You can still generate a reorganisation plan; only the AI-generated image will be missing.";
+      : "Visual preview is currently unavailable. You can still create a tidy plan; only the AI-generated image will be missing.";
 
   const isChecking = status === "checking";
 

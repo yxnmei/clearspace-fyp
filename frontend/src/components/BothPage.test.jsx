@@ -261,8 +261,8 @@ describe("BothPage screen-by-screen flow", () => {
     await reachActions(user);
 
     expect(currentStep()).toBe("Results");
-    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    expect(screen.getByRole("button", { name: /create tidy plan/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(screen.getByLabelText(/space photo/i)).not.toBeVisible();
@@ -277,8 +277,8 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     await reachActions(user, scenario);
 
-    expect(screen.getByText(/nothing to reorganise/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /generate reorganisation plan/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/nothing to include in a tidy plan/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create tidy plan/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /generate listing drafts/i })).toBeEnabled();
   });
 
@@ -288,7 +288,7 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
@@ -299,7 +299,7 @@ describe("BothPage screen-by-screen flow", () => {
     client.generateConfirmedReorganisation.mockResolvedValue(makeGeneratedResponse(KEEP));
     render(<BothPage />);
     await reachActions(user);
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: /start over/i }));
@@ -328,8 +328,8 @@ describe("BothPage independent final actions", () => {
     await reachActions(user, KEEP_AND_SELL);
 
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
-    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    expect(screen.getByRole("button", { name: /create tidy plan/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
     expect(client.generateListings).toHaveBeenCalledTimes(1);
     expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
 
@@ -348,7 +348,7 @@ describe("BothPage independent final actions", () => {
 
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
-    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /create tidy plan/i })).toBeEnabled();
   });
 
   test("a completed reorganisation plan keeps edited listing drafts visible", async () => {
@@ -364,7 +364,7 @@ describe("BothPage independent final actions", () => {
     const title = await screen.findByDisplayValue("Great lamp for sale");
     await user.clear(title);
     await user.type(title, "My edited title");
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(screen.getByDisplayValue("My edited title")).toBeInTheDocument();
@@ -404,9 +404,9 @@ describe("BothPage checklist and storage suggestions", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Tidy up" })).toBeInTheDocument());
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
@@ -419,7 +419,7 @@ describe("BothPage checklist and storage suggestions", () => {
     expect(subheadings.indexOf("Visual preview")).toBeLessThan(subheadings.indexOf("Storage and organisation ideas"));
     // listings stay available after the tidy plan, and navigation is unchanged
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf("Your tidy plan")).toBeLessThan(headings.indexOf("Marketplace listings"));
+    expect(headings.indexOf("Tidy up")).toBeLessThan(headings.indexOf("Marketplace listings"));
     expect(currentStep()).toBe("Results");
     expect(screen.getByRole("button", { name: /back to confirm/i })).toBeEnabled();
   });
@@ -434,7 +434,7 @@ describe("BothPage checklist and storage suggestions", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
@@ -451,7 +451,7 @@ describe("BothPage checklist and storage suggestions", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
     expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
@@ -478,7 +478,7 @@ describe("BothPage checklist and storage suggestions", () => {
     render(<BothPage />);
     await reachActions(user);
 
-    await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText("Straighten the lamp")).toBeInTheDocument());
     expect(screen.queryByText(/ai assistant|deterministic|model call|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
@@ -585,5 +585,300 @@ describe("BothPage Confirm choices panel", () => {
     expect(currentStep()).toBe("Results");
     expect(client.generateListings).not.toHaveBeenCalled();
     expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Results composition (brief §15): introduction, Tidy up, Marketplace
+// listings, global actions; two independent sections, never one feed.
+// ---------------------------------------------------------------------------
+
+describe("BothPage Results composition", () => {
+  const tidyUp = () => screen.getByRole("region", { name: "Tidy up" });
+  const listings = () => screen.getByRole("region", { name: "Marketplace listings" });
+  const actions = () => screen.getByRole("group", { name: /results actions/i });
+  const createTidyPlan = () => screen.getByRole("button", { name: /create tidy plan/i });
+  const generateListings = () => screen.getByRole("button", { name: /generate listing drafts/i });
+  const order = (...nodes) => nodes.every((node, i) => i === 0 || Boolean(nodes[i - 1].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING));
+
+  test("begins directly with Tidy up, then Marketplace listings, then the global actions, with no introduction", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+
+    // no introductory heading or description above the two sections
+    expect(screen.queryByRole("region", { name: "Your results" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your results" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/you can start either one first/i)).not.toBeInTheDocument();
+    const stack = tidyUp().parentElement;
+    expect(stack.firstElementChild).toBe(tidyUp());
+    expect(tidyUp().className).toMatch(/rounded-card/);
+    expect(order(tidyUp(), listings(), actions())).toBe(true);
+    // the two sections are the stack's first two children, in that order
+    expect(Array.from(stack.children).slice(0, 2)).toEqual([tidyUp(), listings()]);
+    // exactly one visible heading per result section, no tabs or nav cards
+    expect(screen.getAllByRole("heading", { name: "Tidy up" })).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { name: "Marketplace listings" })).toHaveLength(1);
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByText(/reorganise your confirmed keep items|generate reorganisation plan/i)).not.toBeInTheDocument();
+  });
+
+  test("Tidy up explains what it creates from the confirmed Keep count and offers Create tidy plan, full width on mobile", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachActions(user, {
+      decisions: [
+        { itemId: "item_001", decision: "keep" },
+        { itemId: "item_002", decision: "keep" },
+        { itemId: "item_003", decision: "sell" },
+      ],
+      confirmed: [
+        { itemId: "item_001", aiDecision: "keep", confirmedDecision: "keep" },
+        { itemId: "item_002", aiDecision: "keep", confirmedDecision: "keep" },
+        { itemId: "item_003", aiDecision: "sell", confirmedDecision: "sell" },
+      ],
+    });
+
+    expect(tidyUp()).toHaveTextContent(
+      /prioritised checklist, relevant storage and organisation ideas and an optional visual preview from the 2 items you confirmed as Keep\./
+    );
+    const button = within(tidyUp()).getByRole("button", { name: "Create tidy plan" });
+    expect(button).toBeEnabled();
+    for (const cls of ["min-h-11", "w-full", "sm:w-auto", "sm:min-h-0"]) expect(button.className.split(/\s+/)).toContain(cls);
+    // neither action has started
+    expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
+    expect(client.generateListings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  test("Tidy up loading and error states stay inside Tidy up and leave listings usable", async () => {
+    const user = userEvent.setup();
+    let rejectTidy;
+    client.generateConfirmedReorganisation.mockImplementationOnce(
+      () => new Promise((_, reject) => {
+        rejectTidy = () => reject(new Error("tidy service unreachable"));
+      })
+    );
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+
+    await user.click(createTidyPlan());
+    const busy = within(tidyUp()).getByRole("button", { name: /creating tidy plan…/i });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(within(tidyUp()).getByRole("status")).toHaveTextContent(
+      "Creating your checklist and visual preview. This may take several minutes."
+    );
+    expect(within(stepper()).getByText("Creating your tidy plan…")).toBeInTheDocument();
+    expect(within(stepper()).getByText(/listings remain independently available/i)).toBeInTheDocument();
+    // listings: untouched, enabled, no shared overlay or status
+    expect(generateListings()).toBeEnabled();
+    expect(within(listings()).queryByRole("status")).not.toBeInTheDocument();
+    expect(listings()).not.toHaveAttribute("aria-busy");
+
+    rejectTidy();
+    await waitFor(() => expect(within(tidyUp()).getByRole("alert")).toHaveTextContent(/tidy service unreachable/i));
+    expect(within(tidyUp()).getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(within(stepper()).getByText("The tidy plan didn't finish.")).toBeInTheDocument();
+    expect(generateListings()).toBeEnabled();
+    expect(within(listings()).queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "Marketplace listings" })).toHaveLength(1);
+  });
+
+  test("listing loading and error states stay inside Marketplace listings and leave Tidy up usable", async () => {
+    const user = userEvent.setup();
+    let rejectListings;
+    client.generateListings.mockImplementationOnce(
+      () => new Promise((_, reject) => {
+        rejectListings = () => reject(new Error("listing service unreachable"));
+      })
+    );
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+
+    await user.click(generateListings());
+    expect(within(listings()).getByRole("status")).toBeInTheDocument();
+    expect(within(stepper()).getByText("Generating your listing drafts…")).toBeInTheDocument();
+    expect(within(stepper()).getByText(/tidy up remains independently available/i)).toBeInTheDocument();
+    expect(createTidyPlan()).toBeEnabled();
+    expect(within(tidyUp()).queryByRole("status")).not.toBeInTheDocument();
+
+    rejectListings();
+    await waitFor(() => expect(within(listings()).getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    expect(createTidyPlan()).toBeEnabled();
+    expect(within(tidyUp()).queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "Tidy up" })).toHaveLength(1);
+  });
+
+  test("the tidy plan can be created first and the listings after, with both results then visible", async () => {
+    const user = userEvent.setup();
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeGeneratedResponse(KEEP_AND_SELL.confirmed));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+
+    await user.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+    // the result IS the Tidy up section, headed "Tidy up" (never "Your tidy plan" here)
+    expect(within(tidyUp()).getByRole("heading", { level: 2, name: "Tidy up" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
+    expect(within(stepper()).getByText("Your tidy plan is ready.")).toBeInTheDocument();
+    expect(generateListings()).toBeEnabled();
+
+    await user.click(generateListings());
+    await waitFor(() => expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument());
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+    expect(order(tidyUp(), listings(), actions())).toBe(true);
+    expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
+    expect(client.generateListings).toHaveBeenCalledTimes(1);
+  });
+
+  test("checklist interaction never touches listing state, and listing interaction never touches checklist completion", async () => {
+    const user = userEvent.setup();
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeGeneratedResponse(KEEP_AND_SELL.confirmed));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+    await user.click(generateListings());
+    await screen.findByDisplayValue("Great lamp for sale");
+    await user.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("checkbox", { name: "Clear the desk" }));
+    expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Great lamp for sale")).toBeInTheDocument();
+    expect(client.generateListings).toHaveBeenCalledTimes(1);
+    expect(client.regenerateListing).not.toHaveBeenCalled();
+
+    const title = screen.getByDisplayValue("Great lamp for sale");
+    await user.clear(title);
+    await user.type(title, "Edited");
+    await user.click(screen.getByRole("button", { name: /discard draft/i }));
+    expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Clear the desk" })).toBeChecked();
+    expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
+  });
+
+  test("zero Keep shows a calm empty state without a button and keeps listings independent; zero Sell keeps Tidy up working", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachActions(user, {
+      decisions: [{ itemId: "item_001", decision: "sell" }],
+      confirmed: [{ itemId: "item_001", aiDecision: "sell", confirmedDecision: "sell" }],
+    });
+    expect(within(tidyUp()).getByRole("heading", { name: "Tidy up" })).toBeInTheDocument();
+    const empty = within(tidyUp()).getByText(/nothing to include in a tidy plan/i).parentElement;
+    expect(empty.className).toMatch(/bg-surface-muted/);
+    expect(empty.className).toMatch(/text-muted-foreground/);
+    expect(empty).toHaveTextContent(/marketplace listings below remain available for the items you confirmed as sell/i);
+    expect(within(tidyUp()).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(tidyUp()).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(tidyUp()).queryByText(/visual preview is currently unavailable/i)).not.toBeInTheDocument();
+    expect(generateListings()).toBeEnabled();
+    expect(actions()).toBeInTheDocument();
+  });
+
+  test("zero Sell keeps the Tidy up action beside the listings' own truthful empty state", async () => {
+    const user = userEvent.setup();
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeGeneratedResponse(KEEP));
+    render(<BothPage />);
+    await reachActions(user);
+    expect(listings()).toHaveTextContent(/did not confirm any items as sell/i);
+    expect(within(listings()).queryByRole("button")).not.toBeInTheDocument();
+    expect(createTidyPlan()).toBeEnabled();
+    await user.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+    expect(listings()).toHaveTextContent(/did not confirm any items as sell/i);
+  });
+
+  test("the image-service notice lives inside Tidy up only, never disables Create tidy plan, and is not repeated once a result has its own unavailable preview", async () => {
+    const user = userEvent.setup();
+    client.getImageGenHealth.mockResolvedValue({ available: false });
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeGeneratedResponse(KEEP_AND_SELL.confirmed, { imageStatus: "unavailable" }));
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+
+    const notices = screen.getAllByText(/visual preview is currently unavailable/i);
+    expect(notices).toHaveLength(1);
+    expect(tidyUp()).toContainElement(notices[0]);
+    expect(listings()).not.toContainElement(notices[0]);
+    expect(screen.queryByText(/image service is offline/i)).not.toBeInTheDocument();
+    expect(within(tidyUp()).getByRole("button", { name: /check again/i })).toBeEnabled();
+    expect(createTidyPlan()).toBeEnabled();
+
+    await user.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /visual preview unavailable/i })).toBeInTheDocument());
+    expect(screen.queryByText(/visual preview is currently unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /check again/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+    expect(generateListings()).toBeEnabled();
+  });
+
+  test("Check again inside Tidy up rechecks availability exactly as before", async () => {
+    const user = userEvent.setup();
+    client.getImageGenHealth.mockResolvedValue({ available: false });
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+    await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
+    client.getImageGenHealth.mockResolvedValue({ available: true });
+    await user.click(within(tidyUp()).getByRole("button", { name: /check again/i }));
+    await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/visual preview is currently unavailable/i)).not.toBeInTheDocument());
+    expect(createTidyPlan()).toBeEnabled();
+  });
+
+  test("exactly one global Start over after both sections, then Back to Confirm choices, and it still resets the whole flow", async () => {
+    const user = userEvent.setup();
+    client.generateConfirmedReorganisation.mockResolvedValueOnce(makeGeneratedResponse(KEEP_AND_SELL.confirmed));
+    client.generateListings.mockResolvedValueOnce(
+      makeListingsResponse(makeConfirmResponse(KEEP_AND_SELL.confirmed), [makeDraft("item_002")])
+    );
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+    await user.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+    await user.click(generateListings());
+    await screen.findByDisplayValue("Great lamp for sale");
+
+    const startOvers = screen.getAllByRole("button", { name: /start over/i });
+    expect(startOvers).toHaveLength(1);
+    const [startOver] = startOvers;
+    expect(actions()).toContainElement(startOver);
+    expect(tidyUp()).not.toContainElement(startOver);
+    expect(listings()).not.toContainElement(startOver);
+    expect(startOver.className).toMatch(/border-input/);
+    expect(startOver.className).not.toMatch(/bg-primary/);
+    expect(startOver.querySelector("svg")).not.toBeNull();
+    for (const cls of ["min-h-11", "w-full", "sm:w-auto"]) expect(startOver.className.split(/\s+/)).toContain(cls);
+    const back = screen.getByRole("button", { name: /back to confirm choices/i });
+    expect(screen.getAllByRole("button", { name: /back to confirm/i })).toHaveLength(1);
+    expect(actions()).toContainElement(back);
+    expect(order(tidyUp(), listings(), startOver, back)).toBe(true);
+    expect(back).toBeEnabled();
+
+    await user.click(startOver);
+    expect(currentStep()).toBe("Upload photo");
+    expect(screen.getByLabelText(/space photo/i)).toBeInTheDocument();
+    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    expect(screen.queryByText("Clear the desk")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Great lamp for sale")).not.toBeInTheDocument();
+  });
+
+  test("the two sections stack vertically and never sit in forced side-by-side columns or overflow", async () => {
+    const user = userEvent.setup();
+    render(<BothPage />);
+    await reachActions(user, KEEP_AND_SELL);
+    const stack = tidyUp().parentElement;
+    expect(stack).toBe(listings().parentElement);
+    expect(stack.className).toMatch(/space-y-8/);
+    expect(stack.className).not.toMatch(/grid-cols|flex-row|columns-/);
+    expect(stack.innerHTML).not.toMatch(/overflow-x-auto|w-screen/);
+    // the layout containers never force a single line (the Button primitive alone is nowrap by design)
+    for (const el of stack.querySelectorAll("section, div, ol, ul, p")) expect(el.className).not.toMatch(/whitespace-nowrap/);
   });
 });

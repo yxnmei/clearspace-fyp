@@ -190,7 +190,7 @@ describe("ReorganiseResult, interactive checklist", () => {
             { priority: 2, title: "Group the toy items", instruction: "Bring the toy items together in one place." },
             { priority: 3, title: "Group the cup items", instruction: "Bring the cup items together in one place." },
             { priority: 4, title: "Tidy loose items on the left side", instruction: "Straighten loose items and clear the surrounding space." },
-            { priority: 5, title: "Do a final space check", instruction: "Look over the bedroom and make sure every selected item has a clear place before you finish." },
+            { priority: 5, title: "Do a final space check", instruction: "Review the space once more and make sure every selected item has a clear place." },
           ],
         }),
       })
@@ -216,7 +216,7 @@ describe("ReorganiseResult, interactive checklist", () => {
       "Bring the toy items together in one place.",
       "Bring the cup items together in one place.",
       "Straighten loose items and clear the surrounding space.",
-      "Look over the bedroom and make sure every selected item has a clear place before you finish.",
+      "Review the space once more and make sure every selected item has a clear place.",
     ];
     rows.forEach((row, index) => expect(within(row).getByText(instructions[index])).toBeInTheDocument());
   });
@@ -471,15 +471,21 @@ describe("ReorganiseResult, storage and organisation ideas", () => {
   });
 
   test.each([
-    ["one", one],
-    ["two", three.slice(0, 2)],
-    ["three", three],
-  ])("renders %s suggestion(s) as that many cards in the same grid, never a full-width single card", (_, list) => {
+    ["one", one, false],
+    ["two", three.slice(0, 2), true],
+    ["three", three, true],
+  ])("renders %s suggestion(s) as that many cards; a lone card uses the section width, two or more split into columns", (_, list, multi) => {
     renderResult(makeGeneratedResult({ storageSuggestions: list }));
     expect(cards()).toHaveLength(list.length);
     expect(cards().map((card) => card.querySelectorAll("p").length)).toEqual(list.map(() => 2));
     const grid = screen.getByRole("list", { name: /storage and organisation ideas/i });
-    expect(grid.className).toMatch(/\bsm:grid-cols-2\b/); // a lone card takes one column, not the row
+    expect(grid.className).toMatch(/\bgrid-cols-1\b/); // always one readable column on phones
+    if (multi) {
+      expect(grid.className).toMatch(/\bsm:grid-cols-2\b/);
+      expect(grid.className).toMatch(/\blg:grid-cols-3\b/);
+    } else {
+      expect(grid.className).not.toMatch(/sm:grid-cols-2|lg:grid-cols-3/); // no third-of-a-row single card
+    }
     for (const card of cards()) expect(card.className).not.toMatch(/col-span|w-full/);
     expect(cards().map((card) => card.querySelector("p").textContent)).toEqual(list.map((s) => s.name));
   });
@@ -604,5 +610,40 @@ describe("ReorganiseResult, start over", () => {
     expect(screen.getAllByRole("button")).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: /start over/i }));
     expect(onStartOver).toHaveBeenCalledTimes(1);
+  });
+
+  test("without an onStartOver handler (Both), no Start over button is rendered and nothing else changes", () => {
+    render(<ReorganiseResult generateResult={makeGeneratedResult()} items={items} originalImageUrl={null} />);
+    expect(screen.queryByRole("button", { name: /start over/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument();
+    expect(checklist()).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /^visual preview$/i })).toBeInTheDocument();
+    const topRow = checklist().closest("section").parentElement;
+    expect(topRow.parentElement.children).toHaveLength(2); // header, top row: no trailing action row
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heading
+// ---------------------------------------------------------------------------
+
+describe("ReorganiseResult, heading", () => {
+  test("defaults to Direct Reorganise's Your tidy plan", () => {
+    renderResult(makeGeneratedResult());
+    const region = screen.getByRole("region", { name: "Your tidy plan" });
+    expect(within(region).getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+  });
+
+  test("accepts a heading override (Both passes Tidy up) that names the region too, with identical content", () => {
+    renderResult(makeGeneratedResult(), { heading: "Tidy up" });
+    const region = screen.getByRole("region", { name: "Tidy up" });
+    expect(within(region).getByRole("heading", { level: 2, name: "Tidy up" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(within(region).getByText(/work through the checklist at your own pace/i)).toBeInTheDocument();
+    expect(within(region).getByRole("list", { name: /checklist actions/i })).toBeInTheDocument();
+    expect(within(region).getByRole("region", { name: /^visual preview$/i })).toBeInTheDocument();
   });
 });

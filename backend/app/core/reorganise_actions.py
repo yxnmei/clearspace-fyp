@@ -387,12 +387,15 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
         area_id, area_items = group_items_by_area(remaining)[0]
         drafts.append(_cleanup_action(area_id, area_items))
 
-    # 4. The closing check, only if it fits.
+    # 4. The closing check, only if it fits. Inclusive wording: "the
+    # space", never the classified room type, so a garage, balcony or
+    # study reads as naturally as a bedroom. scene_label is still
+    # validated above (a blank one is a caller error) but no longer
+    # appears in the prose.
     drafts.append(
         (
             "Do a final space check",
-            f"Walk through the {shorten_for_display(scene_label.strip(), 40)} once more and make sure every selected "
-            "item has a clear place.",
+            "Review the space once more and make sure every selected item has a clear place.",
         )
     )
 

@@ -376,7 +376,7 @@ def test_fallback_single_remaining_item_is_named_and_straightened():
     actions = build_deterministic_checklist([_item("item_001", "lamp", "center")], "bedroom")
     assert [a.title for a in actions] == ["Straighten the lamp", FINAL_CHECK_TITLE]
     assert actions[0].instruction == "Set it neatly in place and clear the immediate space around it."
-    assert "bedroom" in actions[1].instruction
+    assert actions[1].instruction == "Review the space once more and make sure every selected item has a clear place."
 
 
 def test_fallback_names_a_large_anchor_only_when_that_exact_selected_item_is_large():
@@ -476,7 +476,7 @@ def test_fallback_on_the_real_28_item_fixture_is_a_concise_title_led_checklist()
         "Keep both together so they are easier to find and put back.",
         "Keep both together so they are easier to find and put back.",
         "Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.",
-        "Walk through the bedroom once more and make sure every selected item has a clear place.",
+        "Review the space once more and make sure every selected item has a clear place.",
     ]
     assert len(actions) == MAX_ACTIONS
 
@@ -630,12 +630,15 @@ def test_fallback_compatible_groups_need_evidence():
 # -- the final check and the cap -------------------------------------------------
 
 
-def test_fallback_final_check_appears_when_capacity_remains_and_names_the_room_type():
+def test_fallback_final_check_appears_when_capacity_remains_with_inclusive_space_wording():
     actions = build_deterministic_checklist([_item("item_001", "lamp"), _item("item_002", "chair", "right")], "living room")
     assert actions[-1].title == FINAL_CHECK_TITLE
-    assert actions[-1].instruction == (
-        "Walk through the living room once more and make sure every selected item has a clear place."
-    )
+    assert actions[-1].instruction == "Review the space once more and make sure every selected item has a clear place."
+    # the classified room type never enters the prose, whatever it is
+    for scene in ("living room", "bedroom", "garage", "study"):
+        final = build_deterministic_checklist([_item("item_001", "lamp")], scene)[-1]
+        assert final.instruction == "Review the space once more and make sure every selected item has a clear place."
+        assert scene not in final.instruction and "room" not in f"{final.title} {final.instruction}"
 
 
 def test_fallback_instructions_add_to_their_titles_instead_of_restating_them():

@@ -322,7 +322,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
       actions: [
         { priority: 1, title: "Group the picture frame items", instruction: "Keep all 6 together so they are easier to find and put back." },
         { priority: 2, title: "Tidy loose items on the left side", instruction: "Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space." },
-        { priority: 3, title: "Do a final space check", instruction: "Walk through the bedroom once more and make sure every selected item has a clear place." },
+        { priority: 3, title: "Do a final space check", instruction: "Review the space once more and make sure every selected item has a clear place." },
       ],
       provenance: "deterministic_direct",
       attempts: 0,
@@ -344,6 +344,12 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     expect(document.querySelector("details")).toBeNull();
     expect(screen.getByText("0 of 3 completed")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
+    // Direct Reorganise keeps its own result heading and its own Start over inside the result
+    expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Tidy up" })).not.toBeInTheDocument();
+    const startOver = screen.getByRole("button", { name: /start over/i });
+    expect(screen.getAllByRole("button", { name: /start over/i })).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Your tidy plan" })).toContainElement(startOver);
     // title-led rows in priority order, each with its one concise instruction beneath
     const rows = within(screen.getByRole("list", { name: /checklist actions/i })).getAllByRole("listitem");
     expect(rows).toHaveLength(3);
@@ -352,7 +358,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     expect(within(rows[1]).getByText("Tidy loose items on the left side")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.")).toBeInTheDocument();
     expect(within(rows[2]).getByText("Do a final space check")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Walk through the bedroom once more and make sure every selected item has a clear place.")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Review the space once more and make sure every selected item has a clear place.")).toBeInTheDocument();
     for (const row of rows) expect(within(row).getByRole("checkbox")).not.toBeChecked();
     // the checkbox is named by the title alone and described by the instruction
     const box = screen.getByRole("checkbox", { name: "Tidy loose items on the left side" });

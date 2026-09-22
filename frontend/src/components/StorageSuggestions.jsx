@@ -11,11 +11,19 @@
 // prices, brands, links, availability claims or shopping controls, and
 // no disclosure or tooltip; the backend has none of that to offer.
 //
-// Layout: one column on phones, two from sm, three from lg. A single
-// suggestion therefore sits in one column of the grid rather than
-// stretching into one oversized full-width card.
+// Layout: always one readable column on phones. With two or more
+// suggestions the list becomes two columns from sm and three from lg; a
+// single suggestion keeps one column at every width, so its card uses
+// the section's width rather than sitting alone in a third of the row.
+// Same markup either way, only the grid classes change.
+const MULTI_COLUMN_GRID = "sm:grid-cols-2 lg:grid-cols-3";
+
 export default function StorageSuggestions({ storageSuggestions }) {
   if (!storageSuggestions || storageSuggestions.length === 0) return null;
+
+  const gridClassName = ["mt-3 grid grid-cols-1 gap-3", storageSuggestions.length > 1 ? MULTI_COLUMN_GRID : ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section
@@ -26,7 +34,7 @@ export default function StorageSuggestions({ storageSuggestions }) {
         Storage and organisation ideas
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">Optional ways to give related items a consistent home.</p>
-      <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Storage and organisation ideas">
+      <ul className={gridClassName} aria-label="Storage and organisation ideas">
         {storageSuggestions.map((suggestion) => (
           <li key={suggestion.name} className="min-w-0 rounded-control border border-border bg-surface-muted p-3">
             <p className="break-words text-sm font-semibold text-foreground">{suggestion.name}</p>

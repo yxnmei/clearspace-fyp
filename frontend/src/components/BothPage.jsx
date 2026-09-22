@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Check, Loader2, TriangleAlert } from "lucide-react";
+import { Check, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 import { useBothFlow } from "../hooks/useBothFlow";
 import { useImageGenHealth } from "../hooks/useImageGenHealth";
 import { useObjectUrl } from "../hooks/useObjectUrl";
@@ -253,39 +253,59 @@ export default function BothPage() {
 
         <div hidden={viewed !== "reorganise"}>
           {hasAnalysis && hasConfirmation && (
-            <div className="space-y-6">
-              <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
-
+            <div className="space-y-8">
+              {/* Results composition (brief §15): two visually and
+                  semantically distinct result sections, Tidy up (confirmed
+                  Keep items) then Marketplace listings (confirmed Sell
+                  items), then the global actions. No introduction: the
+                  stepper's status line already says both are available in
+                  either order. The two sections are independent: each owns
+                  its own button, busy state and error, nothing here derives
+                  a shared one, and neither starts on its own. */}
               {flow.generateResult ? (
+                /* The generated result IS the Tidy up section: its own
+                   heading, checklist, visual preview (including its own
+                   "unavailable" state, so no separate health banner is
+                   shown beside it) and storage ideas. No onStartOver: the
+                   single global Start over lives after both sections. */
                 <ReorganiseResult
+                  heading="Tidy up"
                   generateResult={flow.generateResult}
                   items={flow.items}
                   originalImageUrl={imageUrl}
-                  onStartOver={handleStartOver}
                 />
               ) : (
-                <section className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6">
-                  <h2 className="text-lg font-semibold text-foreground">Reorganise your confirmed Keep items</h2>
+                <section
+                  aria-labelledby="both-tidy-up-heading"
+                  className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6"
+                >
+                  <h2 id="both-tidy-up-heading" className="text-title font-semibold tracking-tight text-foreground">
+                    Tidy up
+                  </h2>
                   {flow.confirmation.confirmedKeepIds.length === 0 ? (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      No items were confirmed as Keep, so there is nothing to reorganise. Listing drafts are
-                      still available below for confirmed Sell items.
-                    </p>
+                    <div className="mt-3 rounded-control border border-border bg-surface-muted p-4 text-sm text-muted-foreground">
+                      <p>You did not confirm any items as Keep, so there is nothing to include in a tidy plan.</p>
+                      <p className="mt-1">Marketplace listings below remain available for the items you confirmed as Sell.</p>
+                    </div>
                   ) : (
                     <>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Generate a prioritised checklist, storage suggestions when relevant and a visual preview using
-                        the {flow.confirmation.confirmedKeepIds.length} confirmed Keep item
-                        {flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"}.
+                      <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+                        Create a prioritised checklist, relevant storage and organisation ideas and an optional visual
+                        preview from the {flow.confirmation.confirmedKeepIds.length} item
+                        {flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"} you confirmed as Keep.
                       </p>
-                      {health.status === "unavailable" && (
-                        <p className="mt-3 rounded-control border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-                          The image service is offline, so the plan can still complete without a visual preview.
-                        </p>
-                      )}
+                      {/* The image-service notice belongs to Tidy up only (it
+                          is the visual preview that needs the service), so it
+                          sits here, inside this section, and is the ONE
+                          notice: the banner renders nothing when the service
+                          is available, and it never disables Create tidy
+                          plan, the checklist completes without the preview. */}
+                      <div className="mt-3 empty:hidden">
+                        <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
+                      </div>
                       <Button
                         type="button"
-                        className="mt-4"
+                        className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
                         onClick={flow.generate}
                         disabled={flow.generationStatus === "generating"}
                         aria-busy={flow.generationStatus === "generating" || undefined}
@@ -294,10 +314,10 @@ export default function BothPage() {
                           <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />
                         )}
                         {flow.generationStatus === "generating"
-                          ? "Generating…"
+                          ? "Creating tidy plan…"
                           : flow.generateError
                             ? "Try again"
-                            : "Generate reorganisation plan"}
+                            : "Create tidy plan"}
                       </Button>
                       {flow.generationStatus === "generating" && (
                         <p role="status" className="mt-3 text-sm text-muted-foreground">
@@ -333,11 +353,27 @@ export default function BothPage() {
                 restoreListingDraft={flow.restoreListingDraft}
               />
 
-              <WizardNav
-                backLabel="Back to Confirm choices"
-                onBack={() => goToStep("confirm")}
-                backDisabled={wizard.navigationLocked}
-              />
+              {/* Global actions, after BOTH result sections: the one Start
+                  over for the whole Both workflow (the same full reset as
+                  before; ReorganiseResult no longer carries one here), then
+                  the wizard's Back as the final control. */}
+              <div aria-label="Results actions" role="group" className="border-t border-border pt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStartOver}
+                  className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+                >
+                  <RotateCcw aria-hidden="true" width={14} height={14} />
+                  Start over
+                </Button>
+                <WizardNav
+                  backLabel="Back to Confirm choices"
+                  onBack={() => goToStep("confirm")}
+                  backDisabled={wizard.navigationLocked}
+                />
+              </div>
             </div>
           )}
         </div>

@@ -17,7 +17,7 @@ describe("ImageGenStatusBanner", () => {
   test("an unavailable status explicitly says the visual preview is unavailable and a plan is still possible", () => {
     render(<ImageGenStatusBanner status="unavailable" recheck={vi.fn()} />);
     expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument();
-    expect(screen.getByText(/you can still generate a reorganisation plan/i)).toBeInTheDocument();
+    expect(screen.getByText(/you can still create a tidy plan; only the AI-generated image will be missing/i)).toBeInTheDocument();
   });
 
   test("never disables anything outside itself, it is advisory only", () => {

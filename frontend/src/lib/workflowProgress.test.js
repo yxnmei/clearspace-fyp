@@ -159,4 +159,60 @@ describe("deriveBothProgress", () => {
     expect(p.isComplete).toBe(true);
     expect(p.currentStepId).toBe("reorganise");
   });
+
+  describe("Results status copy uses the redesigned terms without changing state logic", () => {
+    const confirmed = { ...analysed, confirmationStatus: "confirmed", confirmation: { confirmedKeepIds: ["item_001"] }, viewedStep: "reorganise" };
+
+    test("idle: either action, in either order", () => {
+      const p = deriveBothProgress(confirmed);
+      expect(p.statusText).toBe("Choose your next action.");
+      expect(p.nextActionText).toBe("Create a tidy plan or listing drafts independently, in either order.");
+      expect(p.processing).toBe(false);
+      expect(p.isComplete).toBe(false);
+    });
+
+    test("tidy plan generating: listings remain available", () => {
+      const p = deriveBothProgress({ ...confirmed, generationStatus: "generating" });
+      expect(p.statusText).toBe("Creating your tidy plan…");
+      expect(p.nextActionText).toBe("Listings remain independently available on this screen.");
+      expect(p.processing).toBe(true);
+    });
+
+    test("listings generating: Tidy up remains available", () => {
+      const p = deriveBothProgress({ ...confirmed, listingStatus: "generating" });
+      expect(p.statusText).toBe("Generating your listing drafts…");
+      expect(p.nextActionText).toBe("Tidy up remains independently available on this screen.");
+      expect(p.processing).toBe(true);
+    });
+
+    test("one draft regenerating: Tidy up and other drafts unaffected", () => {
+      const p = deriveBothProgress({ ...confirmed, regeneratingItemId: "item_002" });
+      expect(p.statusText).toBe("Regenerating one listing draft…");
+      expect(p.nextActionText).toBe("Tidy up and your other drafts are unaffected.");
+      expect(p.processing).toBe(true);
+    });
+
+    test("tidy plan error and completion wording", () => {
+      const failed = deriveBothProgress({ ...confirmed, generationStatus: "error" });
+      expect(failed.statusText).toBe("The tidy plan didn't finish.");
+      expect(failed.nextActionText).toMatch(/try again below/i);
+      expect(failed.isComplete).toBe(false);
+      const done = deriveBothProgress({ ...confirmed, generationStatus: "done", generateResult: {} });
+      expect(done.statusText).toBe("Your tidy plan is ready.");
+      expect(done.isComplete).toBe(true);
+      expect(done.processing).toBe(false);
+    });
+
+    test("no user-facing reorganisation or room wording remains in the Results copy", () => {
+      for (const extra of [{}, { generationStatus: "generating" }, { listingStatus: "generating" }, { regeneratingItemId: "item_002" }, { generationStatus: "error" }, { generationStatus: "done", generateResult: {} }]) {
+        const p = deriveBothProgress({ ...confirmed, ...extra });
+        expect(`${p.statusText} ${p.nextActionText}`).not.toMatch(/reorganis|\broom\b/i);
+      }
+      // step ids, count and unlock rules are untouched
+      const p = deriveBothProgress({ ...confirmed, generationStatus: "generating" });
+      expect(p.steps.map((s) => s.id)).toEqual(["upload", "analyse", "review", "confirm", "reorganise"]);
+      expect(p.unlockedStepIds).toContain("reorganise");
+      expect(p.navigationLocked).toBe(true);
+    });
+  });
 });
