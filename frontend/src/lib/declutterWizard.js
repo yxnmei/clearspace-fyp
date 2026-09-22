@@ -50,7 +50,7 @@ function describeViewedStep({
     case "analyse":
       if (status === "uploading") {
         return {
-          statusText: "Analysing your space, scene, objects and item reasoning.",
+          statusText: "Analysing your space…",
           nextActionText: "This can take up to two minutes, no action needed yet.",
           processing: true,
         };

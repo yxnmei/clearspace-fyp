@@ -58,18 +58,19 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
       if (hasAnalysis) return ["Your analysed space is still here.", "Submit a new photo to start over, or return to Select items.", false];
       return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "analyse":
-      if (phase === "analysing") return ["Analysing your space, scene and objects.", "This can take up to two minutes, no action needed yet.", true];
+      if (phase === "analysing") return ["Analysing your space…", "This can take up to two minutes, no action needed yet.", true];
       if (uploadError) return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
       if (hasAnalysis) return ["Analysis complete.", "Continue to Select items to check the detected items.", false];
       return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "review":
-      if (selectedItemCount === 0) return ["Nothing is included in the reorganisation plan.", "Include at least one actionable item to continue.", false];
+      if (selectedItemCount === 0) return ["Nothing is included in your tidy plan.", "Include at least one actionable item to continue.", false];
       return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Tidy plan.", false];
     case "generate":
-      if (phase === "generating") return ["Writing your checklist and generating a preview…", "This can take several minutes, no action needed yet.", true];
-      if (phase === "result") return ["Your reorganisation is complete.", "Review your checklist, any storage suggestions and the visual preview below.", false];
-      if (phase === "selecting" && uploadError == null) return ["Ready to generate your reorganisation plan.", "Press Generate reorganisation plan when you are ready.", false];
-      return ["Plan generation is ready.", "Return to Select items if you want to change the included items.", false];
+      // Tidy plan: the same terms Both's Results screen uses.
+      if (phase === "generating") return ["Creating your tidy plan…", "This can take several minutes, no action needed yet.", true];
+      if (phase === "result") return ["Your tidy plan is ready.", "Review your checklist, any storage and organisation ideas and the visual preview below.", false];
+      if (phase === "selecting" && uploadError == null) return ["Ready to create your tidy plan.", "Press Create tidy plan when you are ready.", false];
+      return ["Ready to create your tidy plan.", "Return to Select items if you want to change the included items.", false];
     default:
       return ["", "", false];
   }
@@ -135,10 +136,10 @@ export function deriveReorganiseProgress({
     selectedItemCount,
   });
   const finalStatusText = generateError && navigation.viewedStepId === "generate"
-    ? "The reorganisation plan didn't finish."
+    ? "The tidy plan didn't finish."
     : statusText;
   const finalNextActionText = generateError && navigation.viewedStepId === "generate"
-    ? "Your selection is unchanged. Press Generate reorganisation plan to try again."
+    ? "Your selection is unchanged. Try again below."
     : nextActionText;
 
   return {
@@ -173,7 +174,7 @@ function describeBothStep({
       if (hasAnalysis) return ["Your analysed space is still here.", "Submit a new photo to start over, or return to Decide items.", false];
       return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "analyse":
-      if (status === "uploading") return ["Analysing your space, scene, objects and item reasoning.", "This can take up to two minutes, no action needed yet.", true];
+      if (status === "uploading") return ["Analysing your space…", "This can take up to two minutes, no action needed yet.", true];
       if (status === "error") return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
       return hasAnalysis
         ? ["Analysis complete.", "Continue to Decide items to check each item.", false]

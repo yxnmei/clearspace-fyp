@@ -259,7 +259,6 @@ export default function BothPage() {
                 <ReorganiseResult
                   heading="Tidy up"
                   generateResult={flow.generateResult}
-                  items={flow.items}
                   originalImageUrl={imageUrl}
                 />
               ) : (

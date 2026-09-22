@@ -160,37 +160,44 @@ export default function ReorganisePage() {
         <div hidden={viewed !== "generate"}>
           {hasAnalysis && (
             <div className="space-y-6">
-              <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
-
               {flow.generateResult ? (
+                /* The generated result carries its own "Visual preview
+                   unavailable" state, so no separate health banner sits
+                   beside it. */
                 <ReorganiseResult
                   generateResult={flow.generateResult}
-                  items={flow.items}
                   originalImageUrl={imageUrl}
                   onStartOver={handleStartOver}
                 />
               ) : (
-                <section className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6">
-                  <h2 className="text-lg font-semibold text-foreground">4. Generate reorganisation plan</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Generate a prioritised checklist, storage suggestions when relevant and a visual preview using the{" "}
-                    {flow.selectedItemIds.length} item
-                    {flow.selectedItemIds.length === 1 ? "" : "s"} you included during Review.
+                <section
+                  aria-labelledby="reorganise-tidy-plan-heading"
+                  className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6"
+                >
+                  <h2 id="reorganise-tidy-plan-heading" className="text-title font-semibold tracking-tight text-foreground">
+                    Create your tidy plan
+                  </h2>
+                  <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
+                    Create a prioritised checklist, relevant storage and organisation ideas and an optional visual
+                    preview from the {flow.selectedItemIds.length} item
+                    {flow.selectedItemIds.length === 1 ? "" : "s"} you included on Select items.
                   </p>
-                  {health.status === "unavailable" && (
-                    <p className="mt-3 rounded-control border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-                      The image service is offline, so the plan can still complete without a visual preview.
-                    </p>
-                  )}
+                  {/* The image-service notice belongs here, inside the tidy
+                      plan section, and is the ONE notice: the banner renders
+                      nothing when the service is available, and it never
+                      disables Create tidy plan. */}
+                  <div className="mt-3 empty:hidden">
+                    <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
+                  </div>
                   <Button
                     type="button"
-                    className="mt-4"
+                    className="mt-4 min-h-11 w-full sm:min-h-0 sm:w-auto"
                     onClick={flow.generate}
                     disabled={flow.phase === "generating" || flow.selectedItemIds.length === 0}
                     aria-busy={flow.phase === "generating" || undefined}
                   >
                     {flow.phase === "generating" && <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />}
-                    {flow.phase === "generating" ? "Generating…" : flow.generateError ? "Try again" : "Generate reorganisation plan"}
+                    {flow.phase === "generating" ? "Creating tidy plan…" : flow.generateError ? "Try again" : "Create tidy plan"}
                   </Button>
                   {flow.phase === "generating" && (
                     <p role="status" className="mt-3 text-sm text-muted-foreground">

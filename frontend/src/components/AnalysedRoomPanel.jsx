@@ -12,8 +12,9 @@ import { decisionBorderColor, itemNumberLabel } from "../utils/format";
 // controls of its own (no radios/checkboxes on a box), every review
 // action still happens in the item list. A box click only requests that
 // the corresponding list entry be focused/scrolled to, via onBoxClick;
-// DeclutterReview (the owner of activeItemId/showAllBoxes/the item ref
-// map) decides what that means.
+// the composing screen (DeclutterReviewSection for Declutter and Both,
+// ReorganiseItemSelector for Reorganise), which owns activeItemId,
+// showAllBoxes and the item ref map, decides what that means.
 //
 // declutterBoxClassName is Declutter's own box-coloring rule (reads
 // is_unresolved/is_expected/ai_decision, fields only Declutter's

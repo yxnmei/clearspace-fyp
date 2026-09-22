@@ -1,27 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { decisionBorderColor, decisionColor, formatConfidence, itemNumberLabel } from "./format";
+import * as format from "./format";
+import { decisionBorderColor, itemNumberLabel } from "./format";
 
-describe("formatConfidence", () => {
-  it("formats a 0-1 confidence as a rounded percentage", () => {
-    expect(formatConfidence(0.976)).toBe("98%");
-  });
-
-  it("handles missing confidence gracefully", () => {
-    expect(formatConfidence(null)).toBe("n/a");
-    expect(formatConfidence(undefined)).toBe("n/a");
-  });
-});
-
-describe("decisionColor", () => {
-  it("maps known decisions to distinct classes", () => {
-    expect(decisionColor("keep")).toContain("green");
-    expect(decisionColor("sell")).toContain("blue");
-    expect(decisionColor("donate")).toContain("amber");
-    expect(decisionColor("discard")).toContain("red");
-  });
-
-  it("falls back gracefully for an unknown decision", () => {
-    expect(decisionColor("unknown-thing")).toContain("gray");
+describe("removed display helpers", () => {
+  it("no longer exports formatConfidence or decisionColor: no screen shows a confidence percentage or a colour-only decision cue", () => {
+    expect(format).not.toHaveProperty("formatConfidence");
+    expect(format).not.toHaveProperty("decisionColor");
   });
 });
 

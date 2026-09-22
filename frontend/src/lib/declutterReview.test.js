@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import {
   partitionReviewItems,
   deriveReviewCounts,
-  totalStageDurationMs,
   isConfirmBlocked,
   canContinueToConfirm,
   REVIEW_DECISION_FILTERS,
@@ -45,14 +44,6 @@ describe("deriveReviewCounts", () => {
     expect(counts).toEqual({ keep: 2, sell: 0, donate: 0, discard: 1 });
     expect(changedCount).toBe(1);
     expect(excludedCount).toBe(1);
-  });
-});
-
-describe("totalStageDurationMs", () => {
-  test("sums stage_timings, tolerating a missing analysis", () => {
-    expect(totalStageDurationMs({ stage_timings: [{ duration_ms: 10 }, { duration_ms: 4500 }] })).toBe(4510);
-    expect(totalStageDurationMs(null)).toBe(0);
-    expect(totalStageDurationMs({})).toBe(0);
   });
 });
 

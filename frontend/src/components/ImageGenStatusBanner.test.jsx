@@ -64,3 +64,41 @@ describe("ImageGenStatusBanner", () => {
     expect(() => render(<ImageGenStatusBanner status="checking" recheck={vi.fn()} />)).not.toThrow();
   });
 });
+
+describe("ImageGenStatusBanner, shared warning surface (cleanup pass)", () => {
+  const classes = (el) => el.className.split(/\s+/).filter(Boolean);
+
+  test("uses the shared warning tokens and an icon beside the text, never hardcoded palette colours or colour alone", () => {
+    const { container } = render(<ImageGenStatusBanner status="unavailable" recheck={vi.fn()} />);
+    const surface = container.firstElementChild;
+    for (const c of ["border", "border-warning/40", "bg-warning/10", "rounded-control", "text-foreground"]) expect(classes(surface)).toContain(c);
+    expect(container.innerHTML).not.toMatch(/amber-|rounded-md|underline/);
+    const icon = surface.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument();
+  });
+
+  test("stacks the message above the action on phones and sits in one row from sm; the action is a full-width 44px target on phones", () => {
+    const { container } = render(<ImageGenStatusBanner status="unavailable" recheck={vi.fn()} />);
+    const surface = container.firstElementChild;
+    for (const c of ["flex", "flex-col", "sm:flex-row", "sm:items-center"]) expect(classes(surface)).toContain(c);
+    const button = screen.getByRole("button", { name: /check again/i });
+    for (const c of ["min-h-11", "w-full", "sm:min-h-0", "sm:w-auto"]) expect(classes(button)).toContain(c);
+    // the Button primitive's outline treatment and focus ring, not a bespoke link-style control
+    expect(button.className).toMatch(/border-input/);
+    expect(button.className).toMatch(/focus-visible:ring-2/);
+    expect(button).toHaveAttribute("type", "button");
+  });
+
+  test("while checking, the icon is a spinner and the disabled button explains why", () => {
+    const { container } = render(<ImageGenStatusBanner status="checking" recheck={vi.fn()} />);
+    expect(container.querySelector("svg").className.baseVal ?? container.querySelector("svg").getAttribute("class")).toMatch(/animate-spin/);
+    expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+  });
+
+  test("carries no live region of its own, so the hosting section announces nothing twice", () => {
+    const { container } = render(<ImageGenStatusBanner status="unavailable" recheck={vi.fn()} />);
+    expect(container.querySelector("[role='status'], [role='alert'], [aria-live]")).toBeNull();
+  });
+});

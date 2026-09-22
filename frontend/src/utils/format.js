@@ -1,29 +1,12 @@
 // Pure functions only, unit-tested (§4), no React/DOM/fetch here.
+//
+// (formatConfidence and decisionColor were removed once the redesigned
+// screens stopped showing confidence percentages and text-colour-only
+// decision cues; DecisionControl / Badge carry icon + label + tokens.)
 
-export function formatConfidence(confidence) {
-  if (confidence == null || Number.isNaN(confidence)) return "n/a";
-  return `${Math.round(confidence * 100)}%`;
-}
-
-export function decisionColor(decision) {
-  switch (decision) {
-    case "keep":
-      return "text-green-600";
-    case "sell":
-      return "text-blue-600";
-    case "donate":
-      return "text-amber-600";
-    case "discard":
-      return "text-red-600";
-    default:
-      return "text-gray-500";
-  }
-}
-
-// Same decision -> colour mapping as decisionColor, but as a border-color
-// utility class, used by the detection-overlay boxes (AnalysedRoomPanel),
-// where colour is a secondary cue layered on a bordered box rather than
-// text.
+// Decision -> border-color utility class, used by the detection-overlay
+// boxes (AnalysedRoomPanel), where colour is a secondary cue layered on a
+// bordered box rather than text.
 export function decisionBorderColor(decision) {
   switch (decision) {
     case "keep":

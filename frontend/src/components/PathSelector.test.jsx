@@ -134,33 +134,93 @@ describe("PathSelector, keyboard operation (native radio behaviour)", () => {
 });
 
 describe("PathSelector, honest copy", () => {
+  const FEATURES = {
+    Declutter: [
+      "Get AI suggestions to Keep, Sell, Donate or Discard",
+      "Review and adjust every decision",
+      "Create editable listing drafts for items you choose to sell",
+    ],
+    Reorganise: [
+      "Let AI identify items for your tidy plan",
+      "Choose exactly which items to include",
+      "Get a personalised checklist, storage ideas and an optional AI preview",
+    ],
+    Both: [
+      "Get AI suggestions, then review and adjust every decision",
+      "Create a tidy plan for kept items, with an optional AI preview",
+      "Create editable listing drafts for items you choose to sell",
+    ],
+  };
+  const card = (name) => screen.getByRole("radio", { name }).closest("label");
+  const bullets = (name) => within(within(card(name)).getByRole("list")).getAllByRole("listitem");
+
   test("introduces every workflow as working with a space, not only a room", () => {
     renderSelector();
     expect(screen.getByText("Choose a workflow to declutter your space, reorganise it, or do both in one guided pass.")).toBeInTheDocument();
-    const declutter = screen.getByRole("radio", { name: "Declutter" }).closest("label");
-    expect(declutter).toHaveTextContent(/what's in your space/i);
+    for (const name of ["Declutter", "Reorganise", "Both"]) expect(card(name).textContent).not.toMatch(/\broom\b/i);
   });
 
-  test("Declutter copy is review-and-confirm, not automatic", () => {
+  test.each(["Declutter", "Reorganise", "Both"])("%s renders one semantic list of exactly three bullets, in order, without full stops", (name) => {
     renderSelector();
-    const card = screen.getByRole("radio", { name: "Declutter" }).closest("label");
-    expect(card).toHaveTextContent(/keep, sell, donate and discard/i);
-    expect(card).toHaveTextContent(/review, change and confirm every decision yourself/i);
+    expect(within(card(name)).getAllByRole("list")).toHaveLength(1);
+    const items = bullets(name);
+    expect(items).toHaveLength(3);
+    expect(items.map((li) => li.textContent.trim())).toEqual(FEATURES[name]);
+    for (const li of items) expect(li.textContent.trim()).not.toMatch(/\.$/);
   });
 
-  test("Reorganise copy says actionable items are included automatically with optional review", () => {
+  test("the bullet list is the radio's accessible description, so the card is still announced with its features", () => {
     renderSelector();
-    const card = screen.getByRole("radio", { name: "Reorganise" }).closest("label");
-    expect(card).toHaveTextContent(/included automatically/i);
-    expect(card).toHaveTextContent(/optionally review the list to exclude items/i);
+    for (const name of ["Declutter", "Reorganise", "Both"]) {
+      const radio = screen.getByRole("radio", { name });
+      const list = within(card(name)).getByRole("list");
+      expect(radio).toHaveAttribute("aria-describedby", list.id);
+      expect(radio).toHaveAccessibleDescription(new RegExp(FEATURES[name][0]));
+    }
   });
 
-  test("Both copy is declutter-confirm-first, then reorganise the items you confirmed as Keep", () => {
+  test("the old paragraph descriptions are gone and no card gained another intro paragraph", () => {
     renderSelector();
-    const card = screen.getByRole("radio", { name: "Both" }).closest("label");
-    expect(card).toHaveTextContent(/confirm your declutter decisions first/i);
-    expect(card).toHaveTextContent(/items you confirmed as keep/i);
-    expect(card).not.toHaveTextContent(/server derives/i);
+    for (const name of ["Declutter", "Reorganise", "Both"]) {
+      expect(card(name).querySelector("p")).toBeNull();
+      expect(card(name)).not.toHaveTextContent(/included automatically|optionally review the list|confirm your declutter decisions first|review, change and confirm every decision yourself|server derives/i);
+    }
+    expect(screen.getAllByText(/choose a workflow to declutter your space/i)).toHaveLength(1);
+  });
+
+  test("every bullet says what the AI does or how the user stays in control, and each workflow's difference is stated", () => {
+    renderSelector();
+    expect(bullets("Declutter").map((li) => li.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/AI suggestions/), expect.stringMatching(/review and adjust/i)]));
+    expect(bullets("Reorganise").map((li) => li.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/Let AI identify/), expect.stringMatching(/choose exactly which items/i)]));
+    expect(bullets("Both").map((li) => li.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/tidy plan for kept items/), expect.stringMatching(/listing drafts/)]));
+    expect(bullets("Reorganise").map((li) => li.textContent)).not.toEqual(bullets("Declutter").map((li) => li.textContent));
+  });
+
+  test("bullets are light markers beside left-aligned, wrapping text: no cards, chips or overflow inside the list", () => {
+    renderSelector();
+    for (const name of ["Declutter", "Reorganise", "Both"]) {
+      const list = within(card(name)).getByRole("list");
+      expect(list.className).toMatch(/\btext-left\b/);
+      expect(list.className).toMatch(/\bspace-y-1\.5\b/);
+      expect(list.className).not.toMatch(/whitespace-nowrap|overflow-x|truncate/);
+      for (const li of bullets(name)) {
+        expect(li.className).toMatch(/\bmin-w-0\b/);
+        expect(li.className).not.toMatch(/rounded-card|border|shadow|bg-surface/);
+        const marker = li.firstElementChild;
+        expect(marker).toHaveAttribute("aria-hidden", "true");
+        expect(marker.className).toMatch(/\bshrink-0\b/);
+        expect(marker.className).toMatch(/\brounded-pill\b/);
+        expect(li.lastElementChild.className).toMatch(/\bbreak-words\b/);
+        expect(li.lastElementChild.className).toMatch(/\bmin-w-0\b/);
+      }
+    }
+  });
+
+  test("the 'Best for' footers are unchanged", () => {
+    renderSelector();
+    expect(card("Declutter")).toHaveTextContent("Best for quick item decisions");
+    expect(card("Reorganise")).toHaveTextContent("Best for space planning");
+    expect(card("Both")).toHaveTextContent("Best for full end-to-end guidance");
   });
 
   test("a short 'You're in control' reassurance is shown", () => {

@@ -17,19 +17,19 @@ import { cn } from "../lib/cn";
 // filter row, ONE sticky analysed-room image, the compact actionable
 // rows, and the unresolved / contextual lists. It renders no
 // confirmation counts, no Confirm button and no confirmed summary, those
-// belong to whatever composes this (the Declutter wizard's Confirm view,
-// or DeclutterReview for Both).
+// belong to the Confirm choices view of the page that composes this
+// (DeclutterPage or BothPage, both via DeclutterConfirmationPanel).
 //
 // activeItemId / showAllBoxes / itemRefs / decisionFilter are local
 // presentational state for linking the overlay boxes to the rows and for
 // narrowing the visible list. None of them is workflow state, and none
 // of them changes a decision, correction or exclusion. The three-way
-// partition comes from lib/declutterReview so nothing here or in
-// DeclutterReview re-implements it.
+// partition comes from lib/declutterReview so nothing here or in the
+// pages re-implements it.
 //
 // enableBackToTop mounts the floating Back to Top control plus its
-// sentinels. The Declutter wizard's Review view passes it; Both's
-// stacked DeclutterReview does not, so Both is unchanged.
+// sentinels. DeclutterPage and BothPage both pass it on their Decide
+// items views; a composition that omits it gets no floating control.
 export default function DeclutterReviewSection({
   reviewItems,
   imageUrl,

@@ -113,7 +113,7 @@ async function continueToGenerate() {
   await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
   expect(screen.getByRole("heading", { name: /choose items for your tidy plan/i })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
-  expect(screen.getByRole("heading", { name: /generate reorganisation plan/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /create your tidy plan/i })).toBeInTheDocument();
 }
 
 describe("ReorganisePage screen-by-screen flow", () => {
@@ -192,12 +192,12 @@ describe("ReorganisePage screen-by-screen flow", () => {
     await analyseRoom();
     await continueToGenerate();
     await waitFor(() => expect(screen.getByText(/visual preview is currently unavailable/i)).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /generate reorganisation plan/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /create tidy plan/i })).toBeEnabled();
 
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
     expect(currentStep()).toBe("Tidy plan");
-    expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
+    expect(within(stepper()).getByText("Your tidy plan is ready.")).toBeInTheDocument();
   });
 
   test("a generation error remains retryable on the Generate screen", async () => {
@@ -207,7 +207,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
     expect(currentStep()).toBe("Tidy plan");
@@ -225,9 +225,9 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument());
+    await waitFor(() => expect(within(stepper()).getByText("Your tidy plan is ready.")).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
   });
 });
@@ -244,7 +244,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
@@ -277,7 +277,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
     expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
@@ -303,7 +303,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
@@ -311,7 +311,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     expect(screen.queryByText(/did not return a usable checklist|ai assistant|call_failed|deterministic/i)).not.toBeInTheDocument();
     expect(screen.getByText(/took too long/i)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /areas to focus on/i })).not.toBeInTheDocument();
-    expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
+    expect(within(stepper()).getByText("Your tidy plan is ready.")).toBeInTheDocument();
   });
 
   test("the production response renders as a plain checklist with no provenance, model or call details shown", async () => {
@@ -337,7 +337,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
 
     await analyseRoom();
     await continueToGenerate();
-    await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByText("Group the picture frame items")).toBeInTheDocument());
     expect(screen.queryByText(/ai assistant|deterministic|model call|prompt version|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
@@ -497,5 +497,98 @@ describe("ReorganisePage Upload photo and Analyse space screens", () => {
     expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "What we found" })).toBeInTheDocument();
     expect(client.uploadImage).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tidy plan screen terminology, layout and image-service notice (cleanup pass)
+// ---------------------------------------------------------------------------
+
+describe("ReorganisePage Tidy plan screen (cleanup pass)", () => {
+  const createTidyPlan = () => screen.getByRole("button", { name: "Create tidy plan" });
+  const classes = (el) => el.className.split(/\s+/).filter(Boolean);
+
+  test("is a labelled section headed Create your tidy plan, describing the outcome from the Select items count, with no stale wording", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await continueToGenerate();
+
+    const section = screen.getByRole("region", { name: "Create your tidy plan" });
+    expect(within(section).getByRole("heading", { level: 2, name: "Create your tidy plan" })).toBeInTheDocument();
+    expect(section).toHaveTextContent(
+      /prioritised checklist, relevant storage and organisation ideas and an optional visual preview from the 1 item you included on Select items\./
+    );
+    expect(section.textContent).not.toMatch(/reorganisation plan|generate|during review|^\s*4\.|\broom\b/i);
+    expect(screen.queryByRole("heading", { name: /generate reorganisation plan/i })).not.toBeInTheDocument();
+    const button = createTidyPlan();
+    expect(button).toBeEnabled();
+    for (const c of ["min-h-11", "w-full", "sm:min-h-0", "sm:w-auto"]) expect(classes(button)).toContain(c);
+    expect(client.generateReorganisation).not.toHaveBeenCalled();
+  });
+
+  test("loading and failure use the tidy plan terms in the button and the tracker, and retry keeps the selection", async () => {
+    let rejectPlan;
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockImplementationOnce(() => new Promise((_, reject) => { rejectPlan = () => reject(new Error("plan service down")); }));
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await continueToGenerate();
+
+    await userEvent.click(createTidyPlan());
+    const busy = screen.getByRole("button", { name: /creating tidy plan…/i });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(within(stepper()).getByText("Creating your tidy plan…")).toBeInTheDocument();
+    expect(screen.queryByText(/generating…|writing your checklist/i)).not.toBeInTheDocument();
+
+    rejectPlan();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
+    expect(within(stepper()).getByText("The tidy plan didn't finish.")).toBeInTheDocument();
+    expect(within(stepper()).getByText("Your selection is unchanged. Try again below.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(client.generateReorganisation).toHaveBeenCalledTimes(1);
+    expect(currentStep()).toBe("Tidy plan");
+  });
+
+  test("the image-service notice sits inside the tidy plan section as the one notice, never disables the action, and is not repeated beside a result with its own unavailable preview", async () => {
+    client.getImageGenHealth.mockResolvedValue({ available: false });
+    const unavailable = makeGeneratedResponse();
+    unavailable.image_status = "unavailable";
+    unavailable.image = null;
+    unavailable.image_unavailable_reason = "service_unreachable";
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(unavailable);
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await continueToGenerate();
+
+    const notices = await screen.findAllByText(/visual preview is currently unavailable/i);
+    expect(notices).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Create your tidy plan" })).toContainElement(notices[0]);
+    expect(screen.queryByText(/image service is offline/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /check again/i })).toBeEnabled();
+    expect(createTidyPlan()).toBeEnabled();
+
+    await userEvent.click(createTidyPlan());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /visual preview unavailable/i })).toBeInTheDocument());
+    expect(screen.queryByText(/visual preview is currently unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /check again/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Clear the desk")).toBeInTheDocument();
+    expect(within(stepper()).getByText("Your tidy plan is ready.")).toBeInTheDocument();
+  });
+
+  test("Check again inside the tidy plan section rechecks availability exactly as before", async () => {
+    client.getImageGenHealth.mockResolvedValue({ available: false });
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await continueToGenerate();
+    await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(1));
+    client.getImageGenHealth.mockResolvedValue({ available: true });
+    await userEvent.click(screen.getByRole("button", { name: /check again/i }));
+    await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/visual preview is currently unavailable/i)).not.toBeInTheDocument());
+    expect(createTidyPlan()).toBeEnabled();
   });
 });

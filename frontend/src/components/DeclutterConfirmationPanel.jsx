@@ -3,9 +3,8 @@ import { Button } from "./ui/button";
 import { DECISION_OPTIONS } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// The ONE confirmation surface of the Confirm choices screen, shared by
-// the Declutter wizard, Both and the retained DeclutterReview
-// composition. It transforms in place:
+// The ONE confirmation surface of the Confirm choices screen, rendered
+// by DeclutterPage and BothPage. It transforms in place:
 //
 //   - before confirmation (idle / confirming / error): "Confirm your
 //     choices", the live decision summary as compact chips (non-zero
@@ -16,8 +15,8 @@ import { cn } from "../lib/cn";
 //     confirmed counts and a short note on what the next screen offers.
 //
 // Never two panels at once, never a run id, item id or other technical
-// metadata. Every count and flag is derived by the caller (the page or
-// DeclutterReview) from current review data or the normalised
+// metadata. Every count and flag is derived by the page (via
+// lib/declutterReview) from current review data or the normalised
 // confirmation; `onConfirm` is the hook's confirm, forwarded unchanged,
 // and `onReviewUnresolved` is the page's own step navigation (no request,
 // no reset). Identity stays item_id underneath, it is just not shown.

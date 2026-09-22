@@ -17,21 +17,32 @@ import bothIcon from "../assets/both.svg";
 // selection is the browser's own arrow-key behaviour and nothing here
 // re-implements it. Continue stays disabled until a workflow is chosen, and
 // decorative card content never navigates on its own.
+//
+// Each card carries three short feature bullets instead of a paragraph so
+// the workflows can be compared at a glance: what the AI does, how the
+// user stays in control, and what sets this workflow apart. The list is
+// the radio's accessible description.
 const WORKFLOWS = [
   {
     value: "declutter",
     title: "Declutter",
     iconSrc: declutterIcon,
-    description:
-      "Get AI Keep, Sell, Donate and Discard suggestions for what's in your space, then review, change and confirm every decision yourself.",
+    features: [
+      "Get AI suggestions to Keep, Sell, Donate or Discard",
+      "Review and adjust every decision",
+      "Create editable listing drafts for items you choose to sell",
+    ],
     footnote: "Best for quick item decisions",
   },
   {
     value: "reorganise",
     title: "Reorganise",
     iconSrc: reorganiseIcon,
-    description:
-      "Actionable items are included automatically. Optionally review the list to exclude items before generating a prioritised reorganisation checklist and an AI visual preview.",
+    features: [
+      "Let AI identify items for your tidy plan",
+      "Choose exactly which items to include",
+      "Get a personalised checklist, storage ideas and an optional AI preview",
+    ],
     footnote: "Best for space planning",
   },
   {
@@ -40,8 +51,11 @@ const WORKFLOWS = [
     iconSrc: bothIcon,
     wideIcon: true,
     recommended: true,
-    description:
-      "Confirm your Declutter decisions first, then reorganise using only the items you confirmed as Keep.",
+    features: [
+      "Get AI suggestions, then review and adjust every decision",
+      "Create a tidy plan for kept items, with an optional AI preview",
+      "Create editable listing drafts for items you choose to sell",
+    ],
     footnote: "Best for full end-to-end guidance",
   },
 ];
@@ -66,7 +80,7 @@ export default function PathSelector({ onChoose }) {
         </legend>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          {WORKFLOWS.map(({ value, title, iconSrc, wideIcon, description, footnote, recommended }) => {
+          {WORKFLOWS.map(({ value, title, iconSrc, wideIcon, features, footnote, recommended }) => {
             const isSelected = selected === value;
             return (
               <label
@@ -120,9 +134,17 @@ export default function PathSelector({ onChoose }) {
                     />
                   </span>
 
-                  <span id={`workflow-${value}-desc`} className="mt-2 flex-1 text-sm text-muted-foreground">
-                    {description}
-                  </span>
+                  {/* Three scannable bullets, left-aligned, each free to wrap
+                      inside the card (min-w-0 + break-words) with a small
+                      brand-tinted dot as the marker. */}
+                  <ul id={`workflow-${value}-desc`} className="mt-3 flex-1 space-y-1.5 text-left text-sm text-muted-foreground">
+                    {features.map((feature) => (
+                      <li key={feature} className="flex min-w-0 items-start gap-2">
+                        <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-pill bg-primary/70" />
+                        <span className="min-w-0 break-words">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
 
                   <span className="mt-4 flex items-center gap-1.5 border-t border-border pt-3 text-xs font-medium text-foreground">
                     <Check aria-hidden="true" width={14} height={14} className="text-primary" />

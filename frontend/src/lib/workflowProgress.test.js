@@ -216,3 +216,51 @@ describe("deriveBothProgress", () => {
     });
   });
 });
+
+describe("deriveReorganiseProgress, tidy plan and analysing copy (cleanup pass)", () => {
+  test("Tidy plan step uses tidy plan terms, never reorganisation-plan or generate wording", () => {
+    const ready = deriveReorganiseProgress({ phase: "selecting", viewedStep: "generate", reviewAcknowledged: true });
+    expect(ready.statusText).toBe("Ready to create your tidy plan.");
+    expect(ready.nextActionText).toBe("Press Create tidy plan when you are ready.");
+
+    const generating = deriveReorganiseProgress({ phase: "generating" });
+    expect(generating.statusText).toBe("Creating your tidy plan…");
+    expect(generating.processing).toBe(true);
+
+    const result = deriveReorganiseProgress({ phase: "result" });
+    expect(result.statusText).toBe("Your tidy plan is ready.");
+    expect(result.nextActionText).toBe("Review your checklist, any storage and organisation ideas and the visual preview below.");
+    expect(result.isComplete).toBe(true);
+
+    const failed = deriveReorganiseProgress({ phase: "selecting", generateError: "nope" });
+    expect(failed.statusText).toBe("The tidy plan didn't finish.");
+    expect(failed.nextActionText).toBe("Your selection is unchanged. Try again below.");
+    expect(failed.isComplete).toBe(false);
+
+    const none = deriveReorganiseProgress({ phase: "selecting", selectedItemCount: 0 });
+    expect(none.statusText).toBe("Nothing is included in your tidy plan.");
+
+    for (const p of [ready, generating, result, failed, none]) {
+      expect(`${p.statusText} ${p.nextActionText}`).not.toMatch(/reorganisation plan|generate|\broom\b|writing your checklist/i);
+    }
+  });
+
+  test("the analysing status names no pipeline stages in any workflow", () => {
+    expect(deriveReorganiseProgress({ phase: "analysing" }).statusText).toBe("Analysing your space…");
+    const both = deriveBothProgress({ status: "uploading" });
+    expect(both.statusText).toBe("Analysing your space…");
+    for (const text of [deriveReorganiseProgress({ phase: "analysing" }).statusText, both.statusText]) {
+      expect(text).not.toMatch(/scene|object|reasoning|classification|detection/i);
+    }
+  });
+
+  test("step ids, labels, unlocking and locking are untouched by the copy change", () => {
+    const generating = deriveReorganiseProgress({ phase: "generating" });
+    expect(generating.steps.map((s) => s.id)).toEqual(["upload", "analyse", "review", "generate"]);
+    expect(generating.steps.map((s) => s.label)).toEqual(["Upload photo", "Analyse space", "Select items", "Tidy plan"]);
+    expect(generating.navigationLocked).toBe(true);
+    expect(generating.currentStepId).toBe("generate");
+    const result = deriveReorganiseProgress({ phase: "result" });
+    expect(result.completedStepIds).toEqual(["upload", "analyse", "review", "generate"]);
+  });
+});

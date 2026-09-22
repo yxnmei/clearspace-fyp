@@ -390,7 +390,8 @@ export function useDeclutterFlow({
     //
     // Blocked-by-in-flight-correction is a deliberately STATE-NEUTRAL
     // no-op, not an error: the UI already disables the Confirm button
-    // while correctingItemId is set (see DeclutterReview), so reaching
+    // while correctingItemId is set (isConfirmBlocked in
+    // lib/declutterReview, applied by DeclutterPage and BothPage), so reaching
     // this branch at all means either a direct/programmatic call or a
     // brief disabled-button race, setting a real confirmationError here
     // would otherwise leave a stale "correction in progress" message

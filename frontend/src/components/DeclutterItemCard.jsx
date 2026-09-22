@@ -7,8 +7,8 @@ import ItemCropThumbnail from "./ItemCropThumbnail";
 import DecisionControl, { DECISION_OPTIONS_BY_VALUE } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// Shared by DeclutterItemCard (resolved items) and DeclutterReview's
-// unresolved-items list, a label correction is available for both, so
+// Shared by DeclutterItemCard (resolved items) and DeclutterUnresolvedItems
+// (the unresolved list), a label correction is available for both, so
 // the form lives here once. Collapsed to a single "Wrong label?" toggle
 // until opened, so it doesn't visually compete with the primary decision
 // controls.

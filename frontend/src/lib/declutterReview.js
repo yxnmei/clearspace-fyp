@@ -1,7 +1,9 @@
-// Pure derivations shared by the Declutter review surfaces, the compact
-// wizard Review view and the stacked DeclutterReview that Both still
-// consumes. Keeping the partition, counts and the confirmation guard in
-// one place means neither surface re-implements them.
+// Pure derivations shared by the Declutter review surfaces: the
+// DeclutterReviewSection that DeclutterPage and BothPage both render,
+// and the two pages themselves, which derive the counts and the
+// confirmation guard for their Confirm choices screens. Keeping the
+// partition, counts and the guard in one place means no page or
+// section re-implements them.
 
 // The backend contract distinguishes three item groups: resolved expected
 // items (a real decision to review), unresolved expected items (no valid
@@ -29,12 +31,9 @@ export function deriveReviewCounts(resolvedItems = []) {
   return { counts, changedCount, excludedCount };
 }
 
-export function totalStageDurationMs(analysis) {
-  return (analysis?.stage_timings ?? []).reduce((sum, stage) => sum + stage.duration_ms, 0);
-}
-
-// The exact confirmation guard: unchanged meaning from the original
-// DeclutterReview,
+// The exact confirmation guard, used by DeclutterPage and BothPage to
+// disable Confirm decisions (unchanged meaning since the original
+// review screen):
 //   confirmationStatus === "confirming" || !declutter ||
 //   unresolvedCount > 0 || correctingItemId !== null
 export function isConfirmBlocked({ confirmationStatus, declutter, unresolvedCount, correctingItemId }) {

@@ -139,11 +139,6 @@ export default function DeclutterPage() {
     setViewedStep(wizard.continueTargetId);
   }, [wizard.canContinue, wizard.continueTargetId]);
 
-  const handleBack = useCallback(() => {
-    if (!wizard.canGoBack || !wizard.backTargetId) return;
-    setViewedStep(wizard.backTargetId);
-  }, [wizard.canGoBack, wizard.backTargetId]);
-
   return (
     <div>
       <WorkflowProgress

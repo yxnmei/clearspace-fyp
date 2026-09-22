@@ -100,9 +100,9 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
   );
 }
 
-// `items` is still passed by both pages for the contract join; nothing
-// rendered here needs it any more (focus areas are not shown and the
-// storage cards carry their own grounded reason), so it is not read.
+// The result needs no item list: focus areas are not shown and the
+// storage cards carry their own grounded reason, so neither page passes
+// one.
 //
 // `heading` defaults to Direct Reorganise's "Your tidy plan"; Both passes
 // "Tidy up" so this section IS its Tidy up result section. Start over is
