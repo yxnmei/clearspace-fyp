@@ -228,10 +228,10 @@ TITLE_SHAPES = re.compile(
     r"^(?:Group the .+ items|Group (?:technology accessories|toys and games|books and papers|clothing, bags and shoes|"
     r"jewellery, keys, watches and glasses)|Tidy loose items (?:on the (?:left|right) side|in the centre|in other areas)|"
     r"Tidy the (?:left side|right side|centre|other areas) without moving the .+|Clear the space around the .+|"
-    r"Straighten the .+|Do a final room check)$"
+    r"Straighten the .+|Do a final space check)$"
 )
 CLEANUP_TITLE = re.compile(r"^(?:Tidy loose items|Tidy the \w+(?: side)? without moving|Clear the space around|Straighten the)\b")
-FINAL_CHECK_TITLE = "Do a final room check"
+FINAL_CHECK_TITLE = "Do a final space check"
 
 # Proximity the data cannot prove: coarse-area membership never shows a
 # smaller item is physically around, on or beside a large one, so an

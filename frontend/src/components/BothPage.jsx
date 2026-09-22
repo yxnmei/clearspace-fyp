@@ -100,7 +100,7 @@ export default function BothPage() {
       ? "Analysis unsuccessful"
       : flow.status === "ready" && hasAnalysis
         ? "Analysis complete"
-        : "Analysing your room";
+        : "Analysing your space";
 
   return (
     <div>
@@ -159,7 +159,7 @@ export default function BothPage() {
               >
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
                 <span>
-                  ClearSpace finished analysing your room. Continue to Decide items to check each detected item and
+                  ClearSpace finished analysing your space. Continue to Decide items to check each detected item and
                   the action it suggests.
                 </span>
               </p>
@@ -203,7 +203,7 @@ export default function BothPage() {
               <DecisionActionBar
                 totalCount={decideItemCount}
                 counts={counts}
-                backLabel="Back to Analyse room"
+                backLabel="Back to Analyse space"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
                 continueLabel="Continue to Confirm choices"

@@ -227,7 +227,7 @@ export function useReorganiseFlow() {
       // untouched, a failed generate() must never erase the user's
       // upload/selection work; returning to "selecting" (not a dead-end
       // error phase) lets them retry immediately without re-uploading.
-      setGenerateError(err instanceof Error ? err.message : "Room-plan generation failed");
+      setGenerateError(err instanceof Error ? err.message : "Tidy-plan generation failed");
       setPhase("selecting");
       return null;
     } finally {

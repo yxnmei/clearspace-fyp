@@ -271,7 +271,7 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
     assert plan["was_repaired"] is None
     # only the confirmed Keep lamp reaches the checklist: one cleanup naming
     # it, then the closing check; same {priority, title, instruction} shape
-    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final room check"]
+    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final space check"]
     assert set(plan["actions"][0]) == {"priority", "title", "instruction"}
     # the server-derived Keep set is exactly what the focus areas cover
     assert [area["item_ids"] for area in result["focus_areas"]] == [["item_001"]]

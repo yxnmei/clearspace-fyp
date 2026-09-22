@@ -709,7 +709,7 @@ def test_a_real_28_item_room_with_duplicate_labels_is_handled_without_a_model():
     # cleanup for the busiest uncovered area, then the closing check
     titles = [a.title for a in result.action_plan.actions]
     assert titles[:3] == ["Group the picture frame items", "Group the toy items", "Group the cup items"]
-    assert titles[-1] == "Do a final room check"
+    assert titles[-1] == "Do a final space check"
     assert not any(t.startswith(("Start with the", "Tidy the ")) for t in titles), titles
     assert len(titles) == 5
     shown = [item_id for area in result.focus_areas for item_id in area.item_ids]

@@ -134,6 +134,13 @@ describe("PathSelector, keyboard operation (native radio behaviour)", () => {
 });
 
 describe("PathSelector, honest copy", () => {
+  test("introduces every workflow as working with a space, not only a room", () => {
+    renderSelector();
+    expect(screen.getByText("Choose a workflow to declutter your space, reorganise it, or do both in one guided pass.")).toBeInTheDocument();
+    const declutter = screen.getByRole("radio", { name: "Declutter" }).closest("label");
+    expect(declutter).toHaveTextContent(/what's in your space/i);
+  });
+
   test("Declutter copy is review-and-confirm, not automatic", () => {
     renderSelector();
     const card = screen.getByRole("radio", { name: "Declutter" }).closest("label");

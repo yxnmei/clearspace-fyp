@@ -199,7 +199,7 @@ export function useBothFlow({ listingApi } = {}) {
       // overrides are deliberately left untouched here, a failed
       // generate() must never erase confirmed work already done, so a
       // retry can call generate() again immediately without re-confirming.
-      setGenerateError(err instanceof Error ? err.message : "Room-plan generation failed");
+      setGenerateError(err instanceof Error ? err.message : "Tidy-plan generation failed");
       setGenerationStatus("error");
       return null;
     } finally {

@@ -101,9 +101,9 @@ describe("WorkflowProgress, structure and semantics", () => {
   });
 
   test("processing shows an animated indicator and an aria-live status line", () => {
-    const { container } = renderProgress({ processing: true, statusText: "Analysing your room…" });
+    const { container } = renderProgress({ processing: true, statusText: "Analysing your space…" });
     const live = container.querySelector('[aria-live="polite"]');
-    expect(live).toHaveTextContent("Analysing your room…");
+    expect(live).toHaveTextContent("Analysing your space…");
     // spinner present somewhere in the nav
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });

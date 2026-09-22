@@ -39,14 +39,14 @@ function transcribeResolves(transcript) {
 describe("ReorganiseUploadForm", () => {
   test("submit is disabled until a file is chosen", async () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /analyse room/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /analyse space/i })).toBeDisabled();
   });
 
   test("choosing a PNG file enables submit and shows a preview", async () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     await userEvent.upload(input, pngFile());
-    expect(screen.getByRole("button", { name: /analyse room/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /analyse space/i })).toBeEnabled();
     expect(screen.getByRole("img", { name: /preview/i })).toBeInTheDocument();
   });
 
@@ -60,21 +60,21 @@ describe("ReorganiseUploadForm", () => {
     // (relevant for drag-and-drop or a browser that doesn't enforce
     // accept), not user-event's.
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     const webp = new File(["fake"], "room.webp", { type: "image/webp" });
     fireEvent.change(input, { target: { files: [webp] } });
 
     expect(screen.getByRole("alert")).toHaveTextContent(/PNG or JPEG/i);
-    expect(screen.getByRole("button", { name: /analyse room/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /analyse space/i })).toBeDisabled();
   });
 
   test("submitting calls onSubmit with the file and trimmed context", async () => {
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
     const file = pngFile();
-    await userEvent.upload(screen.getByLabelText(/room photo/i), file);
+    await userEvent.upload(screen.getByLabelText(/space photo/i), file);
     await userEvent.type(screen.getByLabelText(/context for the ai/i), "  keep the desk by the window  ");
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await userEvent.click(screen.getByRole("button", { name: /analyse space/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({ file, context: "keep the desk by the window" });
   });
@@ -82,15 +82,15 @@ describe("ReorganiseUploadForm", () => {
   test("blank context is submitted as null", async () => {
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
-    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile());
-    await userEvent.click(screen.getByRole("button", { name: /analyse room/i }));
+    await userEvent.upload(screen.getByLabelText(/space photo/i), pngFile());
+    await userEvent.click(screen.getByRole("button", { name: /analyse space/i }));
     expect(onSubmit).toHaveBeenCalledWith({ file: expect.any(File), context: null });
   });
 
   test("shows a status message while analysing and disables the form", () => {
     render(<ReorganiseUploadForm phase="analysing" error={null} onSubmit={vi.fn()} />);
-    expect(screen.getByRole("status")).toHaveTextContent(/analysing your room/i);
-    expect(screen.getByLabelText(/room photo/i)).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/analysing your space/i);
+    expect(screen.getByLabelText(/space photo/i)).toBeDisabled();
   });
 
   test("shows an upload error as an alert, allowing retry", () => {
@@ -115,10 +115,10 @@ describe("ReorganiseUploadForm, voice context", () => {
     const file = pngFile();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), file);
+    await user.upload(screen.getByLabelText(/space photo/i), file);
     await user.upload(screen.getByLabelText(/audio file/i), audioFile());
     await user.click(await screen.findByRole("button", { name: "Use as context" }));
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /analyse space/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({ file, context: "keep the desk by the window" });
   });
@@ -129,7 +129,7 @@ describe("ReorganiseUploadForm, voice context", () => {
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), pngFile());
+    await user.upload(screen.getByLabelText(/space photo/i), pngFile());
     await user.type(screen.getByLabelText(/context for the ai/i), "typed original");
     await user.upload(screen.getByLabelText(/audio file/i), audioFile());
 
@@ -137,7 +137,7 @@ describe("ReorganiseUploadForm, voice context", () => {
     expect(screen.getByLabelText(/context for the ai/i)).toHaveValue("typed original");
 
     await user.click(applyButton);
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /analyse space/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({ file: expect.any(File), context: "spoken replacement" });
   });
@@ -148,10 +148,10 @@ describe("ReorganiseUploadForm, voice context", () => {
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), pngFile());
+    await user.upload(screen.getByLabelText(/space photo/i), pngFile());
     await user.upload(screen.getByLabelText(/audio file/i), audioFile());
     await screen.findByLabelText(/transcript to review/i);
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /analyse space/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({ file: expect.any(File), context: null });
   });
@@ -166,11 +166,11 @@ describe("ReorganiseUploadForm, voice context", () => {
     );
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), pngFile());
-    expect(screen.getByRole("button", { name: /analyse room/i })).toBeEnabled();
+    await user.upload(screen.getByLabelText(/space photo/i), pngFile());
+    expect(screen.getByRole("button", { name: /analyse space/i })).toBeEnabled();
 
     await user.upload(screen.getByLabelText(/audio file/i), audioFile());
-    await waitFor(() => expect(screen.getByRole("button", { name: /analyse room/i })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /analyse space/i })).toBeDisabled());
 
     await act(async () => {
       settle({
@@ -180,7 +180,7 @@ describe("ReorganiseUploadForm, voice context", () => {
         audio_duration_s: 1,
       });
     });
-    await waitFor(() => expect(screen.getByRole("button", { name: /analyse room/i })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /analyse space/i })).toBeEnabled());
   });
 
   test("an unavailable transcription service points back at typed context and changes nothing", async () => {
@@ -191,18 +191,18 @@ describe("ReorganiseUploadForm, voice context", () => {
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), pngFile());
+    await user.upload(screen.getByLabelText(/space photo/i), pngFile());
     await user.type(screen.getByLabelText(/context for the ai/i), "keep the desk by the window");
     await user.upload(screen.getByLabelText(/audio file/i), audioFile());
 
     expect(await screen.findByText(VOICE_MESSAGES.unavailable)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /analyse space/i }));
     expect(onSubmit).toHaveBeenCalledWith({ file: expect.any(File), context: "keep the desk by the window" });
   });
 
   test("the image-type check is unaffected by the voice input", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText(/room photo/i), {
+    fireEvent.change(screen.getByLabelText(/space photo/i), {
       target: { files: [new File(["fake"], "room.webp", { type: "image/webp" })] },
     });
 
@@ -216,16 +216,29 @@ describe("ReorganiseUploadForm, voice context", () => {
   });
 });
 
-describe("ReorganiseUploadForm, room photo presentation (redesign)", () => {
+describe("ReorganiseUploadForm, space photo presentation (redesign)", () => {
+  test("uses inclusive space wording in the upload heading and guidance", () => {
+    render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: "1. Upload a photo of your space" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Space photo")).toBeInTheDocument();
+    expect(screen.getByText("PNG or JPEG of one indoor space, photographed so most items are visible.")).toBeInTheDocument();
+  });
+
   test("the file input is restricted to PNG and JPEG", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
+    expect(screen.getByLabelText(/space photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
   });
 
   test("the selected filename is shown from File.name, no path, no fake path", async () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("living_room.png"));
+    await userEvent.upload(screen.getByLabelText(/space photo/i), pngFile("living_room.png"));
 
     const shown = screen.getByText("living_room.png");
     expect(shown.textContent).toBe("living_room.png");
@@ -235,23 +248,23 @@ describe("ReorganiseUploadForm, room photo presentation (redesign)", () => {
 
   test("an unsupported type leaves the field empty, shows a field alert, and never shows that filename", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText(/room photo/i), {
+    fireEvent.change(screen.getByLabelText(/space photo/i), {
       target: { files: [new File(["fake"], "clip.webp", { type: "image/webp" })] },
     });
 
     expect(screen.getByRole("alert")).toHaveTextContent(/PNG or JPEG/i);
     expect(screen.getByText("No photo selected")).toBeInTheDocument();
     expect(screen.queryByText("clip.webp")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /analyse room/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /analyse space/i })).toBeDisabled();
   });
 
   test("replacing the photo swaps the filename and revokes exactly the previous object URL", async () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("first.png"));
+    await userEvent.upload(screen.getByLabelText(/space photo/i), pngFile("first.png"));
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
 
-    await userEvent.upload(screen.getByLabelText(/room photo/i), pngFile("second.png"));
+    await userEvent.upload(screen.getByLabelText(/space photo/i), pngFile("second.png"));
 
     expect(screen.getByText("second.png")).toBeInTheDocument();
     expect(screen.queryByText("first.png")).not.toBeInTheDocument();
@@ -266,16 +279,16 @@ describe("ReorganiseUploadForm, room photo presentation (redesign)", () => {
 
   test("the real file input stays focusable and disables with the rest of the form", () => {
     const { rerender } = render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     input.focus();
     expect(input).toHaveFocus();
 
     rerender(<ReorganiseUploadForm phase="analysing" error={null} onSubmit={vi.fn()} />);
-    expect(screen.getByLabelText(/room photo/i)).toBeDisabled();
+    expect(screen.getByLabelText(/space photo/i)).toBeDisabled();
   });
 
   test("the submit button is a real submit control, not a plain button", () => {
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /analyse room/i })).toHaveAttribute("type", "submit");
+    expect(screen.getByRole("button", { name: /analyse space/i })).toHaveAttribute("type", "submit");
   });
 });

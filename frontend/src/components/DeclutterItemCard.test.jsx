@@ -549,7 +549,7 @@ describe("DeclutterItemCard", () => {
       const thumb = screen.getByTestId("item-crop-thumbnail");
       expect(thumb).toHaveAttribute("aria-hidden", "true"); // row already names the item
       expect(thumb.style.backgroundImage).toBe('url("blob:room-abc")');
-      // no per-item <img> and no image role that would rival the one room photo
+      // no per-item <img> and no image role that would rival the one space photo
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
       expect(thumb.querySelector("img")).toBeNull();
     });

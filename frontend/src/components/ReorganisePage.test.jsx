@@ -104,8 +104,8 @@ function currentStep() {
 }
 
 async function analyseRoom() {
-  await userEvent.upload(screen.getByLabelText(/room photo/i), makeFile());
-  await userEvent.click(screen.getByRole("button", { name: /^analyse room$/i }));
+  await userEvent.upload(screen.getByLabelText(/space photo/i), makeFile());
+  await userEvent.click(screen.getByRole("button", { name: /^analyse space$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
 }
 
@@ -130,7 +130,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
     expect(screen.queryByRole("heading", { name: /choose items for your tidy plan/i })).not.toBeInTheDocument();
 
     await analyseRoom();
-    expect(currentStep()).toBe("Analyse room");
+    expect(currentStep()).toBe("Analyse space");
     expect(screen.queryByRole("heading", { name: /choose items for your tidy plan/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
@@ -138,7 +138,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
     expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /back to analyse/i }));
-    expect(currentStep()).toBe("Analyse room");
+    expect(currentStep()).toBe("Analyse space");
   });
 
   test("Review requires an included item before Generate is unlocked", async () => {
@@ -164,7 +164,7 @@ describe("ReorganisePage screen-by-screen flow", () => {
     await userEvent.click(document.getElementById("reorganise-item-item_001"));
     expect(document.getElementById("reorganise-item-item_001")).not.toBeChecked();
     await userEvent.click(screen.getByRole("button", { name: /back to analyse/i }));
-    expect(currentStep()).toBe("Analyse room");
+    expect(currentStep()).toBe("Analyse space");
     await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
     expect(currentStep()).toBe("Select items");
     expect(document.getElementById("reorganise-item-item_001")).not.toBeChecked();
@@ -322,7 +322,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
       actions: [
         { priority: 1, title: "Group the picture frame items", instruction: "Keep all 6 together so they are easier to find and put back." },
         { priority: 2, title: "Tidy loose items on the left side", instruction: "Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space." },
-        { priority: 3, title: "Do a final room check", instruction: "Walk through the bedroom once more and make sure every selected item has a clear place." },
+        { priority: 3, title: "Do a final space check", instruction: "Walk through the bedroom once more and make sure every selected item has a clear place." },
       ],
       provenance: "deterministic_direct",
       attempts: 0,
@@ -351,7 +351,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     expect(within(rows[0]).getByText("Keep all 6 together so they are easier to find and put back.")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Tidy loose items on the left side")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Do a final room check")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Do a final space check")).toBeInTheDocument();
     expect(within(rows[2]).getByText("Walk through the bedroom once more and make sure every selected item has a clear place.")).toBeInTheDocument();
     for (const row of rows) expect(within(row).getByRole("checkbox")).not.toBeChecked();
     // the checkbox is named by the title alone and described by the instruction

@@ -91,7 +91,7 @@ export default function DeclutterPage() {
       ? "Analysis unsuccessful"
       : status === "ready" && hasAnalysis
         ? "Analysis complete"
-        : "Analysing your room";
+        : "Analysing your space";
 
   // Eligibility is derived the SAME way ListingsView derives it (both
   // consume lib/listingDrafts.js's deriveEligibleSellItemIds), strictly
@@ -168,7 +168,7 @@ export default function DeclutterPage() {
         {/* ---------- Upload ---------- */}
         <div hidden={viewed !== "upload"}>
           <p className="mb-6 max-w-2xl text-muted-foreground">
-            Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in a room, then review and
+            Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in your space, then review and
             confirm each one yourself before anything is finalised.
           </p>
           <DeclutterUploadForm status={status} error={error} onSubmit={handleSubmit} />
@@ -209,7 +209,7 @@ export default function DeclutterPage() {
               >
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
                 <span>
-                  ClearSpace finished analysing your room. Continue to Decide items to check each detected item and
+                  ClearSpace finished analysing your space. Continue to Decide items to check each detected item and
                   the action it suggests.
                 </span>
               </p>
@@ -255,7 +255,7 @@ export default function DeclutterPage() {
               <DecisionActionBar
                 totalCount={decideItemCount}
                 counts={counts}
-                backLabel="Back to Analyse room"
+                backLabel="Back to Analyse space"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
                 continueLabel="Continue to Confirm choices"

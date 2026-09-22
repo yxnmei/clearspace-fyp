@@ -10,8 +10,8 @@ function setup(props = {}) {
       id="test-image"
       accept="image/*"
       onChange={onChange}
-      previewAlt="Preview of the room photo you selected"
-      helpText="JPG or PNG of one room."
+      previewAlt="Preview of the space photo you selected"
+      helpText="JPG or PNG of one indoor space."
       {...props}
     />
   );
@@ -19,25 +19,25 @@ function setup(props = {}) {
 }
 
 describe("RoomPhotoField, the native input stays accessible", () => {
-  test("a real <input type=file> is reachable by its 'Room photo' label", () => {
+  test("a real <input type=file> is reachable by its 'Space photo' label", () => {
     setup();
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     expect(input.tagName).toBe("INPUT");
     expect(input).toHaveAttribute("type", "file");
   });
 
   test("the input carries whatever accept value the host form gives it", () => {
     const { rerender } = setup();
-    expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/*");
+    expect(screen.getByLabelText(/space photo/i)).toHaveAttribute("accept", "image/*");
     rerender(
       <RoomPhotoField id="test-image" accept="image/png,image/jpeg" onChange={vi.fn()} previewAlt="x" />
     );
-    expect(screen.getByLabelText(/room photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
+    expect(screen.getByLabelText(/space photo/i)).toHaveAttribute("accept", "image/png,image/jpeg");
   });
 
   test("it is visually hidden but kept in the accessibility tree and focusable", () => {
     setup();
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     expect(input.className).toContain("sr-only");
     expect(input).not.toHaveAttribute("hidden");
     expect(input).not.toHaveAttribute("aria-hidden", "true");
@@ -47,19 +47,19 @@ describe("RoomPhotoField, the native input stays accessible", () => {
 
   test("it is disabled when the field is disabled", () => {
     setup({ disabled: true });
-    expect(screen.getByLabelText(/room photo/i)).toBeDisabled();
+    expect(screen.getByLabelText(/space photo/i)).toBeDisabled();
   });
 
   test("choosing a file calls the host's onChange", async () => {
     const user = userEvent.setup();
     const { onChange } = setup();
-    await user.upload(screen.getByLabelText(/room photo/i), new File(["x"], "room.png", { type: "image/png" }));
+    await user.upload(screen.getByLabelText(/space photo/i), new File(["x"], "room.png", { type: "image/png" }));
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   test("the visible trigger label is associated with the input", () => {
     setup();
-    const input = screen.getByLabelText(/room photo/i);
+    const input = screen.getByLabelText(/space photo/i);
     const trigger = document.querySelector(`label[for="${input.id}"]`);
     expect(trigger).not.toBeNull();
     expect(trigger).toHaveTextContent(/choose photo/i);
@@ -96,9 +96,9 @@ describe("RoomPhotoField, with a selected file", () => {
   });
 
   test("renders a bounded preview image with the alt text it is given", () => {
-    setup({ previewUrl: "blob:mock", previewAlt: "Preview of the room photo you selected to declutter" });
+    setup({ previewUrl: "blob:mock", previewAlt: "Preview of the space photo you selected to declutter" });
     const img = screen.getByRole("img");
-    expect(img).toHaveAccessibleName(/preview of the room photo/i);
+    expect(img).toHaveAccessibleName(/preview of the space photo/i);
     expect(img).toHaveAttribute("src", "blob:mock");
     expect(img.className).toMatch(/max-h-64/); // bounded
   });
@@ -106,9 +106,9 @@ describe("RoomPhotoField, with a selected file", () => {
 
 describe("RoomPhotoField, help and error text", () => {
   test("help text is rendered and wired to the input via aria-describedby", () => {
-    setup({ helpText: "JPG or PNG of one room." });
-    const input = screen.getByLabelText(/room photo/i);
-    const help = screen.getByText("JPG or PNG of one room.");
+    setup({ helpText: "JPG or PNG of one indoor space." });
+    const input = screen.getByLabelText(/space photo/i);
+    const help = screen.getByText("JPG or PNG of one indoor space.");
     expect(input.getAttribute("aria-describedby")).toContain(help.id);
   });
 
@@ -127,6 +127,6 @@ describe("RoomPhotoField, help and error text", () => {
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(/not supported/i);
-    expect(screen.getByLabelText(/room photo/i).getAttribute("aria-describedby")).toContain(alert.id);
+    expect(screen.getByLabelText(/space photo/i).getAttribute("aria-describedby")).toContain(alert.id);
   });
 });

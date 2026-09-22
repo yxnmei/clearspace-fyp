@@ -272,7 +272,7 @@ def test_generate_success_returns_generated_image_and_full_action_plan():
     # lamp (left) and book (right): no group, one cleanup naming the real
     # uncovered item, then the closing check; same {priority, title,
     # instruction} shape as before
-    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final room check"]
+    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final space check"]
     assert set(plan["actions"][0]) == {"priority", "title", "instruction"}
     assert plan["actions"][0]["instruction"] == "Set it neatly in place and clear the immediate space around it."
 

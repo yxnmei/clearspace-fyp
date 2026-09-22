@@ -121,8 +121,8 @@ const viewedLabel = () => trackerSteps().find((s) => s.current)?.label;
 
 async function analyseFrom(user, response) {
   client.uploadImage.mockResolvedValueOnce(response);
-  await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-  await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+  await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+  await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
 }
 
@@ -132,10 +132,10 @@ describe("DeclutterPage wizard, one view at a time", () => {
   test("Upload is the initial view; Analyse/Review/Confirm content is not shown", () => {
     render(<DeclutterPage />);
     expect(viewedLabel()).toBe("Upload photo");
-    expect(screen.getByRole("heading", { name: /1\. upload a room photo/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /1\. upload a photo of your space/i })).toBeInTheDocument();
     expect(screen.getByText(/get ai-suggested keep \/ sell \/ donate \/ discard decisions/i)).toBeInTheDocument();
 
-    expect(screen.queryByRole("heading", { name: /analysing your room/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /analysing your space/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /review your declutter decisions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /confirm decisions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /detected item outlines/i })).not.toBeInTheDocument();
@@ -149,14 +149,14 @@ describe("DeclutterPage wizard, one view at a time", () => {
     );
     render(<DeclutterPage />);
 
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
 
     expect(client.uploadImage).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse space"));
     expect(screen.getByRole("status")).toHaveTextContent(/object detection and item reasoning are running/i);
     // Upload form is no longer visible
-    expect(screen.queryByRole("button", { name: /^analyse room$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^analyse space$/i })).not.toBeInTheDocument();
 
     resolveUpload();
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
@@ -167,7 +167,7 @@ describe("DeclutterPage wizard, one view at a time", () => {
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
 
-    expect(viewedLabel()).toBe("Analyse room");
+    expect(viewedLabel()).toBe("Analyse space");
     expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeEnabled();
     // Review content still hidden until the user continues
@@ -264,8 +264,8 @@ describe("DeclutterPage wizard, tracker navigation", () => {
     expect(viewedLabel()).toBe("Decide items");
 
     client.uploadImage.mockClear();
-    await user.click(within(nav()).getByRole("button", { name: "Go to Analyse room" }));
-    expect(viewedLabel()).toBe("Analyse room");
+    await user.click(within(nav()).getByRole("button", { name: "Go to Analyse space" }));
+    expect(viewedLabel()).toBe("Analyse space");
     await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
     expect(viewedLabel()).toBe("Upload photo");
 
@@ -277,7 +277,7 @@ describe("DeclutterPage wizard, tracker navigation", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     // Before any upload: only Upload is unlocked.
-    expect(within(nav()).queryByRole("button", { name: "Go to Analyse room" })).toBeNull();
+    expect(within(nav()).queryByRole("button", { name: "Go to Analyse space" })).toBeNull();
     expect(within(nav()).queryByRole("button", { name: "Go to Decide items" })).toBeNull();
     expect(within(nav()).queryByRole("button", { name: "Go to Confirm choices" })).toBeNull();
 
@@ -295,9 +295,9 @@ describe("DeclutterPage wizard, tracker navigation", () => {
       () => new Promise((r) => { resolveUpload = () => r(makeUploadResponse("run-a")); })
     );
     render(<DeclutterPage />);
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse space"));
 
     // No tracker buttons at all while uploading; Back is disabled.
     expect(within(nav()).queryAllByRole("button")).toHaveLength(0);
@@ -382,11 +382,11 @@ describe("DeclutterPage wizard, state preservation", () => {
     client.uploadImage.mockImplementationOnce(
       () => new Promise((r) => { resolveUpload = () => r(makeUploadResponse("run-b")); })
     );
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room-b.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room-b.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
 
     // Straight to a fresh Analyse view; every downstream step relocked.
-    await waitFor(() => expect(viewedLabel()).toBe("Analyse room"));
+    await waitFor(() => expect(viewedLabel()).toBe("Analyse space"));
     expect(within(nav()).queryAllByRole("button")).toHaveLength(0); // locked while uploading
     expect(screen.queryByRole("heading", { name: /2\. analysis summary/i })).not.toBeInTheDocument();
 
@@ -525,10 +525,10 @@ describe("DeclutterPage wizard, Analyse view state wording", () => {
       () => new Promise((res, rej) => { resolveUpload = res; rejectUpload = rej; })
     );
     render(<DeclutterPage />);
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Analysing your room" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Analysing your space" })).toBeInTheDocument());
 
     resolveUpload(makeUploadResponse("run-a"));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Analysis complete" })).toBeInTheDocument());
@@ -537,7 +537,7 @@ describe("DeclutterPage wizard, Analyse view state wording", () => {
     // second run fails
     client.uploadImage.mockImplementationOnce(() => Promise.reject(new Error("network down")));
     await user.click(within(nav()).getByRole("button", { name: "Go to Upload photo" }));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Analysis unsuccessful" })).toBeInTheDocument());
     rejectUpload?.(new Error("ignored"));
   });
@@ -576,18 +576,18 @@ describe("DeclutterPage wizard, overlay linking on compact rows", () => {
 });
 
 describe("DeclutterPage wizard, carried-over checks", () => {
-  test("the moved Declutter introduction still renders, wording unchanged", () => {
+  test("the Declutter introduction describes the user's broader space", () => {
     render(<DeclutterPage />);
     const intro = screen.getByText(/get ai-suggested keep \/ sell \/ donate \/ discard decisions/i);
     expect(intro).toHaveTextContent(
-      "Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in a room, then review and confirm each one yourself before anything is finalised."
+      "Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in your space, then review and confirm each one yourself before anything is finalised."
     );
   });
 
   test("the stepper still starts on Upload with nothing complete", () => {
     render(<DeclutterPage />);
     const steps = trackerSteps();
-    expect(steps.map((s) => s.label)).toEqual(["Upload photo", "Analyse room", "Decide items", "Confirm choices", "Listing drafts"]);
+    expect(steps.map((s) => s.label)).toEqual(["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Listing drafts"]);
     expect(steps.find((s) => s.current).label).toBe("Upload photo");
     expect(steps.filter((s) => s.current)).toHaveLength(1);
   });
@@ -654,8 +654,8 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
 
   async function toConfirmed(user, { decision = "keep", runId = "run-a" } = {}) {
     client.uploadImage.mockResolvedValueOnce(makeUploadResponse(runId));
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     if (decision !== "keep") {
@@ -751,8 +751,8 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     client.uploadImage.mockResolvedValueOnce(makeUploadResponse("run-a"));
-    await user.upload(screen.getByLabelText(/room photo/i), makeFile("room.jpg"));
-    await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("room.jpg"));
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /2\. analysis summary/i })).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
     // Captured while Review is the viewed step, the analysed-room <img>
@@ -901,7 +901,7 @@ describe("DeclutterPage wizard, Decide items action bar", () => {
     await analyseFrom(user, makeUploadResponse("run-a"));
     await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
 
-    const backs = screen.getAllByRole("button", { name: /back to analyse room/i });
+    const backs = screen.getAllByRole("button", { name: /back to analyse space/i });
     const continues = screen.getAllByRole("button", { name: /continue to confirm choices/i });
     expect(backs).toHaveLength(1);
     expect(continues).toHaveLength(1);
@@ -910,7 +910,7 @@ describe("DeclutterPage wizard, Decide items action bar", () => {
     expect(bar().className).toMatch(/sticky/);
   });
 
-  test("the bar's counts follow the current decisions live, and Back returns to Analyse room", async () => {
+  test("the bar's counts follow the current decisions live, and Back returns to Analyse space", async () => {
     const user = userEvent.setup();
     render(<DeclutterPage />);
     await analyseFrom(user, makeUploadResponse("run-a"));
@@ -925,8 +925,8 @@ describe("DeclutterPage wizard, Decide items action bar", () => {
     expect(within(bar()).queryByText("Keep")).not.toBeInTheDocument();
     expect(client.confirmDecisions).not.toHaveBeenCalled();
 
-    await user.click(within(bar()).getByRole("button", { name: /back to analyse room/i }));
-    expect(viewedLabel()).toBe("Analyse room");
+    await user.click(within(bar()).getByRole("button", { name: /back to analyse space/i }));
+    expect(viewedLabel()).toBe("Analyse space");
   });
 
   test("an unresolved item is counted, flagged Please double check, and the disabled Continue says why", async () => {
@@ -945,7 +945,7 @@ describe("DeclutterPage wizard, Decide items action bar", () => {
     expect(reason).toHaveTextContent("1 item still needs a decision.");
     expect(cont).toHaveAttribute("aria-describedby", reason.id);
     // Back stays available while only Continue is blocked
-    expect(within(bar()).getByRole("button", { name: /back to analyse room/i })).toBeEnabled();
+    expect(within(bar()).getByRole("button", { name: /back to analyse space/i })).toBeEnabled();
   });
 
   test("a label correction in flight is explained by the bar, then the reason clears", async () => {

@@ -73,9 +73,10 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
   return (
     <form onSubmit={handleSubmit} className="rounded-card border border-border bg-surface shadow-card">
       <div className="border-b border-border p-5 sm:p-6">
-        <h2 className="text-lg font-semibold text-foreground">1. Upload a room photo</h2>
+        <h2 className="text-lg font-semibold text-foreground">1. Upload a photo of your space</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          One clear photo of the room, with most items in frame. You can add optional context for the AI too.
+          Upload one clear photo of your space, with most items in frame. You can also provide optional context to
+          help the AI better understand your space.
         </p>
       </div>
 
@@ -87,8 +88,8 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
           onChange={handleFileChange}
           fileName={file?.name ?? null}
           previewUrl={previewUrl}
-          previewAlt="Preview of the room photo you selected to reorganise"
-          helpText="PNG or JPEG of one room, photographed so most items are visible."
+          previewAlt="Preview of the space photo you selected to reorganise"
+          helpText="PNG or JPEG of one indoor space, photographed so most items are visible."
           error={typeError}
         />
 
@@ -122,13 +123,13 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
 
       <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
         <Button type="submit" disabled={!file || isAnalysing || voiceBusy} className="self-start">
-          {isAnalysing ? "Analysing…" : "Analyse room"}
+          {isAnalysing ? "Analysing…" : "Analyse space"}
         </Button>
 
         {isAnalysing && (
           <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
             <span aria-hidden="true" className="h-2.5 w-2.5 animate-pulse rounded-pill bg-primary" />
-            Analysing your room. Scene classification and object detection may take up to two minutes on this
+            Analysing your space. Scene classification and object detection may take up to two minutes on this
             computer.
           </p>
         )}

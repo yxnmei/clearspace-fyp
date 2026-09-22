@@ -8,7 +8,7 @@
 // never means two different things across workflows.
 const DECLUTTER_STEPS = [
   { id: "upload", label: "Upload photo" },
-  { id: "analyse", label: "Analyse room" },
+  { id: "analyse", label: "Analyse space" },
   { id: "review", label: "Decide items" },
   { id: "confirm", label: "Confirm choices" },
   { id: "listings", label: "Listing drafts" },
@@ -16,14 +16,14 @@ const DECLUTTER_STEPS = [
 
 const REORGANISE_STEPS = [
   { id: "upload", label: "Upload photo" },
-  { id: "analyse", label: "Analyse room" },
+  { id: "analyse", label: "Analyse space" },
   { id: "review", label: "Select items" },
   { id: "generate", label: "Tidy plan" },
 ];
 
 const BOTH_STEPS = [
   { id: "upload", label: "Upload photo" },
-  { id: "analyse", label: "Analyse room" },
+  { id: "analyse", label: "Analyse space" },
   { id: "review", label: "Decide items" },
   { id: "confirm", label: "Confirm choices" },
   { id: "reorganise", label: "Results" },
@@ -55,13 +55,13 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
   switch (viewedStepId) {
     case "upload":
       if (uploadError) return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
-      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Select items.", false];
-      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+      if (hasAnalysis) return ["Your analysed space is still here.", "Submit a new photo to start over, or return to Select items.", false];
+      return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "analyse":
-      if (phase === "analysing") return ["Analysing your room, scene and objects.", "This can take up to two minutes, no action needed yet.", true];
+      if (phase === "analysing") return ["Analysing your space, scene and objects.", "This can take up to two minutes, no action needed yet.", true];
       if (uploadError) return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
       if (hasAnalysis) return ["Analysis complete.", "Continue to Select items to check the detected items.", false];
-      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+      return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "review":
       if (selectedItemCount === 0) return ["Nothing is included in the reorganisation plan.", "Include at least one actionable item to continue.", false];
       return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Tidy plan.", false];
@@ -170,14 +170,14 @@ function describeBothStep({
   switch (viewedStepId) {
     case "upload":
       if (status === "error") return ["That upload didn't go through.", "Your photo and context are still here. Submit again to retry.", false];
-      if (hasAnalysis) return ["Your analysed room is still here.", "Submit a new photo to start over, or return to Decide items.", false];
-      return ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+      if (hasAnalysis) return ["Your analysed space is still here.", "Submit a new photo to start over, or return to Decide items.", false];
+      return ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "analyse":
-      if (status === "uploading") return ["Analysing your room, scene, objects and item reasoning.", "This can take up to two minutes, no action needed yet.", true];
+      if (status === "uploading") return ["Analysing your space, scene, objects and item reasoning.", "This can take up to two minutes, no action needed yet.", true];
       if (status === "error") return ["That analysis didn't go through.", "Go back to Upload photo and try again.", false];
       return hasAnalysis
         ? ["Analysis complete.", "Continue to Decide items to check each item.", false]
-        : ["Ready when you are.", "Add a room photo, then press Analyse room.", false];
+        : ["Ready when you are.", "Add a space photo, then press Analyse space.", false];
     case "review":
       if (correctingItemId !== null) return ["A label correction is in progress.", "Continue becomes available once it finishes.", false];
       if (unresolvedCount > 0) return ["Some items still need a valid decision.", "Resolve every item before continuing.", false];

@@ -613,7 +613,7 @@ describe("DeclutterReview, review page layout and presentation", () => {
     render(
       <DeclutterReview {...baseProps({ declutter: makeDeclutter({ expected_item_ids: ["item_001", "item_002"] }), reviewItems })} />
     );
-    // The only element with an image role is the single analysed-room photo.
+    // The only element with an image role is the single analysed-space photo.
     expect(screen.getAllByRole("img")).toHaveLength(1);
     // The compact rows still carry decorative CSS crops derived from it.
     expect(screen.getAllByTestId("item-crop-thumbnail").length).toBe(2);

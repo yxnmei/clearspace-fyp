@@ -29,7 +29,7 @@ export default function RoomPhotoField({
 
   return (
     <div>
-      <p className="text-sm font-medium text-foreground">Room photo</p>
+      <p className="text-sm font-medium text-foreground">Space photo</p>
 
       <div
         className={cn(
@@ -45,7 +45,7 @@ export default function RoomPhotoField({
               <ImageUp aria-hidden="true" width={22} height={22} />
             </span>
             <p className="text-sm font-medium text-foreground">No photo selected yet</p>
-            <p className="text-xs text-muted-foreground">Choose a room photo to get started.</p>
+            <p className="text-xs text-muted-foreground">Choose a photo of your space to get started.</p>
           </div>
         )}
       </div>
@@ -57,7 +57,7 @@ export default function RoomPhotoField({
           accept={accept}
           onChange={onChange}
           disabled={disabled}
-          aria-label="Room photo"
+          aria-label="Space photo"
           aria-describedby={describedBy}
           className="peer sr-only"
         />

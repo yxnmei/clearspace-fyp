@@ -65,7 +65,7 @@ export default function ReorganisePage() {
   }, [flow.reset]);
 
   const analyseHeading = flow.phase === "analysing"
-    ? "Analysing your room"
+    ? "Analysing your space"
     : flow.uploadError
       ? "Analysis unsuccessful"
       : "Analysis complete";
@@ -89,7 +89,7 @@ export default function ReorganisePage() {
       <div className="mt-6">
         <div hidden={viewed !== "upload"}>
           <p className="mb-6 max-w-2xl text-muted-foreground">
-            Analyse a room, review which detected items belong in the plan, then generate a prioritised
+            Analyse your space, review which detected items belong in the plan, then generate a prioritised
             reorganisation checklist, storage suggestions when relevant and an optional AI visual preview.
           </p>
           <ReorganiseUploadForm phase={flow.phase} error={flow.uploadError} onSubmit={handleSubmit} />
@@ -114,7 +114,7 @@ export default function ReorganisePage() {
             {hasAnalysis && flow.phase !== "analysing" && (
               <p role="status" className="flex items-start gap-2 rounded-card border border-success/30 bg-success/10 p-4 text-sm text-foreground">
                 <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
-                <span>ClearSpace finished analysing your room. Continue to Select items to check the detected items.</span>
+                <span>ClearSpace finished analysing your space. Continue to Select items to check the detected items.</span>
               </p>
             )}
             {hasAnalysis && <ReorganiseAnalysisSummary analysis={flow.analysis} />}
@@ -141,7 +141,7 @@ export default function ReorganisePage() {
                 enableBackToTop
               />
               <WizardNav
-                backLabel="Back to Analyse room"
+                backLabel="Back to Analyse space"
                 onBack={() => goToStep("analyse")}
                 backDisabled={wizard.navigationLocked}
                 continueLabel="Continue to Tidy plan"

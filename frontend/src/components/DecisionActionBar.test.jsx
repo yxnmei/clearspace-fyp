@@ -7,7 +7,7 @@ function renderBar(overrides = {}) {
   const props = {
     totalCount: 12,
     counts: { keep: 3, sell: 4, donate: 3, discard: 2 },
-    backLabel: "Back to Analyse room",
+    backLabel: "Back to Analyse space",
     onBack: vi.fn(),
     continueLabel: "Continue to Confirm choices",
     onContinue: vi.fn(),
@@ -27,7 +27,7 @@ describe("describeContinueBlocker", () => {
 
   test("explains every existing blocker, in the order they take precedence", () => {
     expect(describeContinueBlocker({ navigationLocked: true, unresolvedCount: 3 })).toMatch(/wait for the current action to finish/i);
-    expect(describeContinueBlocker({ hasAnalysis: false, unresolvedCount: 3 })).toMatch(/room analysis is unavailable/i);
+    expect(describeContinueBlocker({ hasAnalysis: false, unresolvedCount: 3 })).toMatch(/space analysis is unavailable/i);
     expect(describeContinueBlocker({ correctingItemId: "item_003", unresolvedCount: 3 })).toMatch(/label correction is in progress/i);
     expect(describeContinueBlocker({ unresolvedCount: 1 })).toBe("1 item still needs a decision.");
     expect(describeContinueBlocker({ unresolvedCount: 3 })).toBe("3 items still need a decision.");
@@ -47,7 +47,7 @@ describe("DecisionActionBar", () => {
       expect(term.parentElement.className).toMatch(new RegExp(`text-decision-${label.toLowerCase()}`));
     }
     expect(within(bar).getAllByRole("button")).toHaveLength(2);
-    expect(within(bar).getByRole("button", { name: /back to analyse room/i })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /back to analyse space/i })).toBeInTheDocument();
     expect(within(bar).getByRole("button", { name: /continue to confirm choices/i })).toBeInTheDocument();
     expect(bar.textContent).not.toMatch(/%/);
   });
@@ -72,7 +72,7 @@ describe("DecisionActionBar", () => {
   test("wires Back and Continue and honours their disabled flags", async () => {
     const user = userEvent.setup();
     const { props } = renderBar();
-    await user.click(screen.getByRole("button", { name: /back to analyse room/i }));
+    await user.click(screen.getByRole("button", { name: /back to analyse space/i }));
     await user.click(screen.getByRole("button", { name: /continue to confirm choices/i }));
     expect(props.onBack).toHaveBeenCalledTimes(1);
     expect(props.onContinue).toHaveBeenCalledTimes(1);
@@ -90,13 +90,13 @@ describe("DecisionActionBar", () => {
     expect(reason).toHaveTextContent("1 item still needs a decision.");
     expect(cont).toHaveAttribute("aria-describedby", reason.id);
     // Back stays usable while only Continue is blocked
-    expect(screen.getByRole("button", { name: /back to analyse room/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /back to analyse space/i })).toBeEnabled();
   });
 
   test("a disabled Back does not fire", async () => {
     const user = userEvent.setup();
     const { props } = renderBar({ backDisabled: true });
-    const back = screen.getByRole("button", { name: /back to analyse room/i });
+    const back = screen.getByRole("button", { name: /back to analyse space/i });
     expect(back).toBeDisabled();
     await user.click(back);
     expect(props.onBack).not.toHaveBeenCalled();
@@ -122,7 +122,7 @@ describe("DecisionActionBar", () => {
     expect(row.className).toMatch(/\bsm:flex-row\b/);
     expect(row.className).toMatch(/\bsm:justify-between\b/);
 
-    for (const name of [/back to analyse room/i, /continue to confirm choices/i]) {
+    for (const name of [/back to analyse space/i, /continue to confirm choices/i]) {
       const button = screen.getByRole("button", { name });
       expect(button.className).toMatch(/\bw-full\b/);
       expect(button.className).toMatch(/\bsm:w-auto\b/);

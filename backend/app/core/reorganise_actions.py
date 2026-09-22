@@ -340,11 +340,11 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
       3. at most ONE cleanup action, for the busiest area that still
          holds items no group covered (an item already told where it
          belongs is never narrated again);
-      4. a closing whole-room check naming the room type, only while
+      4. a closing whole-space check naming the detected scene type, only while
          there is capacity: it never displaces an evidence-backed step.
     Every title is a complete imperative and every instruction one
     sentence that adds to it, naming only detected labels, real counts,
-    coarse photo areas and the room type; positions and full label
+    coarse photo areas and the scene type; positions and full label
     inventories are left to the structured data, never narrated.
     """
     _validate_fallback_inputs(selected_items, scene_label)
@@ -390,7 +390,7 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
     # 4. The closing check, only if it fits.
     drafts.append(
         (
-            "Do a final room check",
+            "Do a final space check",
             f"Walk through the {shorten_for_display(scene_label.strip(), 40)} once more and make sure every selected "
             "item has a clear place.",
         )

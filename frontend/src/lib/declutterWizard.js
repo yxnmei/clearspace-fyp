@@ -37,20 +37,20 @@ function describeViewedStep({
       }
       if (hasAnalysis) {
         return {
-          statusText: "Your analysed room is still here.",
+          statusText: "Your analysed space is still here.",
           nextActionText: "Submit a new photo to start over, or return to Decide items.",
           processing: false,
         };
       }
       return {
         statusText: "Ready when you are.",
-        nextActionText: "Add a room photo, then press Analyse room.",
+        nextActionText: "Add a space photo, then press Analyse space.",
         processing: false,
       };
     case "analyse":
       if (status === "uploading") {
         return {
-          statusText: "Analysing your room, scene, objects and item reasoning.",
+          statusText: "Analysing your space, scene, objects and item reasoning.",
           nextActionText: "This can take up to two minutes, no action needed yet.",
           processing: true,
         };
@@ -71,7 +71,7 @@ function describeViewedStep({
       }
       return {
         statusText: "Ready when you are.",
-        nextActionText: "Add a room photo, then press Analyse room.",
+        nextActionText: "Add a space photo, then press Analyse space.",
         processing: false,
       };
     case "review":
@@ -278,7 +278,7 @@ export function deriveDeclutterWizard(input = {}) {
       canContinue = confirmationStatus === "confirmed" && hasConfirmation;
       continueTargetId = "listings";
     }
-    // Upload's forward action is the form's own "Analyse room" submit.
+    // Upload's forward action is the form's own "Analyse space" submit.
     // Listings is the final step.
   }
   const canGoBack = !navigationLocked && backTargetId !== null;

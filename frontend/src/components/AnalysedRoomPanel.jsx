@@ -53,7 +53,7 @@ export default function AnalysedRoomPanel({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">Analysed room</h3>
+        <h3 className="text-sm font-semibold text-foreground">Analysed space</h3>
         <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"
@@ -69,7 +69,7 @@ export default function AnalysedRoomPanel({
         <div className="relative overflow-hidden rounded-card border border-border bg-surface-muted">
           <img
             src={imageUrl}
-            alt="The room photo you uploaded, with detected item outlines overlaid"
+            alt="The space photo you uploaded, with detected item outlines overlaid"
             className="block h-auto w-full"
           />
           {visibleItems.map((item) => {

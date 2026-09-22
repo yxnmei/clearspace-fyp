@@ -22,7 +22,7 @@ describe("DECLUTTER_WIZARD_STEPS", () => {
     ]);
     expect(DECLUTTER_WIZARD_STEPS.map((s) => s.label)).toEqual([
       "Upload photo",
-      "Analyse room",
+      "Analyse space",
       "Decide items",
       "Confirm choices",
       "Listing drafts",

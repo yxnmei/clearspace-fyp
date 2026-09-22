@@ -32,7 +32,7 @@ export function describeContinueBlocker({
   unresolvedCount = 0,
 } = {}) {
   if (navigationLocked) return "Please wait for the current action to finish.";
-  if (!hasAnalysis) return "Your room analysis is unavailable. Go back and analyse the room again.";
+  if (!hasAnalysis) return "Your space analysis is unavailable. Go back and analyse the space again.";
   if (correctingItemId !== null) return "A label correction is in progress. Continue becomes available once it finishes.";
   if (unresolvedCount > 0) {
     return unresolvedCount === 1

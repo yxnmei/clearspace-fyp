@@ -67,7 +67,7 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
         Visual preview
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        An AI-generated impression of a tidier version of your room. It may not preserve every object or its exact
+        An AI-generated impression of a tidier version of your space. It may not preserve every object or its exact
         placement.
       </p>
       {/* Side by side from sm; back to a stack in the narrower lg column
@@ -78,7 +78,7 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
           {originalImageUrl ? (
             <img
               src={originalImageUrl}
-              alt="The original room photo you uploaded"
+              alt="The original space photo you uploaded"
               className="w-full rounded-card border border-border bg-surface-muted object-contain"
             />
           ) : (
@@ -91,7 +91,7 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
           <figcaption className="mb-1 text-sm font-medium text-foreground">AI preview</figcaption>
           <img
             src={`data:${image.image_media_type};base64,${image.image}`}
-            alt="AI-generated impression of a tidier version of the room"
+            alt="AI-generated impression of a tidier version of the space"
             className="w-full rounded-card border border-border bg-surface-muted object-contain"
           />
         </figure>
@@ -116,7 +116,7 @@ export default function ReorganiseResult({ generateResult, originalImageUrl, onS
           Your tidy plan
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          Work through the checklist at your own pace. The visual preview is an impression of a tidier room, not a
+          Work through the checklist at your own pace. The visual preview is an impression of a tidier space, not a
           precise placement plan.
         </p>
       </header>

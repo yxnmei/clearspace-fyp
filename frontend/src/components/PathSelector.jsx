@@ -23,7 +23,7 @@ const WORKFLOWS = [
     title: "Declutter",
     iconSrc: declutterIcon,
     description:
-      "Get AI Keep, Sell, Donate and Discard suggestions for what's in your room, then review, change and confirm every decision yourself.",
+      "Get AI Keep, Sell, Donate and Discard suggestions for what's in your space, then review, change and confirm every decision yourself.",
     footnote: "Best for quick item decisions",
   },
   {
@@ -56,7 +56,7 @@ export default function PathSelector({ onChoose }) {
           Let's get your space working for you
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-          Choose a workflow to declutter a room, reorganise it, or do both in one guided pass.
+          Choose a workflow to declutter your space, reorganise it, or do both in one guided pass.
         </p>
       </div>
 

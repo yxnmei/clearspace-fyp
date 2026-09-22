@@ -198,8 +198,8 @@ function currentStep() {
 
 async function reachReview(user, decisions = [{ itemId: "item_001", decision: "keep" }]) {
   client.uploadImage.mockResolvedValueOnce(makeBothUploadResponse({ decisions }));
-  await user.upload(screen.getByLabelText(/room photo/i), makeFile());
-  await user.click(screen.getByRole("button", { name: /^analyse room$/i }));
+  await user.upload(screen.getByLabelText(/space photo/i), makeFile());
+  await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
   await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
   expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
@@ -246,7 +246,7 @@ describe("BothPage screen-by-screen flow", () => {
     render(<BothPage />);
     expect(within(stepper()).getAllByRole("listitem").map((item) => item.textContent.replace(/\d+/g, "").trim())).toEqual([
       "Upload photo",
-      "Analyse room",
+      "Analyse space",
       "Decide items",
       "Confirm choices",
       "Results",
@@ -265,7 +265,7 @@ describe("BothPage screen-by-screen flow", () => {
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
     await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
-    expect(screen.getByLabelText(/room photo/i)).not.toBeVisible();
+    expect(screen.getByLabelText(/space photo/i)).not.toBeVisible();
   });
 
   test("zero Keep still reaches the final screen for confirmed Sell listings", async () => {
@@ -304,7 +304,7 @@ describe("BothPage screen-by-screen flow", () => {
 
     await user.click(screen.getByRole("button", { name: /start over/i }));
     expect(currentStep()).toBe("Upload photo");
-    expect(screen.getByLabelText(/room photo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/space photo/i)).toBeInTheDocument();
     expect(URL.revokeObjectURL).toHaveBeenCalled();
   });
 });
@@ -516,7 +516,7 @@ describe("BothPage Decide items action bar", () => {
       { itemId: "item_003", decision: "keep" },
     ]);
 
-    expect(screen.getAllByRole("button", { name: /back to analyse room/i })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /back to analyse space/i })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /continue to confirm choices/i })).toHaveLength(1);
     expect(bar().className).toMatch(/sticky/);
     expect(within(bar()).getByText("3 items")).toBeInTheDocument();

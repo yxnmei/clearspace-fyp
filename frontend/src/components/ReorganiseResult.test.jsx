@@ -190,7 +190,7 @@ describe("ReorganiseResult, interactive checklist", () => {
             { priority: 2, title: "Group the toy items", instruction: "Bring the toy items together in one place." },
             { priority: 3, title: "Group the cup items", instruction: "Bring the cup items together in one place." },
             { priority: 4, title: "Tidy loose items on the left side", instruction: "Straighten loose items and clear the surrounding space." },
-            { priority: 5, title: "Do a final room check", instruction: "Look over the bedroom and make sure every selected item has a clear place before you finish." },
+            { priority: 5, title: "Do a final space check", instruction: "Look over the bedroom and make sure every selected item has a clear place before you finish." },
           ],
         }),
       })
@@ -205,7 +205,7 @@ describe("ReorganiseResult, interactive checklist", () => {
       "Group the toy items",
       "Group the cup items",
       "Tidy loose items on the left side",
-      "Do a final room check",
+      "Do a final space check",
     ];
     rows.forEach((row, index) => {
       expect(within(row).getByText(titles[index])).toBeInTheDocument();
@@ -513,7 +513,7 @@ describe("ReorganiseResult, generated image", () => {
     const section = screen.getByRole("region", { name: /^visual preview$/i });
     expect(within(section).getByText("Before")).toBeInTheDocument();
     expect(within(section).getByText("AI preview")).toBeInTheDocument();
-    const before = screen.getByRole("img", { name: /original room photo you uploaded/i });
+    const before = screen.getByRole("img", { name: /original space photo you uploaded/i });
     const after = screen.getByRole("img", { name: /impression of a tidier version/i });
     expect(before).toHaveAttribute("src", "blob:mock-original");
     expect(after).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
