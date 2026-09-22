@@ -93,9 +93,9 @@ describe("DeclutterReview", () => {
     });
     render(<DeclutterReview {...props} />);
 
-    expect(ddFor("Scene")).toMatch(/bedroom/i);
-    expect(ddFor("Candidate detections")).toBe("3");
-    expect(ddFor("Candidates sent for suggestions")).toBe("2");
+    expect(ddFor("Space type")).toBe("bedroom");
+    expect(ddFor("Items found")).toBe("3");
+    expect(ddFor("Ready to review")).toBe("2");
   });
 
   test("shows the detection-limitation guidance near the analysed image", () => {

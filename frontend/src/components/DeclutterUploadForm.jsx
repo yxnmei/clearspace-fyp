@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import RoomPhotoField from "./RoomPhotoField";
 import VoiceContextInput from "./VoiceContextInput";
 import { Button } from "./ui/button";
@@ -9,9 +10,12 @@ import { Button } from "./ui/button";
 // real state). onSubmit is the only thing this component calls out to;
 // it never talks to the API directly.
 //
-// The room-photo presentation is delegated to the shared, stateless
+// The space-photo presentation is delegated to the shared, stateless
 // RoomPhotoField; file state, the object-URL lifecycle and the submit
-// guards stay here.
+// guards stay here. The same structure is used by ReorganiseUploadForm
+// (heading, copy, photo left / optional context right from lg, one
+// primary action), which stays a separate component because its file
+// validation and copy differ.
 export default function DeclutterUploadForm({ status, error, onSubmit }) {
   const [file, setFile] = useState(null);
   const [context, setContext] = useState("");
@@ -23,6 +27,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   const previewUrlRef = useRef(null);
 
   const isUploading = status === "uploading";
+  const showError = status === "error" && Boolean(error);
 
   function handleFileChange(event) {
     const selected = event.target.files?.[0] ?? null;
@@ -59,15 +64,23 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-card border border-border bg-surface shadow-card">
+    <form
+      onSubmit={handleSubmit}
+      aria-labelledby="declutter-upload-heading"
+      className="rounded-card border border-border bg-surface shadow-card"
+    >
       <div className="border-b border-border p-5 sm:p-6">
-        <h2 className="text-lg font-semibold text-foreground">1. Upload a photo of your space</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h2 id="declutter-upload-heading" className="text-title font-semibold tracking-tight text-foreground">
+          Upload a photo of your space
+        </h2>
+        <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           Upload one clear photo of your space, with most items in frame. You can also provide optional context to
           help the AI better understand your space.
         </p>
       </div>
 
+      {/* Photo first (the primary task), optional context second; a
+          balanced two-column composition from lg, one column below. */}
       <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
         <RoomPhotoField
           id="declutter-image"
@@ -85,14 +98,18 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
             <label htmlFor="declutter-context" className="block text-sm font-medium text-foreground">
               Context for the AI (optional)
             </label>
+            <p id="declutter-context-help" className="mt-1 text-xs text-muted-foreground">
+              Anything that helps the AI understand your space or what you want from it.
+            </p>
             <textarea
               id="declutter-context"
               value={context}
               onChange={(event) => setContext(event.target.value)}
               disabled={isUploading}
               rows={3}
+              aria-describedby="declutter-context-help"
               placeholder="e.g. I'm downsizing before a move and want to be decisive."
-              className="mt-1 block w-full rounded-control border border-input bg-surface p-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+              className="mt-2 block w-full rounded-control border border-input bg-surface p-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
             />
           </div>
 
@@ -109,20 +126,29 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
       </div>
 
       <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
-        <Button type="submit" disabled={!file || isUploading || voiceBusy} className="self-start">
+        <Button
+          type="submit"
+          disabled={!file || isUploading || voiceBusy}
+          aria-busy={isUploading || undefined}
+          aria-describedby={showError ? "declutter-upload-error" : undefined}
+          className="min-h-11 w-full sm:min-h-0 sm:w-auto sm:self-start"
+        >
+          {isUploading && <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />}
           {isUploading ? "Analysing…" : "Analyse space"}
         </Button>
 
         {isUploading && (
-          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span aria-hidden="true" className="h-2.5 w-2.5 animate-pulse rounded-pill bg-primary" />
-            Analysing your space. Scene classification, object detection and item reasoning may take up to two
-            minutes on this computer.
+          <p role="status" className="text-sm text-muted-foreground">
+            Analysing your space. This may take up to two minutes.
           </p>
         )}
 
-        {status === "error" && error && (
-          <p role="alert" className="rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error">
+        {showError && (
+          <p
+            id="declutter-upload-error"
+            role="alert"
+            className="rounded-control border border-error/30 bg-error/10 p-3 text-sm text-error"
+          >
             {error} You can try again. Your selected photo and context are still here.
           </p>
         )}

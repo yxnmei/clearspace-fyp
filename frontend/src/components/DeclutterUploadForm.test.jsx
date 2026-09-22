@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import DeclutterUploadForm from "./DeclutterUploadForm";
@@ -223,7 +223,7 @@ describe("DeclutterUploadForm, space photo presentation (redesign)", () => {
   test("uses inclusive space wording in the upload heading and guidance", () => {
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
 
-    expect(screen.getByRole("heading", { name: "1. Upload a photo of your space" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Upload a photo of your space" })).toBeInTheDocument();
     expect(
       screen.getByText(
         "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
@@ -275,7 +275,7 @@ describe("DeclutterUploadForm, space photo presentation (redesign)", () => {
 
     const img = screen.getByRole("img");
     expect(img).toHaveAccessibleName(/preview of the space photo you selected to declutter/i);
-    expect(img.className).toMatch(/max-h-64/);
+    expect(img.className).toMatch(/max-h-80/);
     expect(screen.queryByText(/no photo selected yet/i)).not.toBeInTheDocument();
   });
 
@@ -297,5 +297,136 @@ describe("DeclutterUploadForm, space photo presentation (redesign)", () => {
   test("the submit button is a real submit control, not a plain button", () => {
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
     expect(screen.getByRole("button", { name: /analyse space/i })).toHaveAttribute("type", "submit");
+  });
+});
+
+describe("DeclutterUploadForm, shared Upload photo composition (redesign phase)", () => {
+  const button = () => screen.getByRole("button", { name: /analys/i });
+  const classes = (el) => el.className.split(/\s+/).filter(Boolean);
+
+  test("the form is named by the exact shared heading and carries the exact supporting copy, with no step number", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    const form = screen.getByRole("form", { name: "Upload a photo of your space" });
+    expect(within(form).getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(within(form).getByRole("heading", { level: 2 })).toHaveTextContent(/^Upload a photo of your space$/);
+    expect(
+      within(form).getByText(
+        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+      )
+    ).toBeInTheDocument();
+    expect(form.textContent).not.toMatch(/^\s*1\./);
+    expect(form.textContent).not.toMatch(/\broom\b|drag|drop/i);
+  });
+
+  test("empty state: calm placeholder, Choose photo, format help text, no filename slot, no preview", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    expect(screen.getByText(/no photo selected yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/choose photo/i)).toBeInTheDocument();
+    expect(screen.getByText("JPG or PNG of one indoor space, photographed so most items are visible.")).toBeInTheDocument();
+    expect(screen.queryByText("No photo selected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/space photo/i).getAttribute("aria-describedby")).toContain(
+      screen.getByText(/photographed so most items are visible/i).id
+    );
+  });
+
+  test("selected state: emphasised preview with alt text, Replace photo, the filename in a truncating slot", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("a-really-long-name-for-a-living-space-photo-taken-on-my-phone.jpg"));
+    const img = screen.getByRole("img", { name: "Preview of the space photo you selected to declutter" });
+    expect(img.parentElement.className).toMatch(/border-primary/);
+    expect(screen.getByText(/replace photo/i)).toBeInTheDocument();
+    expect(screen.queryByText(/choose photo/i)).not.toBeInTheDocument();
+    const name = screen.getByText("a-really-long-name-for-a-living-space-photo-taken-on-my-phone.jpg");
+    expect(name.className).toMatch(/truncate/);
+    expect(screen.queryByText(/no photo selected yet/i)).not.toBeInTheDocument();
+  });
+
+  test("the primary action is full width with a 44px target on phones and natural width from sm", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    const cls = classes(button());
+    for (const c of ["min-h-11", "w-full", "sm:min-h-0", "sm:w-auto"]) expect(cls).toContain(c);
+  });
+
+  test("disabled without a file, enabled with a valid file, and it stays the only primary control", async () => {
+    const user = userEvent.setup();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    expect(button()).toBeDisabled();
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile());
+    expect(button()).toBeEnabled();
+    expect(button()).toHaveTextContent("Analyse space");
+    expect(screen.getAllByRole("button", { name: /analyse space/i })).toHaveLength(1);
+  });
+
+  test("uploading: 'Analysing…' label, aria-busy, disabled, and a jargon-free status", () => {
+    render(<DeclutterUploadForm status="uploading" error={null} onSubmit={vi.fn()} />);
+    expect(button()).toHaveTextContent("Analysing…");
+    expect(button()).toBeDisabled();
+    expect(button()).toHaveAttribute("aria-busy", "true");
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Analysing your space. This may take up to two minutes.");
+    expect(status.textContent).not.toMatch(/classification|detection|reasoning|computer|\broom\b/i);
+    expect(screen.getByLabelText(/space photo/i)).toBeDisabled();
+    expect(screen.getByLabelText(/context for the ai/i)).toBeDisabled();
+  });
+
+  test("context is trimmed, and blank context becomes null", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={onSubmit} />);
+    const file = makeFile();
+    await user.upload(screen.getByLabelText(/space photo/i), file);
+    await user.type(screen.getByLabelText(/context for the ai/i), "   keep it minimal   ");
+    await user.click(button());
+    expect(onSubmit).toHaveBeenLastCalledWith({ file, context: "keep it minimal" });
+
+    await user.clear(screen.getByLabelText(/context for the ai/i));
+    await user.type(screen.getByLabelText(/context for the ai/i), "   ");
+    await user.click(button());
+    expect(onSubmit).toHaveBeenLastCalledWith({ file, context: null });
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  test("the context textarea is labelled and described by its optional hint", () => {
+    render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    const textarea = screen.getByLabelText("Context for the AI (optional)");
+    expect(textarea).toHaveAccessibleDescription(/anything that helps the ai understand your space/i);
+  });
+
+  test("a request failure is an inline alert associated with the action, and the photo and context survive", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile("keep-me.jpg"));
+    await user.type(screen.getByLabelText(/context for the ai/i), "still here");
+
+    rerender(<DeclutterUploadForm status="error" error="Declutter upload failed." onSubmit={vi.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Declutter upload failed. You can try again. Your selected photo and context are still here.");
+    expect(button()).toHaveAttribute("aria-describedby", alert.id);
+    expect(button()).toBeEnabled();
+    expect(screen.getByText("keep-me.jpg")).toBeInTheDocument();
+    expect(screen.getByLabelText(/context for the ai/i)).toHaveValue("still here");
+    expect(screen.getByRole("img")).toBeInTheDocument();
+  });
+
+  test("unmounting with a selected photo revokes its object URL exactly once", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile());
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-preview-url");
+  });
+
+  test("layout: photo column first, optional context second, one column below lg", () => {
+    const { container } = render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
+    const grid = container.querySelector(".grid");
+    expect(grid.className).toMatch(/\blg:grid-cols-2\b/);
+    expect(grid.className.split(/\s+/)).not.toContain("grid-cols-2");
+    expect(grid.children[0]).toContainElement(screen.getByLabelText(/space photo/i));
+    expect(grid.children[1]).toContainElement(screen.getByLabelText(/context for the ai/i));
+    expect(container.innerHTML).not.toMatch(/overflow-x-auto|w-screen/);
   });
 });

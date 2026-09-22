@@ -41,7 +41,7 @@ describe("App, path selection", () => {
     const user = userEvent.setup();
     render(<App />);
     await chooseWorkflow(user, /declutter/i);
-    expect(screen.getByText(/1\. upload a photo of your space/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
     expect(screen.getByText(/keep \/ sell \/ donate \/ discard/i)).toBeInTheDocument();
   });
 
@@ -50,7 +50,7 @@ describe("App, path selection", () => {
     render(<App />);
     await chooseWorkflow(user, /reorganise/i);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalled());
-    expect(screen.getByText(/1\. upload a photo of your space/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
     expect(screen.getByText(/png or jpeg of one indoor space/i)).toBeInTheDocument();
   });
 
@@ -59,7 +59,7 @@ describe("App, path selection", () => {
     render(<App />);
     await chooseWorkflow(user, /^both$/i);
     await waitFor(() => expect(client.getImageGenHealth).toHaveBeenCalled());
-    expect(screen.getByText(/1\. upload a photo of your space/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
     expect(client.uploadImage).not.toHaveBeenCalled(); // mounting alone triggers no upload
   });
 
@@ -68,7 +68,7 @@ describe("App, path selection", () => {
     render(<App />);
     const continueButton = screen.getByRole("button", { name: /continue/i });
     await user.click(continueButton); // disabled, nothing should happen
-    expect(screen.queryByText(/1\. upload a photo of your space/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^upload a photo of your space$/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: /declutter/i }));
     expect(continueButton).toBeEnabled();
@@ -124,7 +124,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     const user = userEvent.setup();
     render(<App />);
     await chooseWorkflow(user, /^both$/i);
-    expect(screen.getByText(/1\. upload a photo of your space/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
 
@@ -136,7 +136,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     const user = userEvent.setup();
     render(<App />);
     await chooseWorkflow(user, /reorganise/i);
-    expect(screen.getByText(/1\. upload a photo of your space/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
 

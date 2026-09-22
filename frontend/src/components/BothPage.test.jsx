@@ -200,7 +200,7 @@ async function reachReview(user, decisions = [{ itemId: "item_001", decision: "k
   client.uploadImage.mockResolvedValueOnce(makeBothUploadResponse({ decisions }));
   await user.upload(screen.getByLabelText(/space photo/i), makeFile());
   await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
-  await waitFor(() => expect(screen.getByRole("heading", { name: /analysis complete/i })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "What we found" })).toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: /continue to decide items/i }));
   expect(screen.getByRole("heading", { name: /review your declutter decisions/i })).toBeInTheDocument();
 }
@@ -880,5 +880,148 @@ describe("BothPage Results composition", () => {
     expect(stack.innerHTML).not.toMatch(/overflow-x-auto|w-screen/);
     // the layout containers never force a single line (the Button primitive alone is nowrap by design)
     for (const el of stack.querySelectorAll("section, div, ol, ul, p")) expect(el.className).not.toMatch(/whitespace-nowrap/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Upload photo + Analyse space screens (shared redesign phase)
+// ---------------------------------------------------------------------------
+
+describe("BothPage Upload photo and Analyse space screens", () => {
+  const analyseHeading = (name) => screen.getByRole("heading", { level: 2, name });
+  const whatWeFound = () => screen.getByRole("heading", { level: 2, name: "What we found" });
+  const visibleH2s = () => screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent.trim());
+  const JARGON = /scene classification|object detection|item reasoning|candidate|confidence|\d+%|analysis time|this computer|\broom\b/i;
+
+  async function submitPhoto(user) {
+    await user.upload(screen.getByLabelText(/space photo/i), makeFile());
+    await user.type(screen.getByLabelText(/context for the ai/i), "be decisive");
+    await user.click(screen.getByRole("button", { name: /^analyse space$/i }));
+  }
+
+  test("Upload photo uses the shared heading and copy plus Both's own outcome intro, and never says room", () => {
+    render(<BothPage />);
+    expect(screen.getByRole("form", { name: "Upload a photo of your space" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText(/then create a tidy plan and marketplace listing drafts from your confirmed choices, in either order/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reorganisation checklist/i)).not.toBeInTheDocument();
+    const upload = screen.getByRole("form", { name: "Upload a photo of your space" }).parentElement;
+    expect(upload.textContent).not.toMatch(/\broom\b|^\s*1\./i);
+    expect(client.uploadImage).not.toHaveBeenCalled();
+  });
+
+  test("analysing: one heading, one calm jargon-free status with a spinner, locked controls, exactly one request", async () => {
+    const user = userEvent.setup();
+    let resolveUpload;
+    client.uploadImage.mockImplementationOnce(() => new Promise((r) => { resolveUpload = () => r(makeBothUploadResponse()); }));
+    render(<BothPage />);
+    await submitPhoto(user);
+
+    await waitFor(() => expect(currentStep()).toBe("Analyse space"));
+    expect(analyseHeading("Analysing your space")).toBeInTheDocument();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Finding items and preparing your next step. This may take up to two minutes.");
+    expect(status.querySelector("svg")).not.toBeNull();
+    expect(status.textContent).not.toMatch(JARGON);
+    expect(screen.queryByRole("heading", { name: /what we found/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /back to upload photo/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeDisabled();
+    expect(client.uploadImage).toHaveBeenCalledTimes(1);
+    resolveUpload();
+    await waitFor(() => expect(whatWeFound()).toBeInTheDocument());
+  });
+
+  test("error: Analysis unsuccessful with one alert pointing back to the preserved photo and context, no auto retry", async () => {
+    const user = userEvent.setup();
+    client.uploadImage.mockRejectedValueOnce(new Error("The analysis service is unavailable."));
+    render(<BothPage />);
+    await submitPhoto(user);
+
+    await waitFor(() => expect(analyseHeading("Analysis unsuccessful")).toBeInTheDocument());
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent(/the analysis service is unavailable/i);
+    expect(alerts[0]).toHaveTextContent(/your selected photo and context are still on upload photo/i);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /back to upload photo/i }));
+    expect(currentStep()).toBe("Upload photo");
+    expect(screen.getByText("room.png")).toBeInTheDocument();
+    expect(screen.getByText(/replace photo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/context for the ai/i)).toHaveValue("be decisive");
+    expect(screen.getByRole("button", { name: /^analyse space$/i })).toBeEnabled();
+    expect(client.uploadImage).toHaveBeenCalledTimes(1);
+  });
+
+  test("success: What we found is the single visible h2, with no second heading or banner, and Decide items stats", async () => {
+    const user = userEvent.setup();
+    client.uploadImage.mockResolvedValueOnce(
+      makeBothUploadResponse({
+        decisions: [
+          { itemId: "item_001", decision: "keep" },
+          { itemId: "item_002", decision: "sell" },
+        ],
+      })
+    );
+    render(<BothPage />);
+    await submitPhoto(user);
+
+    await waitFor(() => expect(whatWeFound()).toBeInTheDocument());
+    // the success state carries no page heading or banner of its own: the tracker's
+    // live status line says it once, and What we found is the only visible h2
+    expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/your space has been analysed/i)).not.toBeInTheDocument();
+    expect(visibleH2s()).toEqual(["What we found"]);
+    expect(whatWeFound().closest("section").parentElement.querySelector('[role="status"]')).toBeNull();
+    expect(whatWeFound().closest("section").parentElement.querySelector(".bg-success\\/10")).toBeNull();
+    expect(within(stepper()).getByText("Analysis complete.")).toBeInTheDocument();
+    expect(within(stepper()).getByText("Continue to Decide items to check each item.")).toBeInTheDocument();
+    expect(within(stepper()).getByText("Analysis complete.").closest("[aria-live]")).not.toBeNull();
+    const summary = screen.getByRole("region", { name: "What we found" });
+    expect(Array.from(summary.querySelectorAll("dt")).map((dt) => dt.textContent)).toEqual(["Space type", "Items found", "Ready to review"]);
+    expect(Array.from(summary.querySelectorAll("dd")).map((dd) => dd.textContent)).toEqual(["bedroom", "2", "2"]);
+    expect(summary.textContent).not.toMatch(JARGON);
+    expect(screen.queryByText(/extra review/i)).not.toBeInTheDocument();
+    expect(whatWeFound().closest("section").parentElement.textContent).not.toMatch(/\broom\b/i);
+    expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeEnabled();
+    expect(currentStep()).toBe("Analyse space");
+    expect(client.confirmDecisions).not.toHaveBeenCalled();
+  });
+
+  test("a warning in the analysis shows one calm sentence, never the code", async () => {
+    const user = userEvent.setup();
+    const response = makeBothUploadResponse();
+    response.analysis.warnings = [{ code: "low_confidence_scene", message: "internal detail" }];
+    client.uploadImage.mockResolvedValueOnce(response);
+    render(<BothPage />);
+    await submitPhoto(user);
+    await waitFor(() => expect(whatWeFound()).toBeInTheDocument());
+    expect(screen.getByText("Some results may need extra review.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What we found" }).textContent).not.toMatch(/low_confidence_scene|internal detail/);
+  });
+
+  test("Back to Upload photo keeps the selected photo and context, and forward again does not re-analyse", async () => {
+    const user = userEvent.setup();
+    client.uploadImage.mockResolvedValueOnce(makeBothUploadResponse());
+    render(<BothPage />);
+    await submitPhoto(user);
+    await waitFor(() => expect(whatWeFound()).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /back to upload photo/i }));
+    expect(currentStep()).toBe("Upload photo");
+    expect(screen.getByText("room.png")).toBeInTheDocument();
+    expect(screen.getByLabelText(/context for the ai/i)).toHaveValue("be decisive");
+
+    await user.click(within(stepper()).getByRole("button", { name: /go to analyse space/i }));
+    expect(currentStep()).toBe("Analyse space");
+    expect(whatWeFound()).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /analysis complete/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What we found" })).toBeInTheDocument();
+    expect(client.uploadImage).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Check, Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import { useDeclutterFlow } from "../hooks/useDeclutterFlow";
 import { useObjectUrl } from "../hooks/useObjectUrl";
 import { deriveDeclutterWizard } from "../lib/declutterWizard";
@@ -7,7 +7,6 @@ import { deriveEligibleSellItemIds } from "../lib/listingDrafts";
 import {
   partitionReviewItems,
   deriveReviewCounts,
-  totalStageDurationMs,
   isConfirmBlocked,
 } from "../lib/declutterReview";
 import WorkflowProgress from "./WorkflowProgress";
@@ -77,21 +76,18 @@ export default function DeclutterPage() {
   const [confirmAcknowledged, setConfirmAcknowledged] = useState(false);
 
   const hasAnalysis = Boolean(analysis && declutter);
-  const { resolvedItems, unresolvedItems, contextualItems } = partitionReviewItems(reviewItems);
+  const { resolvedItems, unresolvedItems } = partitionReviewItems(reviewItems);
   const { counts, changedCount, excludedCount } = deriveReviewCounts(resolvedItems);
   const unresolvedCount = unresolvedItems.length;
   const decideItemCount = resolvedItems.length + unresolvedCount;
-  const totalDurationMs = totalStageDurationMs(analysis);
   const confirmDisabled = isConfirmBlocked({ confirmationStatus, declutter, unresolvedCount, correctingItemId });
 
-  // The Analyse view heading tracks the real request state, never a
-  // fixed "in progress" phrase.
-  const analyseHeading =
-    status === "error"
-      ? "Analysis unsuccessful"
-      : status === "ready" && hasAnalysis
-        ? "Analysis complete"
-        : "Analysing your space";
+  // The Analyse view's own heading exists only while the request is
+  // running or has failed; a successful analysis is headed by the
+  // summary's "What we found" instead (the tracker already announces
+  // completion), so the page never shows the same state twice.
+  const analyseHeading = status === "error" ? "Analysis unsuccessful" : "Analysing your space";
+  const showAnalyseHeading = !(status === "ready" && hasAnalysis);
 
   // Eligibility is derived the SAME way ListingsView derives it (both
   // consume lib/listingDrafts.js's deriveEligibleSellItemIds), strictly
@@ -177,16 +173,19 @@ export default function DeclutterPage() {
         {/* ---------- Analyse ---------- */}
         <div hidden={viewed !== "analyse"}>
           <section className="space-y-4">
-            <h2 className="text-title font-semibold tracking-tight text-foreground">{analyseHeading}</h2>
+            {showAnalyseHeading && (
+              <h2 className="text-title font-semibold tracking-tight text-foreground">{analyseHeading}</h2>
+            )}
 
+            {/* One hierarchy per state: the heading above says which
+                state this is, so each panel is a single calm line. */}
             {status === "uploading" && (
               <p
                 role="status"
                 className="flex items-center gap-2 rounded-card border border-border bg-surface-muted p-4 text-sm text-foreground"
               >
-                <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin text-primary" />
-                Scene classification, object detection and item reasoning are running. This can take up to two
-                minutes on this computer. The tracker stays locked until the analysis finishes.
+                <Loader2 aria-hidden="true" width={16} height={16} className="shrink-0 animate-spin text-primary" />
+                Finding items and preparing your next step. This may take up to two minutes.
               </p>
             )}
 
@@ -197,32 +196,17 @@ export default function DeclutterPage() {
               >
                 <TriangleAlert aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0" />
                 <span>
-                  {error} Your photo and context are still on the Upload photo step. Go back to Upload photo and try again.
+                  {error} Your selected photo and context are still on Upload photo. Go back to Upload photo and try
+                  again.
                 </span>
               </p>
             )}
 
-            {status === "ready" && hasAnalysis && (
-              <p
-                role="status"
-                className="flex items-start gap-2 rounded-card border border-success/30 bg-success/10 p-4 text-sm text-foreground"
-              >
-                <Check aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-success" />
-                <span>
-                  ClearSpace finished analysing your space. Continue to Decide items to check each detected item and
-                  the action it suggests.
-                </span>
-              </p>
-            )}
-
-            {hasAnalysis && (
-              <DeclutterAnalysisSummary
-                analysis={analysis}
-                declutter={declutter}
-                contextualCount={contextualItems.length}
-                totalDurationMs={totalDurationMs}
-              />
-            )}
+            {/* Success renders no heading or banner of its own: the tracker's
+                live status line already says "Analysis complete." and names
+                the next action, and the summary below supplies the screen's
+                single visible h2. */}
+            {hasAnalysis && <DeclutterAnalysisSummary analysis={analysis} declutter={declutter} />}
 
             <WizardNav
               backLabel="Back to Upload photo"
