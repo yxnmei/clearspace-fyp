@@ -232,8 +232,8 @@ describe("ReorganisePage screen-by-screen flow", () => {
   });
 });
 
-describe("ReorganisePage checklist, focus areas and storage suggestions", () => {
-  test("renders the shared checklist, focus areas and storage suggestions from the generate response", async () => {
+describe("ReorganisePage checklist and storage suggestions", () => {
+  test("renders the shared checklist and storage suggestions from the generate response, never a focus-areas section", async () => {
     const response = makeGeneratedResponse();
     response.storage_suggestions = [
       { name: "Compartment tray", reason: "Gives 2 small personal items a fixed compartment each.", related_item_ids: ["item_001"] },
@@ -250,14 +250,14 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
     expect(within(checklist).getByRole("checkbox", { name: /clear the desk/i })).not.toBeChecked();
-    const areas = screen.getByRole("region", { name: /areas to focus on/i });
-    expect(within(areas).getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
-    const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
+    expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/areas to focus on|focus area/i)).not.toBeInTheDocument();
+    const suggestions = screen.getByRole("region", { name: /storage and organisation ideas/i });
     expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
+    expect(within(suggestions).queryByText(/^For:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^storage suggestions$/i })).not.toBeInTheDocument();
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings.indexOf("Checklist")).toBeLessThan(headings.indexOf("Visual preview"));
-    expect(headings.indexOf("Visual preview")).toBeLessThan(headings.indexOf("Areas to focus on"));
-    expect(headings.indexOf("Areas to focus on")).toBeLessThan(headings.indexOf("Storage suggestions"));
+    expect(headings).toEqual(["Checklist", "Visual preview", "Storage and organisation ideas"]);
     expect(screen.queryByText(/room plan/i)).not.toBeInTheDocument();
     // checking a step is local only: no request, no navigation change
     await userEvent.click(within(checklist).getByRole("checkbox", { name: /clear the desk/i }));
@@ -310,7 +310,7 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     // the fallback is not explained to the user in technical terms; the checklist just works
     expect(screen.queryByText(/did not return a usable checklist|ai assistant|call_failed|deterministic/i)).not.toBeInTheDocument();
     expect(screen.getByText(/took too long/i)).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: /areas to focus on/i })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /areas to focus on/i })).not.toBeInTheDocument();
     expect(within(stepper()).getByText(/your reorganisation is complete/i)).toBeInTheDocument();
   });
 
@@ -320,8 +320,9 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     response.action_plan = {
       ...response.action_plan,
       actions: [
-        { priority: 1, title: "Start with the left side", instruction: "The left side of your photo holds 1 of your selected item (lamp). Straighten it and clear loose items from the space immediately around it." },
-        { priority: 2, title: "Check the whole room", instruction: "Look over the bedroom once more and make sure each selected item has a visible, settled place before you finish." },
+        { priority: 1, title: "Group the picture frame items", instruction: "Keep all 6 together so they are easier to find and put back." },
+        { priority: 2, title: "Tidy loose items on the left side", instruction: "Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space." },
+        { priority: 3, title: "Do a final room check", instruction: "Walk through the bedroom once more and make sure every selected item has a clear place." },
       ],
       provenance: "deterministic_direct",
       attempts: 0,
@@ -338,10 +339,24 @@ describe("ReorganisePage checklist, focus areas and storage suggestions", () => 
     await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Group the picture frame items")).toBeInTheDocument());
     expect(screen.queryByText(/ai assistant|deterministic|model call|prompt version|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
     expect(document.querySelector("details")).toBeNull();
-    expect(screen.getByText("0 of 2 completed")).toBeInTheDocument();
+    expect(screen.getByText("0 of 3 completed")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
+    // title-led rows in priority order, each with its one concise instruction beneath
+    const rows = within(screen.getByRole("list", { name: /checklist actions/i })).getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByText("Group the picture frame items")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("Keep all 6 together so they are easier to find and put back.")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Tidy loose items on the left side")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Do a final room check")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Walk through the bedroom once more and make sure every selected item has a clear place.")).toBeInTheDocument();
+    for (const row of rows) expect(within(row).getByRole("checkbox")).not.toBeChecked();
+    // the checkbox is named by the title alone and described by the instruction
+    const box = screen.getByRole("checkbox", { name: "Tidy loose items on the left side" });
+    expect(box).toHaveAccessibleDescription("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.");
+    expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
   });
 });

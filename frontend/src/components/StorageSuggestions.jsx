@@ -1,15 +1,21 @@
-// "Storage suggestions": a compact section rendered ONLY when the plan
-// carries at least one suggestion; with none, nothing is rendered (no
-// empty-state card). Shared by Direct Reorganise and Both through
-// ReorganiseResult. Renders exactly what the contract validated: a
-// bounded list of generic ideas, each with a name, a reason and the
-// selected items it is based on (joined by item_id, shown as labels only,
-// never as ids). It never adds prices, brands, links or availability
-// claims, and says so, because the backend has none of that to offer.
-export default function StorageSuggestions({ storageSuggestions, items }) {
+// "Storage and organisation ideas": a compact section rendered ONLY when
+// the plan carries at least one suggestion; with none, nothing is
+// rendered (no empty-state card). Shared by Direct Reorganise and Both
+// through ReorganiseResult.
+//
+// Each card is exactly the contract's name and reason: a generic idea
+// and one sentence saying what it would do for the selected items that
+// motivated it. related_item_ids stay in the normalised response and its
+// contract (validated, joined by item_id) but are not shown: the reason
+// already names the items, so a "For: ..." line only repeated it. No
+// prices, brands, links, availability claims or shopping controls, and
+// no disclosure or tooltip; the backend has none of that to offer.
+//
+// Layout: one column on phones, two from sm, three from lg. A single
+// suggestion therefore sits in one column of the grid rather than
+// stretching into one oversized full-width card.
+export default function StorageSuggestions({ storageSuggestions }) {
   if (!storageSuggestions || storageSuggestions.length === 0) return null;
-
-  const itemsById = new Map(items.map((item) => [item.item_id, item]));
 
   return (
     <section
@@ -17,27 +23,16 @@ export default function StorageSuggestions({ storageSuggestions, items }) {
       className="rounded-card border border-border bg-surface p-4 shadow-card sm:p-5"
     >
       <h3 id="storage-suggestions-heading" className="text-lg font-semibold text-foreground">
-        Storage suggestions
+        Storage and organisation ideas
       </h3>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Generic ideas based only on the kinds of items you selected. These are not products, prices or availability
-        checks.
-      </p>
-      <ul className="mt-3 space-y-2" aria-label="Storage suggestions">
-        {storageSuggestions.map((suggestion) => {
-          const labels = suggestion.related_item_ids.map(
-            (itemId) => itemsById.get(itemId)?.effective_label ?? "Selected item"
-          );
-          return (
-            <li key={suggestion.name} className="rounded-control border border-border bg-surface-muted p-3">
-              <p className="text-sm font-semibold text-foreground">{suggestion.name}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{suggestion.reason}</p>
-              {labels.length > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground">For: {labels.join(", ")}</p>
-              )}
-            </li>
-          );
-        })}
+      <p className="mt-1 text-sm text-muted-foreground">Optional ways to give related items a consistent home.</p>
+      <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Storage and organisation ideas">
+        {storageSuggestions.map((suggestion) => (
+          <li key={suggestion.name} className="min-w-0 rounded-control border border-border bg-surface-muted p-3">
+            <p className="break-words text-sm font-semibold text-foreground">{suggestion.name}</p>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{suggestion.reason}</p>
+          </li>
+        ))}
       </ul>
     </section>
   );

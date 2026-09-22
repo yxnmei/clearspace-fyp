@@ -269,7 +269,10 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
     assert plan["model_name"] is None
     assert plan["prompt_version"] is None
     assert plan["was_repaired"] is None
-    assert plan["actions"][0]["title"].startswith("Start with the")
+    # only the confirmed Keep lamp reaches the checklist: one cleanup naming
+    # it, then the closing check; same {priority, title, instruction} shape
+    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final room check"]
+    assert set(plan["actions"][0]) == {"priority", "title", "instruction"}
     # the server-derived Keep set is exactly what the focus areas cover
     assert [area["item_ids"] for area in result["focus_areas"]] == [["item_001"]]
     assert result["storage_suggestions"] == []
@@ -332,7 +335,7 @@ def test_generate_confirmed_storage_suggestions_come_only_from_confirmed_keep_it
     assert response.status_code == 200
     result = response.json()
     suggestions = result["storage_suggestions"]
-    assert [s["name"] for s in suggestions] == ["Cable or technology-accessory organiser"]
+    assert [s["name"] for s in suggestions] == ["Cable and accessory organiser"]
     assert suggestions[0]["related_item_ids"] == ["item_001", "item_002"]  # the Sell cable never counts
     shown = {item_id for area in result["focus_areas"] for item_id in area["item_ids"]}
     assert shown == {"item_001", "item_002"}

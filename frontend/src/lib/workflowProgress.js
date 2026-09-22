@@ -67,7 +67,7 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
       return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Tidy plan.", false];
     case "generate":
       if (phase === "generating") return ["Writing your checklist and generating a preview…", "This can take several minutes, no action needed yet.", true];
-      if (phase === "result") return ["Your reorganisation is complete.", "Review your checklist, focus areas, storage suggestions and visual preview below.", false];
+      if (phase === "result") return ["Your reorganisation is complete.", "Review your checklist, any storage suggestions and the visual preview below.", false];
       if (phase === "selecting" && uploadError == null) return ["Ready to generate your reorganisation plan.", "Press Generate reorganisation plan when you are ready.", false];
       return ["Plan generation is ready.", "Return to Select items if you want to change the included items.", false];
     default:

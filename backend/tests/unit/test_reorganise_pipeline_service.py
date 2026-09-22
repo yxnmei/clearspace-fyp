@@ -411,9 +411,9 @@ def test_storage_suggestions_are_derived_and_bounded():
 
     names = [s.name for s in result.storage_suggestions]
     assert names == [
-        "Cable or technology-accessory organiser",
-        "Toy or small-item container",
-        "Bookends or a compact shelf",
+        "Cable and accessory organiser",
+        "Toy container",
+        "Bookends or a paper tray",
     ]
     assert len(names) == len(set(names)) <= 3
 
@@ -496,7 +496,7 @@ def test_pipeline_survives_very_long_corrected_labels_and_still_generates_an_ima
 
     assert result.image_status == "generated"
     assert len(generator.calls) == 1
-    assert [s.name for s in result.storage_suggestions] == ["Bookends or a compact shelf"]
+    assert [s.name for s in result.storage_suggestions] == ["Bookends or a paper tray"]
     assert all(len(s.reason) <= 300 for s in result.storage_suggestions)
     assert all(len(a.instruction) <= 300 and len(a.title) <= 80 for a in result.action_plan.actions)
 
@@ -529,7 +529,7 @@ def test_typed_image_gen_failure_preserves_checklist_areas_and_suggestions(excep
     # Everything else is real and complete, never discarded on image failure.
     assert result.action_plan.actions
     assert result.focus_areas
-    assert [s.name for s in result.storage_suggestions] == ["Cable or technology-accessory organiser"]
+    assert [s.name for s in result.storage_suggestions] == ["Cable and accessory organiser"]
     assert result.image_prompt
     assert len(image_generator.calls) == 1
     assert len(generator.calls) == 1
@@ -705,9 +705,25 @@ def test_a_real_28_item_room_with_duplicate_labels_is_handled_without_a_model():
 
     assert result.action_plan.provenance == ActionPlanProvenance.DETERMINISTIC_DIRECT
     assert 1 <= len(result.action_plan.actions) <= 5
-    assert result.action_plan.actions[0].title.startswith("Start with the")
+    # meaningful groups lead (six picture frames, two toys, two cups), then one
+    # cleanup for the busiest uncovered area, then the closing check
+    titles = [a.title for a in result.action_plan.actions]
+    assert titles[:3] == ["Group the picture frame items", "Group the toy items", "Group the cup items"]
+    assert titles[-1] == "Do a final room check"
+    assert not any(t.startswith(("Start with the", "Tidy the ")) for t in titles), titles
+    assert len(titles) == 5
     shown = [item_id for area in result.focus_areas for item_id in area.item_ids]
     assert len(shown) == len(set(shown)) and set(shown) <= set(item_ids)
     assert len(result.focus_areas) == 3
-    assert [s.name for s in result.storage_suggestions] == ["Toy or small-item container"]
+    # three distinct, evidence-backed ideas: the frames + painting as a display
+    # group, keyboard + mouse, and the two toys; tableware and the bin/box/shelf
+    # motivate nothing and are never offered as a destination
+    assert [s.name for s in result.storage_suggestions] == [
+        "Dedicated display area",
+        "Desktop accessory organiser",
+        "Toy container",
+    ]
+    for suggestion in result.storage_suggestions:
+        assert set(suggestion.related_item_ids) <= set(item_ids)
+        assert "item_" not in suggestion.reason and "(" not in suggestion.reason
     assert result.image_status == "generated"

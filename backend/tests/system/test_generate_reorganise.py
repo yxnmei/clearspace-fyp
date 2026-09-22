@@ -269,7 +269,12 @@ def test_generate_success_returns_generated_image_and_full_action_plan():
     assert plan["was_repaired"] is None
     assert plan["duration_ms"] >= 0
     assert [a["priority"] for a in plan["actions"]] == list(range(1, len(plan["actions"]) + 1))
-    assert plan["actions"][0]["title"].startswith("Start with the")
+    # lamp (left) and book (right): no group, one cleanup naming the real
+    # uncovered item, then the closing check; same {priority, title,
+    # instruction} shape as before
+    assert [a["title"] for a in plan["actions"]] == ["Straighten the lamp", "Do a final room check"]
+    assert set(plan["actions"][0]) == {"priority", "title", "instruction"}
+    assert plan["actions"][0]["instruction"] == "Set it neatly in place and clear the immediate space around it."
 
     # Focus areas and suggestions are joined only by item_id, from the selection.
     assert [area["item_ids"] for area in result["focus_areas"]] == [["item_001"], ["item_002"]]
@@ -326,7 +331,7 @@ def test_generate_reports_storage_suggestions_for_compatible_items():
 
     assert response.status_code == 200
     suggestions = response.json()["storage_suggestions"]
-    assert [s["name"] for s in suggestions] == ["Cable or technology-accessory organiser"]
+    assert [s["name"] for s in suggestions] == ["Cable and accessory organiser"]
     assert suggestions[0]["related_item_ids"] == ["item_001", "item_002"]
     assert set(suggestions[0]) == {"name", "reason", "related_item_ids"}
 

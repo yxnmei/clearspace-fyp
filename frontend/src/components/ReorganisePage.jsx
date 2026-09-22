@@ -90,7 +90,7 @@ export default function ReorganisePage() {
         <div hidden={viewed !== "upload"}>
           <p className="mb-6 max-w-2xl text-muted-foreground">
             Analyse a room, review which detected items belong in the plan, then generate a prioritised
-            reorganisation checklist, the areas to focus on, storage suggestions and an optional AI visual preview.
+            reorganisation checklist, storage suggestions when relevant and an optional AI visual preview.
           </p>
           <ReorganiseUploadForm phase={flow.phase} error={flow.uploadError} onSubmit={handleSubmit} />
         </div>
@@ -168,7 +168,7 @@ export default function ReorganisePage() {
                 <section className="rounded-card border border-border bg-surface p-5 shadow-card sm:p-6">
                   <h2 className="text-lg font-semibold text-foreground">4. Generate reorganisation plan</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Generate a prioritised checklist, focus areas, storage suggestions and a visual preview using the{" "}
+                    Generate a prioritised checklist, storage suggestions when relevant and a visual preview using the{" "}
                     {flow.selectedItemIds.length} item
                     {flow.selectedItemIds.length === 1 ? "" : "s"} you included during Review.
                   </p>

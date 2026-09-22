@@ -1,16 +1,19 @@
 import { ImageOff, RotateCcw } from "lucide-react";
 import ReorganiseChecklist from "./ReorganiseChecklist";
-import FocusAreas from "./FocusAreas";
 import StorageSuggestions from "./StorageSuggestions";
 import { Button } from "./ui/button";
-import { cn } from "../lib/cn";
 
 // Renders the normalised generate response (useReorganiseFlow's
 // generateResult, or useBothFlow's) as one tidy plan: the heading, then
 // the interactive checklist beside the Before / AI preview from lg up
-// (stacked below), then the focus areas and, only when present, the
-// storage suggestions, then Start over. Direct Reorganise and Both both
-// render this one component, so neither duplicates any of it.
+// (stacked below), then, only when present, the storage suggestions,
+// then Start over. Direct Reorganise and Both both render this one
+// component, so neither duplicates any of it.
+//
+// generateResult.focusAreas is still part of the normalised response and
+// its contract (validated, joined by item_id) but is deliberately NOT
+// rendered: the checklist already walks the same left / centre / right
+// grouping, so showing it again duplicated the plan.
 //
 // The visual is an impression built from a deterministic prompt (room
 // type, selected items, your notes). It is never claimed to follow the
@@ -26,7 +29,8 @@ import { cn } from "../lib/cn";
 //
 // Technical fields (model, seed, ControlNet, service/API version, timing,
 // prompt, hashes, provenance, attempts, unavailable reason codes) remain
-// in the normalised result and its contract; they are simply not shown.
+// in the normalised result and its contract, as do the focus areas; they
+// are simply not shown.
 const UNAVAILABLE_REASON_COPY = {
   service_unreachable: "The image service could not be reached.",
   timeout: "The image took too long to generate.",
@@ -96,9 +100,11 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
   );
 }
 
-export default function ReorganiseResult({ generateResult, items, originalImageUrl, onStartOver }) {
-  const { actionPlan, focusAreas, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
-  const hasStorage = Array.isArray(storageSuggestions) && storageSuggestions.length > 0;
+// `items` is still passed by both pages for the contract join; nothing
+// rendered here needs it any more (focus areas are not shown and the
+// storage cards carry their own grounded reason), so it is not read.
+export default function ReorganiseResult({ generateResult, originalImageUrl, onStartOver }) {
+  const { actionPlan, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
   // A real, stable primitive identity for this result: a different run
   // remounts the checklist, so its local completion starts empty.
   const resultKey = generateResult.runId ?? actionPlan.run_id;
@@ -125,10 +131,10 @@ export default function ReorganiseResult({ generateResult, items, originalImageU
         />
       </div>
 
-      <div className={cn("grid gap-6 lg:items-start", hasStorage && "lg:grid-cols-2")}>
-        <FocusAreas focusAreas={focusAreas} items={items} />
-        <StorageSuggestions storageSuggestions={storageSuggestions} items={items} />
-      </div>
+      {/* Renders nothing at all when there are no suggestions: no empty
+          column, no placeholder. The cards show only name + reason;
+          related_item_ids stay in the result but are not displayed. */}
+      <StorageSuggestions storageSuggestions={storageSuggestions} />
 
       <div>
         <Button type="button" variant="outline" size="sm" onClick={onStartOver}>

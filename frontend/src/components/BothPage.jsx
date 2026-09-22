@@ -274,7 +274,7 @@ export default function BothPage() {
                   ) : (
                     <>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        Generate a prioritised checklist, focus areas, storage suggestions and a visual preview using
+                        Generate a prioritised checklist, storage suggestions when relevant and a visual preview using
                         the {flow.confirmation.confirmedKeepIds.length} confirmed Keep item
                         {flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"}.
                       </p>

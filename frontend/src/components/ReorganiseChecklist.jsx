@@ -11,8 +11,14 @@ import { cn } from "../lib/cn";
 // persisted. ReorganiseResult mounts this component with a key derived
 // from the result's run identity, so a different generated result (or
 // Start over, which unmounts the result) always starts from an empty
-// checklist. Provenance, model, prompt, duration and issue details stay
-// in the normalised response but are not rendered here.
+// checklist.
+//
+// Each row is title-led: the title is the complete, actionable step and
+// is the checkbox's accessible name; the one-sentence instruction sits
+// beneath it as secondary, muted text and is the checkbox's accessible
+// description. No disclosure, tooltip or details view. Provenance,
+// model, prompt, duration and issue details stay in the normalised
+// response and are not rendered here.
 export default function ReorganiseChecklist({ actionPlan }) {
   const [completed, setCompleted] = useState(() => new Set());
 
@@ -65,15 +71,20 @@ export default function ReorganiseChecklist({ actionPlan }) {
         {actionPlan.actions.map((action) => {
           const done = completed.has(action.priority);
           const inputId = `checklist-action-${actionPlan.run_id}-${action.priority}`;
+          const titleId = `${inputId}-title`;
+          const instructionId = `${inputId}-instruction`;
           return (
             <li key={action.priority}>
               {/* The whole row is the checkbox's label, so it is one
-                  comfortable target while the native checkbox keeps
-                  keyboard and screen-reader semantics. */}
+                  comfortable target (min-h-11 = 44px) while the native
+                  checkbox keeps keyboard and screen-reader semantics.
+                  The accessible name is the title alone (aria-labelledby)
+                  and the instruction is the description, so a screen
+                  reader announces the step, then the detail. */}
               <label
                 htmlFor={inputId}
                 className={cn(
-                  "flex min-h-14 cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors",
+                  "flex min-h-11 cursor-pointer items-start gap-3 rounded-control border px-3 py-2 transition-colors",
                   done ? "border-primary/40 bg-accent/40" : "border-border bg-surface-muted"
                 )}
               >
@@ -82,10 +93,14 @@ export default function ReorganiseChecklist({ actionPlan }) {
                   id={inputId}
                   checked={done}
                   onChange={() => toggle(action.priority)}
+                  aria-labelledby={titleId}
+                  aria-describedby={instructionId}
                   className="mt-0.5 h-5 w-5 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 />
+                {/* Decorative: the ordered list already conveys the position. */}
                 <span
                   data-testid="checklist-step-number"
+                  aria-hidden="true"
                   className={cn(
                     "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
                     done ? "bg-primary/70 text-primary-foreground" : "bg-primary text-primary-foreground"
@@ -95,14 +110,21 @@ export default function ReorganiseChecklist({ actionPlan }) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span
+                    id={titleId}
                     className={cn(
-                      "block text-sm font-semibold",
+                      "block break-words text-sm font-semibold leading-6",
                       done ? "text-muted-foreground line-through" : "text-foreground"
                     )}
                   >
                     {action.title}
                   </span>
-                  <span className={cn("mt-0.5 block text-sm", done ? "text-muted-foreground/80" : "text-muted-foreground")}>
+                  <span
+                    id={instructionId}
+                    className={cn(
+                      "block break-words text-xs leading-5",
+                      done ? "text-muted-foreground/80" : "text-muted-foreground"
+                    )}
+                  >
                     {action.instruction}
                   </span>
                   {done && <span className="sr-only">Completed</span>}

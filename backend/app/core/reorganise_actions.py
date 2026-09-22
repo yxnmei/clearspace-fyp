@@ -219,6 +219,12 @@ def parse_and_validate_actions(raw: Any, *, min_actions: int = MIN_ACTIONS) -> A
 # Never names a destination, container, piece of furniture or storage
 # object that is not itself a selected item, and never uses the user's
 # free-text context (unbounded, untrusted, and not needed to be useful).
+#
+# The title is a complete, self-contained imperative (no counts, no
+# parenthesised inventories, no label lists); the one-sentence
+# instruction beneath it adds what the title cannot carry: the real
+# count of a group, the reason, or up to three real labels to start
+# with. Neither ever repeats the other.
 
 
 def _validate_fallback_inputs(selected_items: Any, scene_label: Any) -> None:
@@ -238,38 +244,77 @@ def _area_phrase(area_id: str) -> str:
     return FOCUS_AREA_LABELS[area_id].lower()
 
 
-def _area_instruction(area_id: str, items: list[DetectedItem], *, first: bool) -> str:
+def _area_location(area_id: str) -> str:
+    """"on the left side", "in the centre", "in other areas"."""
     phrase = _area_phrase(area_id)
-    count = len(items)
-    large = [item for item in items if item.relative_size.strip().lower() == "large"]
-    smaller = [item for item in items if item not in large]
-    mixed_sizes = bool(large and smaller)
-    # When an area mixes large and smaller items the body names every
-    # item, so the opening skips the list; this keeps the whole sentence
-    # well inside INSTRUCTION_MAX_LENGTH for realistic labels (the display
-    # caps below bound the pathological long-corrected-label case).
-    listed = "" if mixed_sizes else f" ({format_label_list(items, max_labels=3)})"
-    if first:
-        opening = f"The {phrase} of your photo holds {count} of your selected item{'s' if count != 1 else ''}{listed}."
-    else:
-        opening = f"Next, the {phrase} of your photo{listed}."
-    if mixed_sizes:
-        # Size is used ONLY to say which items are not worth moving. The
-        # smaller items are never arranged "around" or "on" the large one:
-        # sharing a part of the photo does not make a chair and a bowl
-        # belong with a shelf, and nothing here knows the large item is a
-        # usable surface.
-        anchor = format_label_list(large, max_labels=2)
-        verb = "it is" if len(large) == 1 else "they are"
-        body = (
-            f" Leave the {anchor} where {verb}. Straighten the {format_label_list(smaller, max_labels=3)} "
-            "and clear loose items from the space around each one."
+    if phrase.endswith("side"):
+        return f"on the {phrase}"
+    return f"in {phrase}" if area_id == "other" else f"in the {phrase}"
+
+
+def _is_large(item: DetectedItem) -> bool:
+    return item.relative_size.strip().lower() == "large"
+
+
+def _label(item: DetectedItem) -> str:
+    return shorten_for_display(item.effective_label.strip())
+
+
+_MAX_NAMED_LABELS = 3
+
+
+def _name_some(items: list[DetectedItem], *, tail: str) -> str:
+    """"lamp", "lamp and chair", "lamp, chair and plant", or, past
+    _MAX_NAMED_LABELS, "lamp, chair, plant and <tail>": a bounded, real
+    label list with no count for what is left unnamed."""
+    names = [_label(item) for item in items[:_MAX_NAMED_LABELS]]
+    if len(items) > _MAX_NAMED_LABELS:
+        names.append(tail)
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _cleanup_action(area_id: str, items: list[DetectedItem]) -> tuple[str, str]:
+    """The single area-cleanup step for the busiest area still holding
+    uncovered items. `items` are real, selected, uncovered items only.
+
+    Size is used ONLY to say which real, selected, large item is not
+    worth moving. Coarse-area membership never proves the smaller items
+    are physically around, on or beside it: sharing a part of the photo
+    does not make a chair and a bowl belong with a shelf, and nothing
+    here knows the large item is a usable surface, so the wording keeps
+    to "in the area"."""
+    large = [item for item in items if _is_large(item)]
+    smaller = [item for item in items if not _is_large(item)]
+
+    if len(items) == 1:
+        (only,) = items
+        if _is_large(only):
+            return (
+                f"Clear the space around the {_label(only)}",
+                "Leave it in place and clear the immediate space around it.",
+            )
+        return (f"Straighten the {_label(only)}", "Set it neatly in place and clear the immediate space around it.")
+
+    if large:
+        anchors = format_label_list(large, max_labels=2)
+        if smaller:
+            return (
+                f"Tidy the {_area_phrase(area_id)} without moving the {_label(large[0])}",
+                f"Leave the {anchors} in place, then straighten the {_name_some(smaller, tail='the other loose items')} "
+                "in the area.",
+            )
+        pronoun = "it" if len(large) == 1 else "them"
+        return (
+            f"Clear the space around the {_label(large[0])}",
+            f"Leave the {anchors} in place and clear the immediate space around {pronoun}.",
         )
-    elif count == 1:
-        body = " Straighten it and clear loose items from the space immediately around it."
-    else:
-        body = " Straighten each one and clear loose items from the space around them."
-    return opening + body
+
+    return (
+        f"Tidy loose items {_area_location(area_id)}",
+        f"Straighten the {_name_some(items, tail='the other loose items')}, then clear the surrounding space.",
+    )
 
 
 def _make_action(priority: int, title: str, instruction: str) -> ReorganiseAction:
@@ -286,70 +331,68 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
     randomness, no wall-clock dependence. Raises ValueError (never
     AttributeError/TypeError) on invalid caller input.
 
-    Shape, in priority order and capped at MAX_ACTIONS:
-      1. the busiest area (most selected items), first;
-      2. one action per repeated label (two or more items sharing an
-         effective label) and per compatible category group not already
-         covered by a repeated label, so the user is told which things
-         belong together;
-      3. the remaining areas, busiest first;
-      4. a closing whole-room check naming the room type.
-    Every sentence names only detected labels and coarse photo areas.
+    Shape, in priority order and capped at MAX_ACTIONS, most useful
+    first:
+      1. one action per repeated label (two or more items sharing an
+         effective label), first-seen order;
+      2. one action per compatible category group (find_compatible_groups)
+         not already covered by a repeated label;
+      3. at most ONE cleanup action, for the busiest area that still
+         holds items no group covered (an item already told where it
+         belongs is never narrated again);
+      4. a closing whole-room check naming the room type, only while
+         there is capacity: it never displaces an evidence-backed step.
+    Every title is a complete imperative and every instruction one
+    sentence that adds to it, naming only detected labels, real counts,
+    coarse photo areas and the room type; positions and full label
+    inventories are left to the structured data, never narrated.
     """
     _validate_fallback_inputs(selected_items, scene_label)
 
-    grouped = group_items_by_area(selected_items)
     drafts: list[tuple[str, str]] = []
+    covered_ids: set[str] = set()
 
-    first_area_id, first_items = grouped[0]
-    drafts.append(
-        (f"Start with the {_area_phrase(first_area_id)}", _area_instruction(first_area_id, first_items, first=True))
-    )
-
-    # Repeated labels, first-seen order.
+    # 1. Repeated labels, first-seen order. The real label is kept
+    # ("book", "picture frame"); "the <label> items" avoids guessing a
+    # plural for arbitrary, possibly user-corrected labels. The
+    # instruction adds the real count and the reason, never where the
+    # items were found.
     by_label: dict[str, list[DetectedItem]] = {}
     for item in selected_items:
         by_label.setdefault(item.effective_label.strip(), []).append(item)
-    covered_ids: set[str] = set()
     for label, items in by_label.items():
         if len(items) < 2:
             continue
-        areas = sorted({_area_phrase(area_id) for area_id, area_items in grouped for item in area_items if item in items})
-        if len(areas) > 1:
-            where = f"across the {' and '.join(areas)}"
-        else:  # "on the left side", but "in the centre" / "in other areas"
-            where = f"on the {areas[0]}" if areas[0].endswith("side") else f"in the {areas[0]}".replace("in the other", "in other")
         display = shorten_for_display(label)
+        quantity = "both" if len(items) == 2 else f"all {len(items)}"
         drafts.append(
-            (
-                f"Group the {display} items together",
-                f"You selected {len(items)} items labelled '{display}', currently {where}. Bring them together "
-                "so they sit as one group instead of being scattered.",
-            )
+            (f"Group the {display} items", f"Keep {quantity} together so they are easier to find and put back.")
         )
         covered_ids.update(item.item_id for item in items)
 
-    # Compatible category groups not already covered by a repeated label.
+    # 2. Compatible category groups not already covered by a repeated
+    # label: still evidence-backed (find_compatible_groups), no label
+    # inventory in the prose.
     for rule, items in find_compatible_groups(selected_items):
         if all(item.item_id in covered_ids for item in items):
             continue
         drafts.append(
-            (
-                f"Keep the {rule.group_noun} together",
-                f"The {format_label_list(items)} are compatible {rule.group_noun}. Keep them in one spot so they "
-                "are easy to find and put back.",
-            )
+            (f"Group {rule.group_noun}", "Keep these related items together so they are easy to find and put back.")
         )
         covered_ids.update(item.item_id for item in items)
 
-    for area_id, items in grouped[1:]:
-        drafts.append((f"Tidy the {_area_phrase(area_id)}", _area_instruction(area_id, items, first=False)))
+    # 3. One cleanup step for the busiest area of what is left.
+    remaining = [item for item in selected_items if item.item_id not in covered_ids]
+    if remaining:
+        area_id, area_items = group_items_by_area(remaining)[0]
+        drafts.append(_cleanup_action(area_id, area_items))
 
+    # 4. The closing check, only if it fits.
     drafts.append(
         (
-            "Check the whole room",
-            f"Look over the {shorten_for_display(scene_label.strip(), 40)} once more and make sure each selected "
-            "item has a visible, settled place before you finish.",
+            "Do a final room check",
+            f"Walk through the {shorten_for_display(scene_label.strip(), 40)} once more and make sure every selected "
+            "item has a clear place.",
         )
     )
 

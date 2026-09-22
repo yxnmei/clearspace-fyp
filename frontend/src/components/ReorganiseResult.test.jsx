@@ -87,20 +87,16 @@ const TECHNICAL =
 // ---------------------------------------------------------------------------
 
 describe("ReorganiseResult, composition", () => {
-  test("has one result heading with task-oriented copy, then checklist, visual preview and focus areas", () => {
+  test("has one result heading with task-oriented copy, then checklist and visual preview only", () => {
     renderResult(makeGeneratedResult());
     expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument();
     expect(screen.getByText(/work through the checklist at your own pace/i)).toBeInTheDocument();
     expect(screen.getByText(/not a precise placement plan/i)).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
-    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "Checklist",
-      "Visual preview",
-      "Areas to focus on",
-    ]);
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Checklist", "Visual preview"]);
   });
 
-  test("the storage suggestions section appears only when there are suggestions, after focus areas", () => {
+  test("the storage suggestions section appears only when there are suggestions, beneath the top row", () => {
     renderResult(
       makeGeneratedResult({
         storageSuggestions: [{ name: "Compartment tray", reason: "Keeps small things together.", related_item_ids: ["item_001"] }],
@@ -109,9 +105,27 @@ describe("ReorganiseResult, composition", () => {
     expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Checklist",
       "Visual preview",
-      "Areas to focus on",
-      "Storage suggestions",
+      "Storage and organisation ideas",
     ]);
+    const topRow = checklist().closest("section").parentElement;
+    const storage = screen.getByRole("region", { name: /storage and organisation ideas/i });
+    expect(storage.parentElement).toBe(topRow.parentElement); // a direct child of the result, not a nested column
+    expect(topRow.nextElementSibling).toBe(storage);
+  });
+
+  test("focus areas stay on the supplied result but are never rendered", () => {
+    const result = makeGeneratedResult({
+      focusAreas: [
+        { area_id: "left", label: "Left side", item_ids: ["item_001"] },
+        { area_id: "right", label: "Right side", item_ids: ["item_002"] },
+      ],
+    });
+    const { container } = renderResult(result);
+    expect(result.focusAreas).toHaveLength(2);
+    expect(result.focusAreas[0]).toEqual({ area_id: "left", label: "Left side", item_ids: ["item_001"] });
+    expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /focus areas/i })).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/focus area|areas to focus|left side|right side|selected item/i);
   });
 
   test("never renders a room plan or zone section", () => {
@@ -154,7 +168,7 @@ describe("ReorganiseResult, composition", () => {
 // ---------------------------------------------------------------------------
 
 describe("ReorganiseResult, interactive checklist", () => {
-  test("renders every action in priority order with its number, title, instruction and one checkbox", () => {
+  test("renders every action in priority order with its number, title, concise instruction and one checkbox", () => {
     renderResult(makeGeneratedResult());
     const rows = within(checklist()).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
@@ -162,8 +176,114 @@ describe("ReorganiseResult, interactive checklist", () => {
     expect(within(rows[0]).getByText("Clear the desk")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Group the lamp and the desk items together.")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Straighten the lamp")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Set the lamp upright and clear around it.")).toBeInTheDocument();
     for (const row of rows) expect(within(row).getAllByRole("checkbox")).toHaveLength(1);
     expect(screen.getByText("Work through these steps in order. Check off each one as you finish.")).toBeInTheDocument();
+  });
+
+  test("titles render in priority order, one per row", () => {
+    renderResult(
+      makeGeneratedResult({
+        actionPlan: makeActionPlan({
+          actions: [
+            { priority: 1, title: "Group the picture frame items", instruction: "Bring the picture frame items together in one place." },
+            { priority: 2, title: "Group the toy items", instruction: "Bring the toy items together in one place." },
+            { priority: 3, title: "Group the cup items", instruction: "Bring the cup items together in one place." },
+            { priority: 4, title: "Tidy loose items on the left side", instruction: "Straighten loose items and clear the surrounding space." },
+            { priority: 5, title: "Do a final room check", instruction: "Look over the bedroom and make sure every selected item has a clear place before you finish." },
+          ],
+        }),
+      })
+    );
+    const rows = within(checklist()).getAllByRole("listitem");
+    expect(rows.map((row) => within(row).getByTestId("checklist-step-number").textContent)).toEqual(["1", "2", "3", "4", "5"]);
+    expect(rows.map((row) => within(row).getByRole("checkbox").getAttribute("id"))).toEqual(
+      [1, 2, 3, 4, 5].map((n) => `checklist-action-run1-${n}`)
+    );
+    const titles = [
+      "Group the picture frame items",
+      "Group the toy items",
+      "Group the cup items",
+      "Tidy loose items on the left side",
+      "Do a final room check",
+    ];
+    rows.forEach((row, index) => {
+      expect(within(row).getByText(titles[index])).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: titles[index] })).toBe(within(row).getByRole("checkbox"));
+    });
+    const instructions = [
+      "Bring the picture frame items together in one place.",
+      "Bring the toy items together in one place.",
+      "Bring the cup items together in one place.",
+      "Straighten loose items and clear the surrounding space.",
+      "Look over the bedroom and make sure every selected item has a clear place before you finish.",
+    ];
+    rows.forEach((row, index) => expect(within(row).getByText(instructions[index])).toBeInTheDocument());
+  });
+
+  test("the instruction renders beneath the title as secondary muted text and describes the checkbox", () => {
+    const result = makeGeneratedResult();
+    const { container } = renderResult(result);
+    const row = checkbox("Clear the desk").closest("label");
+    const title = within(row).getByText("Clear the desk");
+    const instruction = within(row).getByText("Group the lamp and the desk items together.");
+    // beneath: same text column, title first
+    expect(title.parentElement).toBe(instruction.parentElement);
+    expect(title.nextElementSibling).toBe(instruction);
+    // secondary: smaller, muted, not bold; the title is the emphasised line
+    expect(instruction.className).toMatch(/\btext-xs\b/);
+    expect(instruction.className).toMatch(/\btext-muted-foreground\b/);
+    expect(instruction.className).not.toMatch(/font-semibold|font-bold/);
+    expect(title.className).toMatch(/\bfont-semibold\b/);
+    expect(title.className).toMatch(/\btext-sm\b/);
+    // wraps naturally, never clipped
+    expect(instruction.className).toMatch(/\bbreak-words\b/);
+    expect(instruction.className).not.toMatch(/truncate|line-clamp|overflow-hidden|whitespace-nowrap/);
+    // it is the checkbox's accessible description, not part of its name
+    expect(checkbox("Clear the desk")).toHaveAccessibleDescription("Group the lamp and the desk items together.");
+    expect(checkbox("Clear the desk")).toHaveAccessibleName("Clear the desk");
+    // no disclosure, tooltip or details view, and the data is untouched
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.querySelector("[title]")).toBeNull();
+    expect(container.querySelector("button[aria-expanded]")).toBeNull();
+    expect(result.actionPlan.actions[0].instruction).toBe("Group the lamp and the desk items together.");
+  });
+
+  test("the instruction is not an identical restatement of the title", () => {
+    renderResult(makeGeneratedResult());
+    for (const row of within(checklist()).getAllByRole("listitem")) {
+      const [title, instruction] = Array.from(row.querySelectorAll("span[id]")).map((el) => el.textContent.trim());
+      expect(instruction).not.toBe(title);
+      expect(instruction.replace(/\.$/, "").toLowerCase()).not.toBe(title.toLowerCase());
+    }
+  });
+
+  test("each checkbox's accessible name is exactly its full action title; the step number is decorative", () => {
+    renderResult(makeGeneratedResult());
+    expect(screen.getByRole("checkbox", { name: "Clear the desk" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Straighten the lamp" })).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    // the ordered list already conveys position, so the badge is hidden from the name
+    for (const badge of screen.getAllByTestId("checklist-step-number")) expect(badge).toHaveAttribute("aria-hidden", "true");
+    const box = screen.getByRole("checkbox", { name: "Clear the desk" });
+    expect(box.closest("label")).toHaveAttribute("for", box.id);
+    expect(box).toHaveAttribute("aria-labelledby", `${box.id}-title`);
+    expect(document.getElementById(`${box.id}-title`)).toHaveTextContent("Clear the desk");
+  });
+
+  test("rows are compact with a 44px minimum touch target, and the one-sentence instruction wraps rather than overflows", () => {
+    renderResult(makeGeneratedResult());
+    const row = checkbox("Clear the desk").closest("label");
+    expect(row.className).toMatch(/\bmin-h-11\b/);
+    expect(row.className).not.toMatch(/\bmin-h-14\b/);
+    expect(row.className).toMatch(/\bitems-start\b/);
+    expect(row.className).toMatch(/\bpy-2\b/);
+    const column = within(row).getByText("Clear the desk").parentElement;
+    expect(column.className).toMatch(/\bmin-w-0\b/);
+    expect(column.className).toMatch(/\bflex-1\b/);
+    expect(within(row).getByText("Clear the desk").className).toMatch(/\bbreak-words\b/);
+    // exactly title + instruction in the text column (Completed only once done)
+    expect(column.querySelectorAll("span").length).toBe(2);
   });
 
   test("starts at 0 of N completed with a correctly described progressbar", () => {
@@ -192,8 +312,11 @@ describe("ReorganiseResult, interactive checklist", () => {
     expect(doneRow.className).toMatch(/border-primary/);
     expect(within(doneRow).getByText("Clear the desk").className).toMatch(/line-through/);
     expect(within(doneRow).getByText("Completed")).toBeInTheDocument(); // not colour alone
-    // the instruction stays readable
-    expect(within(doneRow).getByText("Group the lamp and the desk items together.")).toBeInTheDocument();
+    // the title and its instruction both stay readable once done; only the title is struck through
+    expect(within(doneRow).getByText("Clear the desk")).toBeInTheDocument();
+    const doneInstruction = within(doneRow).getByText("Group the lamp and the desk items together.");
+    expect(doneInstruction.className).not.toMatch(/line-through/);
+    expect(doneInstruction.className).toMatch(/text-muted-foreground/);
 
     await user.click(checkbox("Straighten the lamp"));
     expect(screen.getByText("2 of 2 completed")).toBeInTheDocument();
@@ -205,12 +328,14 @@ describe("ReorganiseResult, interactive checklist", () => {
     expect(progressbar()).toHaveAttribute("aria-valuenow", "1");
   });
 
-  test("clicking the row text toggles its checkbox, and the row is a comfortable target", async () => {
+  test("clicking the title text toggles its checkbox, and the row is a comfortable target", async () => {
     const user = userEvent.setup();
     renderResult(makeGeneratedResult());
-    await user.click(screen.getByText("Set the lamp upright and clear around it."));
+    await user.click(screen.getByText("Straighten the lamp"));
     expect(checkbox("Straighten the lamp")).toBeChecked();
-    expect(checkbox("Straighten the lamp").closest("label").className).toMatch(/\bmin-h-14\b/);
+    await user.click(within(checkbox("Straighten the lamp").closest("label")).getByTestId("checklist-step-number"));
+    expect(checkbox("Straighten the lamp")).not.toBeChecked();
+    expect(checkbox("Straighten the lamp").closest("label").className).toMatch(/\bmin-h-11\b/);
     expect(checkbox("Straighten the lamp").className).toMatch(/\bh-5\b/);
   });
 
@@ -279,99 +404,102 @@ describe("ReorganiseResult, interactive checklist", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Focus areas
-// ---------------------------------------------------------------------------
-
-describe("ReorganiseResult, focus areas", () => {
-  test("renders one entry per area with its label, count and item labels joined by item_id", () => {
-    renderResult(makeGeneratedResult());
-    const list = screen.getByRole("list", { name: /focus areas/i });
-    const entries = within(list).getAllByRole("listitem");
-    expect(entries).toHaveLength(2);
-    expect(within(entries[0]).getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
-    expect(within(entries[0]).getByText("1 selected item")).toBeInTheDocument();
-    expect(within(entries[0]).getByText("lamp")).toBeInTheDocument();
-    expect(within(entries[1]).getByText("desk")).toBeInTheDocument();
-  });
-
-  test("describes the areas as where items are concentrated, not as clutter, importance, zones or a plan", () => {
-    renderResult(makeGeneratedResult());
-    const section = screen.getByRole("region", { name: /areas to focus on/i });
-    expect(section).toHaveTextContent(/holding the most selected items/i);
-    expect(section).toHaveTextContent(/not from how cluttered or important/i);
-    expect(section.textContent).not.toMatch(/zone|ai-generated|floor plan|severity/i);
-  });
-
-  test("bounds the item labels to three with +N more, and never shows a raw item_id", () => {
-    const manyItems = [
-      makeItem("item_001", "lamp"),
-      makeItem("item_002", "desk"),
-      makeItem("item_003", "chair"),
-      makeItem("item_004", "rug"),
-      makeItem("item_005", "plant"),
-    ];
-    const { container } = renderResult(
-      makeGeneratedResult({
-        focusAreas: [{ area_id: "left", label: "Left side", item_ids: ["item_001", "item_002", "item_003", "item_004", "item_005"] }],
-      }),
-      { items: manyItems }
-    );
-    expect(screen.getByText("5 selected items")).toBeInTheDocument();
-    expect(screen.getByText("lamp, desk, chair +2 more")).toBeInTheDocument();
-    expect(container.textContent).not.toMatch(/item_00\d/);
-  });
-
-  test("an unresolvable item is named neutrally, never dropped and never shown as its id", () => {
-    const { container } = renderResult(makeGeneratedResult(), { items: [makeItem("item_001", "lamp")] });
-    const list = screen.getByRole("list", { name: /focus areas/i });
-    expect(within(list).getByText("Selected item")).toBeInTheDocument();
-    expect(within(list).getAllByText("1 selected item")).toHaveLength(2); // both areas still counted
-    expect(container.textContent).not.toMatch(/item_002|item_id/);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Storage suggestions
 // ---------------------------------------------------------------------------
 
-describe("ReorganiseResult, storage suggestions", () => {
-  const suggestions = [
+describe("ReorganiseResult, storage and organisation ideas", () => {
+  const one = [
     {
       name: "Compartment tray",
-      reason: "Gives 2 small personal items (lamp and desk) a fixed compartment each so they stop going missing.",
+      reason: "Give the lamp and desk a fixed compartment each so they stop going missing.",
       related_item_ids: ["item_001", "item_002"],
     },
   ];
+  const three = [
+    {
+      name: "Dedicated display area",
+      reason: "Use one deliberate display area for the painting and 6 picture frame items instead of scattering them.",
+      related_item_ids: ["item_001"],
+    },
+    {
+      name: "Desktop accessory organiser",
+      reason: "Keep the keyboard and mouse together between uses so they are always at hand.",
+      related_item_ids: ["item_002"],
+    },
+    { name: "Toy container", reason: "Give both toy items one easy place to return to after use.", related_item_ids: ["item_001", "item_002"] },
+  ];
+  const section = () => screen.getByRole("region", { name: /storage and organisation ideas/i });
+  const cards = () => within(screen.getByRole("list", { name: /storage and organisation ideas/i })).getAllByRole("listitem");
 
-  test("renders each suggestion with its name, reason and human item labels, without numbers or ids", () => {
-    renderResult(makeGeneratedResult({ storageSuggestions: suggestions }));
-    const section = screen.getByRole("region", { name: /storage suggestions/i });
-    expect(within(section).getByText("Compartment tray")).toBeInTheDocument();
-    expect(within(section).getByText(/gives 2 small personal items/i)).toBeInTheDocument();
-    expect(within(section).getByText("For: lamp, desk")).toBeInTheDocument();
-    expect(section.textContent).not.toMatch(/#\d|item_00\d|item_id/);
+  test("uses the new heading and introduction, and never the old defensive copy", () => {
+    renderResult(makeGeneratedResult({ storageSuggestions: one }));
+    expect(screen.getByRole("heading", { level: 3, name: "Storage and organisation ideas" })).toBeInTheDocument();
+    expect(within(section()).getByText("Optional ways to give related items a consistent home.")).toBeInTheDocument();
+    expect(section().textContent).not.toMatch(/generic ideas|not products|availability checks/i);
+    expect(screen.queryByRole("heading", { name: /^storage suggestions$/i })).not.toBeInTheDocument();
   });
 
-  test("names an unresolvable related item neutrally", () => {
-    renderResult(makeGeneratedResult({ storageSuggestions: suggestions }), { items: [makeItem("item_001", "lamp")] });
-    expect(screen.getByText("For: lamp, Selected item")).toBeInTheDocument();
+  test("each card holds exactly its title and one reason: no For line, no labels list, no ids", () => {
+    renderResult(makeGeneratedResult({ storageSuggestions: one }));
+    const [card] = cards();
+    const paragraphs = Array.from(card.querySelectorAll("p")).map((p) => p.textContent);
+    expect(paragraphs).toEqual(["Compartment tray", "Give the lamp and desk a fixed compartment each so they stop going missing."]);
+    expect(card.children).toHaveLength(2);
+    expect(within(card).queryByText(/^For:/)).not.toBeInTheDocument();
+    expect(section().textContent).not.toMatch(/For:|#\d|item_00\d|item_id|related_item/i);
+    expect(within(card).getByText("Compartment tray").className).toMatch(/font-semibold/);
+    expect(within(card).getByText(/fixed compartment/).className).toMatch(/text-muted-foreground/);
   });
 
-  test("never claims prices, availability or product links", () => {
-    renderResult(makeGeneratedResult({ storageSuggestions: suggestions }));
-    const section = screen.getByRole("region", { name: /storage suggestions/i });
-    expect(section).toHaveTextContent(/not products, prices or availability checks/i);
-    expect(within(section).queryByRole("link")).not.toBeInTheDocument();
-    expect(section.textContent).not.toMatch(/\$|buy now|in stock|recommend/i);
+  test("related_item_ids stay on the supplied result but are not displayed, even when an id cannot be resolved", () => {
+    const result = makeGeneratedResult({ storageSuggestions: one });
+    const { container } = renderResult(result, { items: [makeItem("item_001", "lamp")] });
+    expect(result.storageSuggestions[0].related_item_ids).toEqual(["item_001", "item_002"]);
+    expect(container.textContent).not.toMatch(/item_002|Selected item|For:/);
   });
 
-  test("an empty list renders no storage section at all, and focus areas take the full row", () => {
+  test("cards sit in a responsive grid: one column, two from sm, three from lg", () => {
+    renderResult(makeGeneratedResult({ storageSuggestions: three }));
+    const list = screen.getByRole("list", { name: /storage and organisation ideas/i });
+    expect(list.className).toMatch(/\bgrid\b/);
+    expect(list.className).toMatch(/\bgrid-cols-1\b/);
+    expect(list.className).toMatch(/\bsm:grid-cols-2\b/);
+    expect(list.className).toMatch(/\blg:grid-cols-3\b/);
+    expect(list.className).not.toMatch(/space-y/);
+    expect(cards()).toHaveLength(3);
+    for (const card of cards()) expect(card.className).toMatch(/\bmin-w-0\b/);
+  });
+
+  test.each([
+    ["one", one],
+    ["two", three.slice(0, 2)],
+    ["three", three],
+  ])("renders %s suggestion(s) as that many cards in the same grid, never a full-width single card", (_, list) => {
+    renderResult(makeGeneratedResult({ storageSuggestions: list }));
+    expect(cards()).toHaveLength(list.length);
+    expect(cards().map((card) => card.querySelectorAll("p").length)).toEqual(list.map(() => 2));
+    const grid = screen.getByRole("list", { name: /storage and organisation ideas/i });
+    expect(grid.className).toMatch(/\bsm:grid-cols-2\b/); // a lone card takes one column, not the row
+    for (const card of cards()) expect(card.className).not.toMatch(/col-span|w-full/);
+    expect(cards().map((card) => card.querySelector("p").textContent)).toEqual(list.map((s) => s.name));
+  });
+
+  test("never claims prices, availability or product links, and offers no controls", () => {
+    renderResult(makeGeneratedResult({ storageSuggestions: three }));
+    expect(within(section()).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(section()).queryByRole("button")).not.toBeInTheDocument();
+    expect(section().querySelector("details, [title], [aria-expanded]")).toBeNull();
+    expect(section().textContent).not.toMatch(/\$|buy now|in stock|recommend|brand|price/i);
+  });
+
+  test("an empty list renders no storage section and leaves no lower placeholder: the top row is followed directly by Start over", () => {
     renderResult(makeGeneratedResult());
-    expect(screen.queryByRole("region", { name: /storage suggestions/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/storage suggestion/i)).not.toBeInTheDocument();
-    const row = screen.getByRole("region", { name: /areas to focus on/i }).parentElement;
-    expect(row.children).toHaveLength(1);
-    expect(row.className).not.toMatch(/lg:grid-cols-2/);
+    expect(screen.queryByRole("region", { name: /storage and organisation ideas/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/storage and organisation|storage suggestion|consistent home/i)).not.toBeInTheDocument();
+    const topRow = checklist().closest("section").parentElement;
+    const startOver = screen.getByRole("button", { name: /start over/i });
+    expect(topRow.nextElementSibling).toContainElement(startOver);
+    expect(topRow.parentElement.children).toHaveLength(3); // header, top row, start over
   });
 });
 
@@ -422,7 +550,6 @@ describe("ReorganiseResult, unavailable image", () => {
     renderResult(makeUnavailableResult("timeout"));
     expect(screen.getByRole("heading", { level: 3, name: /visual preview unavailable/i })).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
     await user.click(checkbox("Clear the desk"));
     expect(screen.getByText("1 of 2 completed")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /visual preview unavailable/i }).className).toMatch(/border-warning/);

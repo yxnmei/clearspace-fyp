@@ -393,8 +393,8 @@ describe("BothPage independent final actions", () => {
   });
 });
 
-describe("BothPage checklist, focus areas and storage suggestions", () => {
-  test("renders the same shared checklist, focus areas and storage suggestions as Direct Reorganise", async () => {
+describe("BothPage checklist and storage suggestions", () => {
+  test("renders the same shared checklist and storage suggestions as Direct Reorganise, never a focus-areas section", async () => {
     const user = userEvent.setup();
     const response = makeGeneratedResponse(KEEP);
     response.storage_suggestions = [
@@ -409,14 +409,14 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
     const checklist = screen.getByRole("list", { name: /checklist actions/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
-    const areas = screen.getByRole("region", { name: /areas to focus on/i });
-    expect(within(areas).getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
-    const suggestions = screen.getByRole("region", { name: /storage suggestions/i });
+    expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/areas to focus on|focus area/i)).not.toBeInTheDocument();
+    const suggestions = screen.getByRole("region", { name: /storage and organisation ideas/i });
     expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
+    expect(within(suggestions).queryByText(/^For:/)).not.toBeInTheDocument();
     const subheadings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(subheadings.indexOf("Checklist")).toBeLessThan(subheadings.indexOf("Visual preview"));
-    expect(subheadings.indexOf("Visual preview")).toBeLessThan(subheadings.indexOf("Areas to focus on"));
-    expect(subheadings.indexOf("Areas to focus on")).toBeLessThan(subheadings.indexOf("Storage suggestions"));
+    expect(subheadings.indexOf("Visual preview")).toBeLessThan(subheadings.indexOf("Storage and organisation ideas"));
     // listings stay available after the tidy plan, and navigation is unchanged
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings.indexOf("Your tidy plan")).toBeLessThan(headings.indexOf("Marketplace listings"));
@@ -438,7 +438,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
 
     await waitFor(() => expect(screen.getByText(/visual preview unavailable/i)).toBeInTheDocument());
     expect(screen.getByText("Clear the desk")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 4, name: "Left side" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /areas to focus on/i })).not.toBeInTheDocument();
     expect(screen.getByText("Compartment tray")).toBeInTheDocument();
     expect(screen.queryByText(/service_unreachable|reason code|technical detail/i)).not.toBeInTheDocument();
   });
@@ -465,7 +465,7 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
     response.action_plan = {
       ...response.action_plan,
       actions: [
-        { priority: 1, title: "Start with the left side", instruction: "The left side of your photo holds 1 of your selected item (lamp). Straighten it and clear loose items from the space immediately around it." },
+        { priority: 1, title: "Straighten the lamp", instruction: "Set it neatly in place and clear the immediate space around it." },
       ],
       provenance: "deterministic_direct",
       attempts: 0,
@@ -480,15 +480,22 @@ describe("BothPage checklist, focus areas and storage suggestions", () => {
 
     await user.click(screen.getByRole("button", { name: /generate reorganisation plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Start with the left side")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Straighten the lamp")).toBeInTheDocument());
     expect(screen.queryByText(/ai assistant|deterministic|model call|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
     expect(document.querySelector("details")).toBeNull();
+    // the row is title-led, with its one concise instruction beneath as secondary text
+    const instruction = screen.getByText("Set it neatly in place and clear the immediate space around it.");
+    expect(instruction.className).toMatch(/text-muted-foreground/);
+    expect(screen.getByRole("checkbox", { name: "Straighten the lamp" })).toHaveAccessibleDescription(
+      "Set it neatly in place and clear the immediate space around it."
+    );
+    expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
     // listings and the visual are unaffected
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
 
     // checking a checklist step is local presentation only: no listing or generation request follows
-    await user.click(screen.getByRole("checkbox", { name: /start with the left side/i }));
+    await user.click(screen.getByRole("checkbox", { name: "Straighten the lamp" }));
     expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
     expect(client.generateListings).not.toHaveBeenCalled();
     expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
