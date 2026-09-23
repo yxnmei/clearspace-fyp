@@ -427,6 +427,7 @@ def test_generate_confirmed_empty_keep_returns_409_and_calls_nothing():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
+    assert response.json()["detail"] == "No items were confirmed as Keep, so there is nothing to include in a tidy plan."
     assert planner.calls == []  # the checklist call is never reached
     assert generator.calls == []
 
@@ -440,6 +441,7 @@ def test_generate_confirmed_all_keep_excluded_returns_409():
     response = client.post("/generate/confirmed", json=body)
 
     assert response.status_code == 409
+    assert response.json()["detail"] == "No items were confirmed as Keep, so there is nothing to include in a tidy plan."
     assert planner.calls == []
     assert generator.calls == []
 

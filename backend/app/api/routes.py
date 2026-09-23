@@ -1130,7 +1130,7 @@ def generate_confirmed_reorganisation(
         ) from exc
     except EmptyConfirmedKeepError as exc:
         raise HTTPException(
-            status_code=409, detail="no items were confirmed as Keep — nothing to reorganise"
+            status_code=409, detail="No items were confirmed as Keep, so there is nothing to include in a tidy plan."
         ) from exc
     except ConfirmationInputError as exc:
         raise HTTPException(status_code=422, detail="invalid decision overrides") from exc
