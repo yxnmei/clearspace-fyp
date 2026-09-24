@@ -110,6 +110,7 @@ function makeGeneratedResponse(confirmed, { imageStatus = "generated" } = {}) {
   return {
     run_id: "run1",
     confirmation,
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the desk", item_ids: confirmation.confirmed_keep_ids.slice(0, 1) }] }] },
     action_plan: {
       run_id: "run1",
       actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
@@ -407,7 +408,7 @@ describe("BothPage checklist and storage suggestions", () => {
     await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Tidy up" })).toBeInTheDocument());
-    const checklist = screen.getByRole("list", { name: /checklist actions/i });
+    const checklist = screen.getByRole("list", { name: /empty and clean steps/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/areas to focus on|focus area/i)).not.toBeInTheDocument();
@@ -415,7 +416,7 @@ describe("BothPage checklist and storage suggestions", () => {
     expect(within(suggestions).getByText("Compartment tray")).toBeInTheDocument();
     expect(within(suggestions).queryByText(/^For:/)).not.toBeInTheDocument();
     const subheadings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(subheadings.indexOf("Checklist")).toBeLessThan(subheadings.indexOf("Visual preview"));
+    expect(subheadings.indexOf("Tidy plan")).toBeLessThan(subheadings.indexOf("Visual preview"));
     expect(subheadings.indexOf("Visual preview")).toBeLessThan(subheadings.indexOf("Storage and organisation ideas"));
     // listings stay available after the tidy plan, and navigation is unchanged
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
@@ -480,22 +481,18 @@ describe("BothPage checklist and storage suggestions", () => {
 
     await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Straighten the lamp")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+    expect(screen.queryByText("Straighten the lamp")).not.toBeInTheDocument();
     expect(screen.queryByText(/ai assistant|deterministic|model call|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
     expect(document.querySelector("details")).toBeNull();
-    // the row is title-led, with its one concise instruction beneath as secondary text
-    const instruction = screen.getByText("Set it neatly in place and clear the immediate space around it.");
-    expect(instruction.className).toMatch(/text-muted-foreground/);
-    expect(screen.getByRole("checkbox", { name: "Straighten the lamp" })).toHaveAccessibleDescription(
-      "Set it neatly in place and clear the immediate space around it."
-    );
+    expect(screen.getByRole("checkbox", { name: "Clear the desk" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
     // listings and the visual are unaffected
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
 
     // checking a checklist step is local presentation only: no listing or generation request follows
-    await user.click(screen.getByRole("checkbox", { name: "Straighten the lamp" }));
+    await user.click(screen.getByRole("checkbox", { name: "Clear the desk" }));
     expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
     expect(client.generateListings).not.toHaveBeenCalled();
     expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);

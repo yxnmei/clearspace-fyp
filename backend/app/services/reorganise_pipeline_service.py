@@ -72,7 +72,8 @@ from app.core.image_validation import ImageValidationError, validate_image_bytes
 from app.core.reorganise_focus_areas import MAX_FOCUS_AREAS, FocusArea, derive_focus_areas
 from app.core.reorganise_image_prompt import build_reorganise_image_prompt
 from app.core.reorganise_storage import MAX_STORAGE_SUGGESTIONS, StorageSuggestion, derive_storage_suggestions
-from app.core.schemas import AnalysisResult, DetectedItem, ItemId, NonEmptyStr
+from app.core.reorganise_phases import TidyPlan, build_tidy_plan
+from app.core.schemas import AnalysisResult, ConfirmedDecision, Decision, DetectedItem, ItemId, NonEmptyStr
 from app.models.image_gen_client import (
     GenerationResult,
     ImageGenRequestError,
@@ -152,14 +153,16 @@ class ReorganisePipelineResult(BaseModel):
         run_id matches, and forbids image_unavailable_reason.
       - image_status == "unavailable" forbids `generation` and requires
         image_unavailable_reason.
-    A checklist, focus areas and suggestions are ALWAYS present regardless
-    of image_status."""
+    The legacy action checklist, phased tidy plan, focus areas and storage
+    suggestions are ALWAYS present regardless of image_status."""
 
     model_config = ConfigDict(frozen=True)
 
     run_id: NonEmptyStr
     selected_item_ids: list[ItemId] = Field(min_length=1)
+    departing_item_ids: list[ItemId] = Field(default_factory=list)
     action_plan: ReorganiseActionPlan
+    tidy_plan: TidyPlan
     focus_areas: list[FocusArea] = Field(min_length=1, max_length=MAX_FOCUS_AREAS)
     storage_suggestions: list[StorageSuggestion] = Field(max_length=MAX_STORAGE_SUGGESTIONS)
     image_prompt: NonEmptyStr
@@ -174,6 +177,15 @@ class ReorganisePipelineResult(BaseModel):
         selected = set(self.selected_item_ids)
         if len(selected) != len(self.selected_item_ids):
             raise ValueError("selected_item_ids contains duplicates")
+        departing = set(self.departing_item_ids)
+        if len(departing) != len(self.departing_item_ids):
+            raise ValueError("departing_item_ids contains duplicates")
+        if selected & departing:
+            raise ValueError("selected and departing item_ids must be disjoint")
+        for phase in self.tidy_plan.phases:
+            for step in phase.steps:
+                if set(step.item_ids) - (selected | departing):
+                    raise ValueError("tidy step references an item_id outside selected or departing")
 
         seen: set[str] = set()
         counts = [len(area.item_ids) for area in self.focus_areas]
@@ -285,6 +297,7 @@ def run_reorganise_pipeline(
     user_context: str | None,
     action_generator: ReorganiseActionGenerator | None,
     image_generator: ImageGenerator,
+    departing_decisions: list[ConfirmedDecision] | None = None,
 ) -> ReorganisePipelineResult:
     """
     `action_generator` is REQUIRED and has no default; every caller must
@@ -331,12 +344,28 @@ def run_reorganise_pipeline(
     _check_image(image_bytes, image_media_type)
     _check_image_hash(image_bytes, expected_input_image_sha256)
 
+    departing: list[tuple[DetectedItem, Decision]] = []
+    if departing_decisions is not None:
+        if not isinstance(departing_decisions, list) or any(not isinstance(x, ConfirmedDecision) for x in departing_decisions):
+            raise ReorganisePipelineInputError("departing_decisions must be confirmed decisions")
+        by_id = {item.item_id: item for item in analysis.items}
+        selected_ids = {item.item_id for item in selected_items}
+        seen_departing: set[str] = set()
+        for decision in departing_decisions:
+            if decision.excluded or decision.confirmed_decision is Decision.KEEP:
+                continue
+            if decision.item_id not in by_id or decision.item_id in selected_ids or decision.item_id in seen_departing:
+                raise ReorganisePipelineInputError("departing decision has unknown, selected or duplicate item_id")
+            seen_departing.add(decision.item_id)
+            departing.append((by_id[decision.item_id], decision.confirmed_decision))
+
     scene_label = analysis.scene.label
     ordered_ids = [item.item_id for item in selected_items]
 
     focus_areas = derive_focus_areas(selected_items)
     storage_suggestions = derive_storage_suggestions(selected_items)
     image_prompt = build_reorganise_image_prompt(selected_items, scene_label, user_context)
+    tidy_plan = build_tidy_plan(selected_items, scene_label, departing)
 
     action_plan = plan_reorganise_actions(
         run_id=run_id,
@@ -350,7 +379,9 @@ def run_reorganise_pipeline(
         return ReorganisePipelineResult(
             run_id=run_id,
             selected_item_ids=ordered_ids,
+            departing_item_ids=[item.item_id for item, _ in departing],
             action_plan=action_plan,
+            tidy_plan=tidy_plan,
             focus_areas=focus_areas,
             storage_suggestions=storage_suggestions,
             image_prompt=image_prompt,

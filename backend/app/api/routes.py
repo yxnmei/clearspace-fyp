@@ -170,6 +170,7 @@ from app.models.whisper_stt import (
 )
 from app.core.reorganise_focus_areas import FocusArea
 from app.core.reorganise_storage import StorageSuggestion
+from app.core.reorganise_phases import TidyPlan
 from app.services.reorganise_actions_service import ReorganiseActionPlan
 from app.services.transcription_service import (
     TranscriptionBusyError,
@@ -887,7 +888,8 @@ class GenerateResponse(BaseModel):
     browser-consumable shape, and the internal server-ordered
     selected_item_ids is not echoed (the client already holds its own
     selection and re-derives the confirmed Keep set for Both).
-    `action_plan` is the COMPLETE ReorganiseActionPlan — provenance,
+    `tidy_plan` is the phased plan rendered by the frontend. `action_plan`
+    remains the COMPLETE ReorganiseActionPlan — provenance,
     attempts, model_name, prompt_version, duration and issues all remain
     visible, never dropped to just the actions. `focus_areas` and
     `storage_suggestions` are the pipeline's deterministic derivations,
@@ -896,6 +898,7 @@ class GenerateResponse(BaseModel):
 
     run_id: NonEmptyStr
     action_plan: ReorganiseActionPlan
+    tidy_plan: TidyPlan
     focus_areas: list[FocusArea]
     storage_suggestions: list[StorageSuggestion]
     image_prompt: NonEmptyStr
@@ -924,6 +927,7 @@ class GenerateResponse(BaseModel):
         return cls(
             run_id=result.run_id,
             action_plan=result.action_plan,
+            tidy_plan=result.tidy_plan,
             focus_areas=result.focus_areas,
             storage_suggestions=result.storage_suggestions,
             image_prompt=result.image_prompt,
@@ -969,6 +973,7 @@ def generate_reorganisation(
             user_context=request.user_context,
             action_generator=None,  # explicit production choice — deterministic_direct, no model call
             image_generator=image_generator,
+            departing_decisions=None,
         )
     except ReorganisePipelineInputError as exc:
         raise HTTPException(status_code=422, detail="invalid reorganise generation request") from exc
@@ -1078,6 +1083,7 @@ class ConfirmedGenerateResponse(GenerateResponse):
             run_id=result.run_id,
             confirmation=result.confirmation,
             action_plan=result.pipeline.action_plan,
+            tidy_plan=result.pipeline.tidy_plan,
             focus_areas=result.pipeline.focus_areas,
             storage_suggestions=result.pipeline.storage_suggestions,
             image_prompt=result.pipeline.image_prompt,

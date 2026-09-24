@@ -249,13 +249,15 @@ def test_generate_success_returns_generated_image_and_full_action_plan():
     assert response.status_code == 200
     result = response.json()
     assert set(result) == {
-        "run_id", "action_plan", "focus_areas", "storage_suggestions", "image_prompt",
+        "run_id", "action_plan", "tidy_plan", "focus_areas", "storage_suggestions", "image_prompt",
         "image_status", "image", "image_unavailable_reason",
     }
     assert result["image_status"] == "generated"
     assert result["image_unavailable_reason"] is None
     assert result["image"]["api_version"] == IMAGE_GEN_API_VERSION
     assert result["image"]["depth_map_used"] is True
+    assert result["tidy_plan"]["phases"][0]["phase_id"] == "empty_clean"
+    assert not any("Set aside to sell" in step["text"] for phase in result["tidy_plan"]["phases"] for step in phase["steps"])
 
     # Complete, truthful action plan: production calls NO checklist model,
     # so zero model calls, no issue, no model identity, no repair flag.

@@ -5,25 +5,23 @@ import { Button } from "./ui/button";
 
 // Renders the normalised generate response (useReorganiseFlow's
 // generateResult, or useBothFlow's) as one tidy plan: the heading, then
-// the interactive checklist beside the Before / AI preview from lg up
+// the interactive phased plan beside the Before / AI preview from lg up
 // (stacked below), then, only when present, the storage suggestions,
 // then Start over. Direct Reorganise and Both both render this one
 // component, so neither duplicates any of it.
 //
 // generateResult.focusAreas is still part of the normalised response and
 // its contract (validated, joined by item_id) but is deliberately NOT
-// rendered: the checklist already walks the same left / centre / right
-// grouping, so showing it again duplicated the plan.
+// rendered: its coarse counts are not actionable placement guidance.
 //
 // The visual is an impression built from a deterministic prompt (room
 // type, selected items, your notes). It is never claimed to follow the
-// checklist step by step, and the checklist model never writes the
-// image prompt.
+// phases step by step; the prompt is built separately and deterministically.
 //
 // No visual-preview Retry button here, deliberately (R5 decision): the
 // current /generate contract has no "regenerate image only" endpoint,
-// a Retry would silently re-run the checklist call as well, real,
-// non-trivial CPU cost, for what looks like a cheap "try again". Start
+// a Retry would silently re-run the whole pipeline for what looks like
+// a cheap image-only action. Start
 // over (a full reset) is the only recovery action offered until a
 // future backend contract supports a genuinely cheap retry.
 //
@@ -52,7 +50,7 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
         </h3>
         <p className="mt-1 text-sm text-foreground">
           {UNAVAILABLE_REASON_COPY[imageUnavailableReason] ?? "The visual preview could not be generated."} Your
-          checklist is complete and ready to use without it.
+          tidy plan is ready to use without it.
         </p>
       </section>
     );
@@ -112,10 +110,10 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
 // action, so Both renders one global Start over after both result
 // sections instead.
 export default function ReorganiseResult({ generateResult, originalImageUrl, onStartOver, heading = "Your tidy plan" }) {
-  const { actionPlan, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
+  const { tidyPlan, storageSuggestions, imageStatus, image, imageUnavailableReason } = generateResult;
   // A real, stable primitive identity for this result: a different run
   // remounts the checklist, so its local completion starts empty.
-  const resultKey = generateResult.runId ?? actionPlan.run_id;
+  const resultKey = generateResult.runId;
 
   return (
     <section aria-labelledby="tidy-plan-heading" className="mt-6 space-y-6">
@@ -124,13 +122,13 @@ export default function ReorganiseResult({ generateResult, originalImageUrl, onS
           {heading}
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          Work through the checklist at your own pace. The visual preview is an impression of a tidier space, not a
+          Work through the phases at your own pace. The visual preview is an impression of a tidier space, not a
           precise placement plan.
         </p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-        <ReorganiseChecklist key={resultKey} actionPlan={actionPlan} />
+        <ReorganiseChecklist key={resultKey} tidyPlan={tidyPlan} />
         <VisualPreview
           imageStatus={imageStatus}
           image={image}

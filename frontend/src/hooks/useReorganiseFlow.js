@@ -177,8 +177,8 @@ export function useReorganiseFlow() {
   const generate = useCallback(async () => {
     // Silent no-op guards, mirroring useDeclutterFlow.performCorrection's
     // convention (not confirm()'s laxer one), a duplicate /generate
-    // dispatch is far more expensive here (Phi-4-mini planning + a real
-    // remote generation call) than Declutter's cheap /confirm, so this
+    // dispatch is more expensive here (a real remote image-generation
+    // call) than Declutter's cheap /confirm, so this
     // hook stays safe even if the disabled-button UI is ever bypassed.
     if (phase !== "selecting") return null;
     if (uploadState.selectedItemIds.length === 0) return null;

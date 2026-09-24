@@ -4,7 +4,8 @@ import { describe, expect, test, vi } from "vitest";
 import DeclutterConfirmationPanel, { DECLUTTER_NEXT_STEP_NOTE } from "./DeclutterConfirmationPanel";
 
 function ddFor(labelText) {
-  return screen.getByText(labelText).closest("div").querySelector("dd").textContent;
+  const chips = screen.getByLabelText(/confirmed decisions|your decisions/i);
+  return within(chips).getByText(labelText).closest("div").querySelector("dd").textContent;
 }
 
 function baseProps(overrides = {}) {
@@ -226,7 +227,7 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
     render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() })} />);
     expect(screen.getByRole("heading", { name: "Choices confirmed" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Confirm your choices" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("heading")).toHaveLength(1);
+    expect(screen.getAllByRole("heading")).toHaveLength(4);
 
     // counts come from the confirmation, not the live review counts passed in
     expect(ddFor("Keep")).toBe("1");
@@ -237,7 +238,7 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
     expect(screen.queryByText("Excluded")).not.toBeInTheDocument();
     expect(screen.getByLabelText(/confirmed decisions/i).tagName).toBe("DL");
     // the confirmed panel shares the same chip treatment
-    const keep = screen.getByText("Keep").closest("div");
+    const keep = within(screen.getByLabelText(/confirmed decisions/i)).getByText("Keep").closest("div");
     expect(keep.className.split(/\s+/)).toEqual(expect.arrayContaining(["bg-surface", "border-primary/50", "text-foreground"]));
     expect(keep.className).not.toMatch(/bg-decision-/);
     expect(keep.querySelector("svg").getAttribute("class").split(/\s+/)).toContain("text-decision-keep");
@@ -285,13 +286,14 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
     expect(ddFor("Excluded")).toBe("2");
   });
 
-  test("exposes no run id, item id, hash or Keep item list, and offers no Confirm button", () => {
+  test("exposes no run id, item id or hash, and offers Copy instead of Confirm", () => {
     const { container } = render(
       <DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() })} />
     );
     expect(container.textContent).not.toMatch(/run7|run |item_00\d|item_id|sha|hash/i);
     expect(container.querySelector("code")).toBeNull();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy summary" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm decisions" })).not.toBeInTheDocument();
     expect(screen.queryByText(/confirmed keep items/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -308,5 +310,76 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
     rerender(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() })} />);
     expect(screen.getAllByRole("region")).toHaveLength(1);
     expect(within(panel()).getByRole("heading", { name: "Choices confirmed" })).toBeInTheDocument();
+  });
+});
+
+describe("DeclutterConfirmationPanel confirmed-choices summary", () => {
+  const reviewItems = [
+    { item_id: "item_001", effective_label: "lamp", box: { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 } },
+    { item_id: "item_002", effective_label: "book", box: { x1: 0.2, y1: 0.1, x2: 0.3, y2: 0.2 } },
+    { item_id: "item_003", effective_label: "book", box: { x1: 0.3, y1: 0.1, x2: 0.4, y2: 0.2 } },
+    { item_id: "item_004", effective_label: "box", box: { x1: 0.4, y1: 0.1, x2: 0.5, y2: 0.2 } },
+  ];
+  const confirmation = makeConfirmation({
+    confirmedDecisions: [
+      makeConfirmedDecision({ item_id: "item_001" }),
+      makeConfirmedDecision({ item_id: "item_002", ai_decision: "sell", confirmed_decision: "donate", decision_changed: true }),
+      makeConfirmedDecision({ item_id: "item_003", ai_decision: "donate", confirmed_decision: "donate" }),
+      makeConfirmedDecision({ item_id: "item_004", ai_decision: "discard", confirmed_decision: "discard", excluded: true }),
+    ],
+    excludedCount: 1,
+  });
+
+  test("groups by confirmed choice, separates excluded and joins duplicate labels by item_id", () => {
+    render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation, reviewItems, imageUrl: "blob:test" })} />);
+    const summary = screen.getByLabelText("Confirmed choices summary");
+    expect(within(summary).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Keep", "Donate", "Excluded"]);
+    expect(within(summary).getAllByText("book")).toHaveLength(2);
+    expect(within(summary).getByText("lamp")).toBeInTheDocument();
+    expect(within(summary).getByText("box")).toBeInTheDocument();
+    expect(within(summary).getByText("Changed")).toBeInTheDocument();
+    expect(summary.textContent).not.toMatch(/item_00|ai_reason|user_reason/);
+  });
+
+  test("copies one line per non-empty group with repeated labels counted", async () => {
+    const user = userEvent.setup();
+    const writer = vi.fn().mockResolvedValue(undefined);
+    render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation, reviewItems, clipboardWriter: writer })} />);
+    await user.click(screen.getByRole("button", { name: "Copy summary" }));
+    expect(writer).toHaveBeenCalledWith("Keep: lamp\nDonate: book (2)\nExcluded: box");
+    expect(await screen.findByText("Summary copied to your clipboard.")).toBeInTheDocument();
+  });
+
+  test("keeps irregular labels unchanged when counting duplicates", async () => {
+    const user = userEvent.setup();
+    const writer = vi.fn().mockResolvedValue(undefined);
+    const shelves = reviewItems.slice(1, 3).map((entry) => ({ ...entry, effective_label: "shelf" }));
+    const shelfConfirmation = makeConfirmation({
+      confirmedDecisions: [
+        makeConfirmedDecision({ item_id: "item_002" }),
+        makeConfirmedDecision({ item_id: "item_003" }),
+      ],
+    });
+    render(<DeclutterConfirmationPanel {...baseProps({
+      confirmationStatus: "confirmed", confirmation: shelfConfirmation, reviewItems: shelves, clipboardWriter: writer,
+    })} />);
+    await user.click(screen.getByRole("button", { name: "Copy summary" }));
+    expect(writer).toHaveBeenCalledWith("Keep: shelf (2)");
+  });
+
+  test("copy failure is generic and does not alter the summary", async () => {
+    const user = userEvent.setup();
+    const writer = vi.fn().mockRejectedValue(new Error("private clipboard detail"));
+    render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation, reviewItems, clipboardWriter: writer })} />);
+    await user.click(screen.getByRole("button", { name: "Copy summary" }));
+    expect(await screen.findByText("Could not copy the summary. Nothing has changed.")).toBeInTheDocument();
+    expect(screen.queryByText(/private clipboard detail/)).not.toBeInTheDocument();
+    expect(screen.getByText("lamp")).toBeInTheDocument();
+  });
+
+  test("no copy action before confirmation and no em dash", () => {
+    const { container } = render(<DeclutterConfirmationPanel {...baseProps({ reviewItems })} />);
+    expect(screen.queryByRole("button", { name: "Copy summary" })).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain("\u2014");
   });
 });

@@ -223,6 +223,8 @@ export default function BothPage() {
                 confirmationError={flow.confirmationError}
                 onConfirm={flow.confirm}
                 confirmation={flow.confirmation}
+                reviewItems={flow.reviewItems}
+                imageUrl={imageUrl}
                 onReviewUnresolved={() => goToStep("review")}
                 nextStepNote={NEXT_STEP_NOTE}
               />

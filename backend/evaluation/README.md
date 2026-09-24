@@ -1,5 +1,34 @@
 # Evaluation
 
+## 2026-09-24 — Build 2: phased deterministic tidy plan and confirmed-choices summary
+
+The first three recorded UAT sessions motivated a focused revision, not a
+claim that the revision has already improved usability. P2 rated Reorganise
+usefulness 1/5 and P3 rated it 2/5; P3 described the old tidy plan as too
+general. P1, by contrast, found the checklist systematic and requested a
+final overview of confirmed Keep, Sell, Donate and Discard decisions.
+P1 and P2 named image generation least useful; P3 named the tidy plan.
+The new build should be
+judged in P4 and P5, with the build version recorded for each session.
+
+The new `tidy_plan` uses fixed, room-sensitive phases and selected-item
+evidence. Generic method-level nouns such as "a tray or drawer divider"
+are allowed as conditional advice; they are not claims that the room
+contains that furniture. Item-specific steps carry reviewed `item_id`s,
+and Both's departing steps use replayed, non-excluded confirmed choices.
+Empty evidence-gated phases are omitted. The existing `action_plan` stays
+in the API for provenance, but the UI displays `tidy_plan`. No LLM is
+called to generate either plan or the storage suggestions. The retained
+LLM checklist experiment remains research-only because its two real
+outputs failed human review (see 2026-09-17 section below).
+
+The Confirm choices panel now lists every confirmed decision by category,
+separates excluded items, and offers a copyable text summary. This is a
+frontend presentation of existing confirmation data, not new AI output.
+No post-change participant result is reported here yet.
+
+---
+
 Tracked, condensed summaries of evaluation runs. The raw per-run JSON
 lives in `evaluation/results/`, which is **gitignored** (`.gitignore`:
 `backend/evaluation/results/*`) — those files are local-only and are not

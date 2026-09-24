@@ -268,6 +268,8 @@ export default function DeclutterPage() {
                 confirmationError={confirmationError}
                 onConfirm={confirm}
                 confirmation={confirmation}
+                reviewItems={reviewItems}
+                imageUrl={analysedImageUrl}
                 onReviewUnresolved={() => goToStep("review")}
               />
 

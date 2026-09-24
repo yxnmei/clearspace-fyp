@@ -16,7 +16,7 @@
 //      response never carries at all, this is a genuinely different
 //      envelope, not a variant of the Declutter one.
 //   2. normaliseGenerateResponse(), validates POST /generate's response
-//      (GenerateResponse: action_plan + focus_areas + storage_suggestions
+//      (GenerateResponse: action_plan + tidy_plan + focus_areas + storage_suggestions
 //      + image_prompt + the image fields) against the exact
 //      selected_item_ids that were requested and the input_image_sha256
 //      the upload step reported, both passed in by the caller, exactly
@@ -33,8 +33,8 @@
 // the only identity. Duplicate labels are explicitly legal and remain
 // fully independent (see requireNoDuplicates, which only ever runs
 // against item_id lists). Focus areas and storage suggestions may only
-// reference selected item_ids; the checklist itself references no ids at
-// all (it is prose, never an item partition).
+// reference selected item_ids. Phased tidy steps reference only selected
+// or, for Both, confirmed non-excluded departing item_ids.
 //
 // A checklist-preserving image_status="unavailable" response is a
 // SUCCESSFUL, fully validated result here, never thrown as an error.
@@ -73,6 +73,11 @@ const TITLE_MAX_LENGTH = 80;
 const INSTRUCTION_MIN_LENGTH = 10;
 const INSTRUCTION_MAX_LENGTH = 300;
 const ACTION_KEYS = ["instruction", "priority", "title"];
+const PHASE_ORDER = ["empty_clean", "sort", "zones", "cables", "maintain"];
+const PHASE_TITLES = ["Empty and clean", "Sort", "Set up zones", "Cables", "Keep it tidy"];
+const TIDY_PLAN_KEYS = ["phases"];
+const TIDY_PHASE_KEYS = ["phase_id", "steps", "title"];
+const TIDY_STEP_KEYS = ["item_ids", "step_id", "text"];
 const MAX_FOCUS_AREAS = 3;
 const VALID_FOCUS_AREA_IDS = new Set(["left", "centre", "right", "other"]);
 const FOCUS_AREA_KEYS = ["area_id", "item_ids", "label"];
@@ -309,6 +314,42 @@ function validateActionPlan(plan, runId) {
   }
 }
 
+function validateTidyPlan(plan, allowedItemIds) {
+  if (!isPlainObject(plan)) fail("tidy_plan must be an object");
+  requireExactKeys(plan, TIDY_PLAN_KEYS, "tidy_plan");
+  const phases = requireArray(plan.phases, "tidy_plan.phases");
+  if (phases.length < 1 || phases.length > 5) fail("tidy_plan.phases must contain 1..5 entries");
+  const allowed = new Set(allowedItemIds);
+  let previousPhase = -1;
+  const stepIds = [];
+  phases.forEach((phase, i) => {
+    const name = `tidy_plan.phases[${i}]`;
+    if (!isPlainObject(phase)) fail(`${name} must be an object`);
+    requireExactKeys(phase, TIDY_PHASE_KEYS, name);
+    const order = PHASE_ORDER.indexOf(phase.phase_id);
+    if (order < 0 || order <= previousPhase) fail(`${name}.phase_id must be unique and in PHASE_ORDER`);
+    previousPhase = order;
+    if (phase.title !== PHASE_TITLES[order]) fail(`${name}.title does not match phase_id`);
+    const steps = requireArray(phase.steps, `${name}.steps`);
+    if (steps.length < 1 || steps.length > 6) fail(`${name}.steps must contain 1..6 entries`);
+    steps.forEach((step, j) => {
+      const stepName = `${name}.steps[${j}]`;
+      if (!isPlainObject(step)) fail(`${stepName} must be an object`);
+      requireExactKeys(step, TIDY_STEP_KEYS, stepName);
+      if (step.step_id !== `${phase.phase_id}-${j + 1}`) fail(`${stepName}.step_id must match phase order`);
+      stepIds.push(step.step_id);
+      requireBoundedString(step.text, `${stepName}.text`, 10, 300);
+      const ids = requireArray(step.item_ids, `${stepName}.item_ids`);
+      ids.forEach((id, k) => {
+        requireItemId(id, `${stepName}.item_ids[${k}]`);
+        if (!allowed.has(id)) fail(`${stepName} references an item_id outside the reviewed selection`);
+      });
+      requireNoDuplicates(ids, `${stepName}.item_ids entry`);
+    });
+  });
+  requireNoDuplicates(stepIds, "tidy step_id");
+}
+
 // Focus areas: at most three, count-ordered, every item_id selected and
 // in at most one area. Joined by item_id only; the label is display text.
 function validateFocusAreas(focusAreas, selectedItemIds) {
@@ -371,8 +412,9 @@ function validateStorageSuggestions(suggestions, selectedItemIds) {
 // The shared, non-image part of both generate responses. `selectedItemIds`
 // is the authoritative selection: the client's own request for
 // /generate, the server-derived confirmed Keep set for /generate/confirmed.
-function validateGenerationBody(response, runId, selectedItemIds) {
+function validateGenerationBody(response, runId, selectedItemIds, tidyAllowedItemIds = selectedItemIds) {
   validateActionPlan(response.action_plan, runId);
+  validateTidyPlan(response.tidy_plan, tidyAllowedItemIds);
   validateFocusAreas(response.focus_areas, selectedItemIds);
   validateStorageSuggestions(response.storage_suggestions, selectedItemIds);
   requireNonEmptyString(response.image_prompt, "image_prompt");
@@ -452,6 +494,7 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
   return {
     runId: responseRunId,
     actionPlan: response.action_plan,
+    tidyPlan: response.tidy_plan,
     focusAreas: response.focus_areas,
     storageSuggestions: response.storage_suggestions,
     imagePrompt: response.image_prompt,
@@ -467,7 +510,7 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 
 // POST /generate/confirmed's response (ConfirmedGenerateResponse, R6,
 // Both), see app/api/routes.py: EXTENDS GenerateResponse's shape
-// (run_id/action_plan/focus_areas/storage_suggestions/image_prompt/
+// (run_id/action_plan/tidy_plan/focus_areas/storage_suggestions/image_prompt/
 // image_status/image/image_unavailable_reason) with `confirmation`,
 // never reshaping it. This adapter mirrors that composition: it
 // validates the shared generation portion with the SAME
@@ -519,7 +562,12 @@ export function normaliseConfirmedGenerateResponse(
   // Focus areas and suggestions may only reference the server-derived
   // confirmed Keep set, never a client-supplied selection (there is none
   // here at all; see generateConfirmedReorganisation in api/client.js).
-  validateGenerationBody(response, runId, confirmation.confirmedKeepIds);
+  validateGenerationBody(
+    response,
+    runId,
+    confirmation.confirmedKeepIds,
+    confirmation.confirmedDecisions.filter((decision) => !decision.excluded).map((decision) => decision.item_id)
+  );
 
   if (!VALID_IMAGE_STATUS.has(response.image_status)) {
     fail(`image_status is not "generated" or "unavailable": ${JSON.stringify(response.image_status)}`);
@@ -541,6 +589,7 @@ export function normaliseConfirmedGenerateResponse(
     runId: responseRunId,
     confirmation,
     actionPlan: response.action_plan,
+    tidyPlan: response.tidy_plan,
     focusAreas: response.focus_areas,
     storageSuggestions: response.storage_suggestions,
     imagePrompt: response.image_prompt,

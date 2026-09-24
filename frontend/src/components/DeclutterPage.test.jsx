@@ -1053,7 +1053,7 @@ describe("DeclutterPage wizard, Confirm choices panel", () => {
     expect(screen.queryByRole("heading", { name: /confirm your choices/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /confirm decisions/i })).not.toBeInTheDocument();
     expect(within(confirmPanel()).getByRole("status")).toHaveTextContent(/1 decision confirmed/i);
-    expect(within(confirmPanel()).getByText("Keep").closest("div").querySelector("dd")).toHaveTextContent("1");
+    expect(within(within(confirmPanel()).getByLabelText("Confirmed decisions")).getByText("Keep").closest("div").querySelector("dd")).toHaveTextContent("1");
     expect(within(confirmPanel()).getByText(/listing drafts for the items you confirmed as sell/i)).toBeInTheDocument();
 
     const text = visibleText();

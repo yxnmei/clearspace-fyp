@@ -192,6 +192,7 @@ def run_both_generation(
         user_context=user_context,
         action_generator=None,  # explicit production choice — see this function's docstring
         image_generator=image_generator,
+        departing_decisions=confirmation.confirmed_decisions,
     )
 
     return BothGenerationResult(run_id=run_id, confirmation=confirmation, pipeline=pipeline)

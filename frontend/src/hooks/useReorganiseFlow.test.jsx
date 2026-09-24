@@ -75,6 +75,7 @@ function makeActionPlan(runId, overrides = {}) {
 function makeGenerationBody(runId, itemIds) {
   return {
     action_plan: makeActionPlan(runId),
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the main surface.", item_ids: itemIds.slice(0, 1) }] }] },
     focus_areas: [{ area_id: "left", label: "Left side", item_ids: itemIds }],
     storage_suggestions: [],
     image_prompt: "a tidy bedroom",

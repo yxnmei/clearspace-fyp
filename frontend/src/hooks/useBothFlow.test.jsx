@@ -111,6 +111,7 @@ function makeConfirmResponse(runId, confirmed) {
 
 function makeGenerationBody(runId, itemIds) {
   return {
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the main surface.", item_ids: itemIds.slice(0, 1) }] }] },
     action_plan: {
       run_id: runId,
       actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],

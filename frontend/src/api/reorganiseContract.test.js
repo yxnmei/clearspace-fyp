@@ -180,6 +180,7 @@ function makeGeneratedResponse(overrides = {}) {
   return {
     run_id: "run1",
     action_plan: makeActionPlan(),
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the main surface.", item_ids: ["item_001"] }] }] },
     focus_areas: [makeFocusArea()],
     storage_suggestions: [],
     image_prompt: "A tidy, well-organised bedroom.",
@@ -207,6 +208,7 @@ describe("normaliseGenerateResponse, generated", () => {
     const result = normaliseGenerateResponse(makeGeneratedResponse(), OPTS);
     expect(result.runId).toBe("run1");
     expect(result.actionPlan.actions).toHaveLength(2);
+    expect(result.tidyPlan.phases[0].title).toBe("Empty and clean");
     expect(result.focusAreas).toHaveLength(1);
     expect(result.storageSuggestions).toEqual([]);
     expect(result.imagePrompt).toBe("A tidy, well-organised bedroom.");
@@ -296,6 +298,42 @@ describe("normaliseGenerateResponse, generated", () => {
       const bad = makeGeneratedResponse({ image: makeGeneratedImage({ input_image_sha256: HASH_A }) }); // OPTS expects HASH_B
       expect(() => normaliseGenerateResponse(bad, OPTS)).toThrow(/input_image_sha256/);
     });
+  });
+});
+
+describe("tidy_plan contract", () => {
+  function badPlan(change) {
+    const plan = structuredClone(makeGeneratedResponse().tidy_plan);
+    change(plan);
+    return makeGeneratedResponse({ tidy_plan: plan });
+  }
+
+  test("rejects absent, extra and malformed plan fields", () => {
+    expect(() => normaliseGenerateResponse(makeGeneratedResponse({ tidy_plan: undefined }), OPTS)).toThrow(/tidy_plan/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.extra = true; }), OPTS)).toThrow(/exactly the keys/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases = []; }), OPTS)).toThrow(/1..5/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps = []; }), OPTS)).toThrow(/1..6/);
+  });
+
+  test("rejects phase order, repeats and title drift", () => {
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].phase_id = "unknown"; }), OPTS)).toThrow(/phase_id/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases.push(structuredClone(p.phases[0])); }), OPTS)).toThrow(/PHASE_ORDER/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].title = "Wrong"; }), OPTS)).toThrow(/title/);
+  });
+
+  test("rejects malformed steps and unreviewed IDs", () => {
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps[0].extra = "x"; }), OPTS)).toThrow(/exactly the keys/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps[0].step_id = "wrong"; }), OPTS)).toThrow(/step_id/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps[0].text = "short"; }), OPTS)).toThrow(/text/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps[0].item_ids = ["item_999"]; }), OPTS)).toThrow(/outside/);
+    expect(() => normaliseGenerateResponse(badPlan((p) => { p.phases[0].steps[0].item_ids = ["item_001", "item_001"]; }), OPTS)).toThrow(/duplicate/);
+  });
+
+  test("Both accepts a confirmed departing item in the sort phase", () => {
+    const response = makeConfirmedGenerateResponse({ tidy_plan: { phases: [
+      { phase_id: "sort", title: "Sort", steps: [{ step_id: "sort-1", text: "Set aside to sell: monitor.", item_ids: ["item_002"] }] },
+    ] } });
+    expect(normaliseConfirmedGenerateResponse(response, CONFIRMED_OPTS).tidyPlan.phases[0].steps[0].item_ids).toEqual(["item_002"]);
   });
 });
 
@@ -915,6 +953,7 @@ function makeConfirmedGenerateResponse(overrides = {}) {
     run_id: "run1",
     confirmation: makeConfirmationResponse(),
     action_plan: makeActionPlan(),
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the main surface.", item_ids: ["item_001"] }] }] },
     focus_areas: [makeFocusArea({ item_ids: ["item_001"] })],
     storage_suggestions: [],
     image_prompt: "A tidy, well-organised bedroom.",

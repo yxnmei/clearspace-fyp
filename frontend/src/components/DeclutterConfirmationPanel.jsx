@@ -1,5 +1,8 @@
-import { CheckCircle2, EyeOff, Loader2, PencilLine, TriangleAlert, Undo2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Copy, EyeOff, Loader2, PencilLine, TriangleAlert, Undo2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import ItemCropThumbnail from "./ItemCropThumbnail";
 import { DECISION_OPTIONS } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
@@ -109,6 +112,40 @@ function confirmedCounts(confirmation) {
   return counts;
 }
 
+const SUMMARY_GROUPS = [
+  ["keep", "Keep"], ["sell", "Sell"], ["donate", "Donate"], ["discard", "Discard"], ["excluded", "Excluded"],
+];
+
+function defaultClipboardWriter(text) {
+  if (typeof navigator !== "undefined" && typeof navigator.clipboard?.writeText === "function") {
+    return navigator.clipboard.writeText(text);
+  }
+  return Promise.reject(new Error("Clipboard API unavailable"));
+}
+
+function summaryRows(confirmation, reviewItems) {
+  const byId = new Map(reviewItems.map((item) => [item.item_id, item]));
+  return SUMMARY_GROUPS.map(([value, title]) => ({
+    value,
+    title,
+    entries: confirmation.confirmedDecisions
+      .filter((decision) => (value === "excluded" ? decision.excluded : !decision.excluded && decision.confirmed_decision === value))
+      .map((decision) => {
+        const item = byId.get(decision.item_id);
+        return { decision, item, label: item?.effective_label ?? item?.clean_label ?? "Item" };
+      }),
+  })).filter((group) => group.entries.length > 0);
+}
+
+function copySummaryText(groups) {
+  return groups.map(({ title, entries }) => {
+    const counts = new Map();
+    for (const { label } of entries) counts.set(label, (counts.get(label) ?? 0) + 1);
+    const labels = [...counts].map(([label, count]) => count === 1 ? label : `${label} (${count})`);
+    return `${title}: ${labels.join(", ")}`;
+  }).join("\n");
+}
+
 export const DECLUTTER_NEXT_STEP_NOTE =
   "On the next screen you can generate editable listing drafts for the items you confirmed as Sell. Nothing is generated until you ask.";
 
@@ -122,15 +159,42 @@ export default function DeclutterConfirmationPanel({
   confirmationError,
   onConfirm,
   confirmation = null,
+  reviewItems = [],
+  imageUrl = null,
+  clipboardWriter = defaultClipboardWriter,
   onReviewUnresolved,
   nextStepNote = DECLUTTER_NEXT_STEP_NOTE,
 }) {
   const isConfirming = confirmationStatus === "confirming";
   const isConfirmed = confirmationStatus === "confirmed" && confirmation !== null;
+  const [copyState, setCopyState] = useState("idle");
+  const copyTokenRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; copyTokenRef.current += 1; };
+  }, []);
+  useEffect(() => { copyTokenRef.current += 1; setCopyState("idle"); }, [confirmation]);
+
+  function handleCopy(groups) {
+    const token = (copyTokenRef.current += 1);
+    setCopyState("idle");
+    const current = () => mountedRef.current && copyTokenRef.current === token;
+    try {
+      const result = clipboardWriter(copySummaryText(groups));
+      Promise.resolve(result).then(
+        () => { if (current()) setCopyState("copied"); },
+        () => { if (current()) setCopyState("error"); }
+      );
+    } catch {
+      if (current()) setCopyState("error");
+    }
+  }
 
   // ------------------------------------------------------------ confirmed
   if (isConfirmed) {
     const decisionCount = confirmation.confirmedDecisions.length;
+    const groups = summaryRows(confirmation, reviewItems);
     return (
       <section
         aria-labelledby="confirmation-panel-heading"
@@ -152,6 +216,31 @@ export default function DeclutterConfirmationPanel({
             excludedCount={confirmation.excludedCount}
             label="Confirmed decisions"
           />
+        </div>
+
+        <div className="mt-5 space-y-4" aria-label="Confirmed choices summary">
+          {groups.map((group) => (
+            <section key={group.value}>
+              <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
+              <ul className="mt-2 space-y-2">
+                {group.entries.map(({ decision, item, label }) => (
+                  <li key={decision.item_id} className="flex items-center gap-3 rounded-control border border-border bg-surface p-2 text-sm">
+                    <ItemCropThumbnail imageUrl={imageUrl} box={item?.box} className="h-8 w-8" />
+                    <span className="min-w-0 flex-1 break-words">{label}</span>
+                    {decision.decision_changed && <Badge variant="warning">Changed</Badge>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+        <div className="mt-4">
+          <Button type="button" variant="outline" size="sm" onClick={() => handleCopy(groups)}>
+            <Copy aria-hidden="true" width={14} height={14} />
+            Copy summary
+          </Button>
+          {copyState === "copied" && <p role="status" className="mt-2 text-sm text-success">Summary copied to your clipboard.</p>}
+          {copyState === "error" && <p role="status" className="mt-2 text-sm text-error">Could not copy the summary. Nothing has changed.</p>}
         </div>
 
         <p className="mt-4 text-sm text-muted-foreground">{nextStepNote}</p>

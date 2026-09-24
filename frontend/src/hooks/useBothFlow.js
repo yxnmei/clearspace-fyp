@@ -143,7 +143,7 @@ export function useBothFlow({ listingApi } = {}) {
   const generate = useCallback(async () => {
     // Silent no-op guards, mirroring useReorganiseFlow.generate()'s own
     // convention, a duplicate /generate/confirmed dispatch is expensive
-    // (Phi-4-mini planning + a real remote generation call), so this
+    // (a real remote image-generation call), so this
     // hook stays safe even if the disabled-button UI is ever bypassed.
     if (declutter.confirmationStatus !== "confirmed") return null;
     if (!declutter.confirmation || declutter.confirmation.confirmedKeepIds.length === 0) return null; // empty Keep never reaches the network

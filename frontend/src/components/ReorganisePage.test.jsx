@@ -57,6 +57,7 @@ function makeUploadResponse() {
 function makeGeneratedResponse() {
   return {
     run_id: "run1",
+    tidy_plan: { phases: [{ phase_id: "empty_clean", title: "Empty and clean", steps: [{ step_id: "empty_clean-1", text: "Clear the desk", item_ids: ["item_001"] }] }] },
     action_plan: {
       run_id: "run1",
       actions: [{ priority: 1, title: "Clear the desk", instruction: "Straighten the lamp and clear the space around it." }],
@@ -247,7 +248,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
     await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument());
-    const checklist = screen.getByRole("list", { name: /checklist actions/i });
+    const checklist = screen.getByRole("list", { name: /empty and clean steps/i });
     expect(within(checklist).getByText("Clear the desk")).toBeInTheDocument();
     expect(within(checklist).getByRole("checkbox", { name: /clear the desk/i })).not.toBeChecked();
     expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
@@ -257,7 +258,7 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     expect(within(suggestions).queryByText(/^For:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /^storage suggestions$/i })).not.toBeInTheDocument();
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Checklist", "Visual preview", "Storage and organisation ideas"]);
+    expect(headings).toEqual(["Tidy plan", "Visual preview", "Storage and organisation ideas"]);
     expect(screen.queryByText(/room plan/i)).not.toBeInTheDocument();
     // checking a step is local only: no request, no navigation change
     await userEvent.click(within(checklist).getByRole("checkbox", { name: /clear the desk/i }));
@@ -339,10 +340,11 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByText("Group the picture frame items")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Clear the desk")).toBeInTheDocument());
+    expect(screen.queryByText("Group the picture frame items")).not.toBeInTheDocument();
     expect(screen.queryByText(/ai assistant|deterministic|model call|prompt version|phi4-mini|checklist details|generation details/i)).not.toBeInTheDocument();
     expect(document.querySelector("details")).toBeNull();
-    expect(screen.getByText("0 of 3 completed")).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 completed")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^visual preview$/i })).toBeInTheDocument();
     // Direct Reorganise keeps its own result heading and its own Start over inside the result
     expect(screen.getByRole("heading", { level: 2, name: "Your tidy plan" })).toBeInTheDocument();
@@ -350,19 +352,12 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     const startOver = screen.getByRole("button", { name: /start over/i });
     expect(screen.getAllByRole("button", { name: /start over/i })).toHaveLength(1);
     expect(screen.getByRole("region", { name: "Your tidy plan" })).toContainElement(startOver);
-    // title-led rows in priority order, each with its one concise instruction beneath
-    const rows = within(screen.getByRole("list", { name: /checklist actions/i })).getAllByRole("listitem");
-    expect(rows).toHaveLength(3);
-    expect(within(rows[0]).getByText("Group the picture frame items")).toBeInTheDocument();
-    expect(within(rows[0]).getByText("Keep all 6 together so they are easier to find and put back.")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Tidy loose items on the left side")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Do a final space check")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Review the space once more and make sure every selected item has a clear place.")).toBeInTheDocument();
+    // The phased plan is the displayed result; the legacy action_plan is retained only in the response.
+    const rows = within(screen.getByRole("list", { name: /empty and clean steps/i })).getAllByRole("listitem");
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]).getByText("Clear the desk")).toBeInTheDocument();
     for (const row of rows) expect(within(row).getByRole("checkbox")).not.toBeChecked();
-    // the checkbox is named by the title alone and described by the instruction
-    const box = screen.getByRole("checkbox", { name: "Tidy loose items on the left side" });
-    expect(box).toHaveAccessibleDescription("Straighten the painting, jewelry, clock and the other loose items, then clear the surrounding space.");
+    expect(screen.getByRole("checkbox", { name: "Clear the desk" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /areas to focus on|focus areas/i })).not.toBeInTheDocument();
   });
 });

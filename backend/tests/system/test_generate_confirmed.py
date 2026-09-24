@@ -258,6 +258,8 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
 
     # server-derived: only item_001 (Keep) reaches planning, never item_002
     assert result["confirmation"]["confirmed_keep_ids"] == ["item_001"]
+    assert any(step["item_ids"] == ["item_002"] and "donate" in step["text"]
+               for phase in result["tidy_plan"]["phases"] for step in phase["steps"])
     assert [item.item_id for item in planner.calls[0]["selected_items"]] == ["item_001"]
 
     assert result["image_status"] == "generated"
@@ -282,6 +284,27 @@ def test_generate_confirmed_success_returns_generated_image_and_confirmation():
     assert len(planner.calls) == 1
     assert planner.calls[0]["generator"] is None
     assert len(generator.calls) == 1
+
+
+def test_generate_confirmed_tidy_plan_sorts_confirmed_sell_and_omits_departing_when_all_keep():
+    mixed = _do_both_upload([
+        {"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"},
+        {"item_number": 2, "label": "monitor", "decision": "sell", "reason": "spare"},
+    ])
+    _override_generate_deps()
+    response = client.post("/generate/confirmed", json=_confirmed_generate_body(mixed, PNG_BYTES))
+    assert response.status_code == 200
+    steps = [step for phase in response.json()["tidy_plan"]["phases"] for step in phase["steps"]]
+    assert any(step["item_ids"] == ["item_002"] and step["text"].startswith("Set aside to sell:") for step in steps)
+
+    kept = _do_both_upload([
+        {"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"},
+        {"item_number": 2, "label": "book", "decision": "keep", "reason": "reading"},
+    ])
+    response = client.post("/generate/confirmed", json=_confirmed_generate_body(kept, PNG_BYTES))
+    assert response.status_code == 200
+    steps = [step for phase in response.json()["tidy_plan"]["phases"] for step in phase["steps"]]
+    assert not any(step["text"].startswith("Set aside to") for step in steps)
 
 
 def test_generate_confirmed_has_no_checklist_model_dependency_to_override():

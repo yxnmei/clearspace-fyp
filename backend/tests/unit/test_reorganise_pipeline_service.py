@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from app.core.reorganise_actions import build_deterministic_checklist
 from app.core.reorganise_focus_areas import FocusArea
 from app.core.reorganise_storage import StorageSuggestion
-from app.core.schemas import AnalysisResult, BoundingBox, DetectedItem, SceneClassification
+from app.core.schemas import AnalysisResult, BoundingBox, ConfirmedDecision, Decision, DetectedItem, SceneClassification
 from app.models.image_gen_client import (
     IMAGE_GEN_API_VERSION,
     GenerationResult,
@@ -209,6 +209,30 @@ def test_successful_generation_calls_each_boundary_exactly_once():
     assert result.image_status == "generated"
     assert len(image_generator.calls) == 1
     assert len(generator.calls) == 1
+
+
+def _confirmed(item_id: str, decision: Decision) -> ConfirmedDecision:
+    return ConfirmedDecision(item_id=item_id, ai_decision=decision, confirmed_decision=decision, ai_reason="reviewed")
+
+
+def test_tidy_plan_is_present_for_generated_and_unavailable_images():
+    generated = run_reorganise_pipeline(**_base_kwargs())
+    assert generated.tidy_plan.phases[0].phase_id == "empty_clean"
+    assert generated.departing_item_ids == []
+    unavailable = run_reorganise_pipeline(**_base_kwargs(image_generator=FakeGenerator(exception=ImageGenUnavailableError("offline"))))
+    assert unavailable.tidy_plan == generated.tidy_plan
+
+
+def test_departing_decisions_must_exist_and_not_overlap_selected():
+    analysis = _analysis_result("run1", ["item_001", "item_002"], labels=["lamp", "book"])
+    kwargs = _base_kwargs(analysis=analysis, selected_item_ids=["item_001"])
+    with pytest.raises(ReorganisePipelineInputError, match="unknown, selected or duplicate"):
+        run_reorganise_pipeline(**kwargs, departing_decisions=[_confirmed("item_999", Decision.SELL)])
+    with pytest.raises(ReorganisePipelineInputError, match="unknown, selected or duplicate"):
+        run_reorganise_pipeline(**kwargs, departing_decisions=[_confirmed("item_001", Decision.SELL)])
+    result = run_reorganise_pipeline(**kwargs, departing_decisions=[_confirmed("item_002", Decision.SELL)])
+    assert result.departing_item_ids == ["item_002"]
+    assert any(step.item_ids == ["item_002"] and "sell" in step.text for phase in result.tidy_plan.phases for step in phase.steps)
 
 
 def test_pipeline_signature_has_no_health_checker_parameter():
@@ -427,6 +451,11 @@ def test_pipeline_result_rejects_focus_areas_or_suggestions_naming_unselected_it
     base = run_reorganise_pipeline(**_base_kwargs())
     fields = base.model_dump()
     fields["generation"] = base.generation
+
+    bad_plan = base.tidy_plan.model_dump()
+    bad_plan["phases"][0]["steps"][0]["item_ids"] = ["item_999"]
+    with pytest.raises(ValidationError, match="tidy step references"):
+        ReorganisePipelineResult(**{**fields, "tidy_plan": bad_plan})
 
     with pytest.raises(ValidationError, match="unselected"):
         ReorganisePipelineResult(**{**fields, "focus_areas": [FocusArea(area_id="left", label="Left side", item_ids=["item_999"])]})
