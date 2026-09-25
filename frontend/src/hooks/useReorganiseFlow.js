@@ -1,6 +1,11 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { generateReorganisation, uploadImage } from "../api/client";
 import { normaliseGenerateResponse, normaliseReorganiseUploadResponse } from "../api/reorganiseContract";
+import {
+  applyLabelCorrections,
+  serialiseLabelCorrections,
+  validateCorrectedLabel,
+} from "../lib/reorganiseLabelCorrections";
 
 // Dedicated Direct Reorganise state machine, a SEPARATE hook from
 // useDeclutterFlow rather than branches added to it, matching this
@@ -36,12 +41,24 @@ import { normaliseGenerateResponse, normaliseReorganiseUploadResponse } from "..
 // page level against this hook's own `file` field, exactly like
 // DeclutterPage composes useObjectUrl against its own captured
 // submittedFile.
+//
+// Label corrections (Select items) live in labelCorrectionsById, keyed by
+// item_id, beside the analysis rather than inside it: `analysis` stays
+// exactly what /upload returned and `items` is a derived display list.
+// They belong to one upload, so a new upload or reset clears them. A
+// correction that actually changes a label invalidates any in-flight or
+// completed generation, exactly like a new upload does: the old plan was
+// built from the old label, so it is cleared and the user must create the
+// plan again. Corrections never change the selection.
 const INITIAL_UPLOAD_STATE = {
   runId: null,
   analysis: null,
   inputImageSha256: null,
   selectedItemIds: [],
+  labelCorrectionsById: {},
 };
+
+const LABEL_CORRECTION_PHASES = new Set(["selecting", "generating", "result"]);
 
 export function useReorganiseFlow() {
   const [phase, setPhase] = useState("upload");
@@ -53,6 +70,9 @@ export function useReorganiseFlow() {
 
   const [generateResult, setGenerateResult] = useState(null);
   const [generateError, setGenerateError] = useState(null);
+  // True once a label correction has cleared a plan that was showing or
+  // being created; tells the Tidy plan screen why it must be created again.
+  const [labelsChangedSincePlan, setLabelsChangedSincePlan] = useState(false);
 
   // Two SEPARATE concurrency domains, see module docstring and
   // useDeclutterFlow's own extensive comment on why a single shared ref
@@ -109,6 +129,7 @@ export function useReorganiseFlow() {
       uploadGenerationRef.current += 1; // invalidates a previous/in-flight upload's pending write
       const generation = uploadGenerationRef.current;
       invalidateGeneration(); // a new upload invalidates any outstanding/completed generate() too
+      setLabelsChangedSincePlan(false);
 
       setPhase("analysing");
       setFile(nextFile); // captured immediately, an object-URL preview can show during "analysing"
@@ -133,6 +154,7 @@ export function useReorganiseFlow() {
           analysis: normalised.analysis,
           inputImageSha256: normalised.inputImageSha256,
           selectedItemIds: actionableIds,
+          labelCorrectionsById: {},
         });
         setPhase("selecting");
       } catch (err) {
@@ -174,6 +196,66 @@ export function useReorganiseFlow() {
     setUploadState((prev) => ({ ...prev, selectedItemIds: [] }));
   }, [phase]);
 
+  // Sets (label) or removes (null) one item's correction and, because the
+  // label changed, invalidates any in-flight or completed generation.
+  const applyLabelChange = useCallback(
+    (itemId, nextLabel) => {
+      const hadPlan = phase === "generating" || phase === "result";
+      invalidateGeneration(); // a stale in-flight response is now discarded by its token check
+      setUploadState((prev) => {
+        const nextCorrections = { ...prev.labelCorrectionsById };
+        if (nextLabel === null) delete nextCorrections[itemId];
+        else nextCorrections[itemId] = nextLabel;
+        return { ...prev, labelCorrectionsById: nextCorrections };
+      });
+      if (phase !== "selecting") setPhase("selecting");
+      if (hadPlan) setLabelsChangedSincePlan(true);
+    },
+    [phase, invalidateGeneration]
+  );
+
+  const findActionableItem = useCallback(
+    (itemId, caller) => {
+      const item = uploadState.analysis?.items.find(
+        (candidate) => candidate.item_id === itemId && candidate.item_role === "actionable"
+      );
+      if (!item) throw new Error(`${caller}: unknown actionable item_id ${JSON.stringify(itemId)}`);
+      return item;
+    },
+    [uploadState.analysis]
+  );
+
+  // Returns true when the label actually changed. Saving the detector's
+  // own label removes the correction; saving the current label is a no-op
+  // that invalidates nothing. Throws for an unknown item or invalid label
+  // (the UI validates first, so a throw is a caller bug).
+  const correctItemLabel = useCallback(
+    (itemId, label) => {
+      if (!LABEL_CORRECTION_PHASES.has(phase) || !uploadState.analysis) return false;
+      const item = findActionableItem(itemId, "correctItemLabel");
+      const validated = validateCorrectedLabel(label);
+      if (!validated.ok) throw new Error(`correctItemLabel: ${validated.error}`);
+
+      const current = uploadState.labelCorrectionsById[itemId] ?? null;
+      const next = validated.value === item.clean_label ? null : validated.value;
+      if (next === current) return false;
+      applyLabelChange(itemId, next);
+      return true;
+    },
+    [phase, uploadState.analysis, uploadState.labelCorrectionsById, findActionableItem, applyLabelChange]
+  );
+
+  const clearItemLabelCorrection = useCallback(
+    (itemId) => {
+      if (!LABEL_CORRECTION_PHASES.has(phase) || !uploadState.analysis) return false;
+      findActionableItem(itemId, "clearItemLabelCorrection");
+      if (!(itemId in uploadState.labelCorrectionsById)) return false;
+      applyLabelChange(itemId, null);
+      return true;
+    },
+    [phase, uploadState.analysis, uploadState.labelCorrectionsById, findActionableItem, applyLabelChange]
+  );
+
   const generate = useCallback(async () => {
     // Silent no-op guards, mirroring useDeclutterFlow.performCorrection's
     // convention (not confirm()'s laxer one), a duplicate /generate
@@ -191,18 +273,24 @@ export function useReorganiseFlow() {
     const runIdSnapshot = uploadState.runId;
     const analysisSnapshot = uploadState.analysis;
     const selectedSnapshot = uploadState.selectedItemIds;
+    const labelCorrectionsSnapshot = serialiseLabelCorrections(
+      uploadState.analysis.items,
+      uploadState.labelCorrectionsById
+    );
     const inputImageSha256Snapshot = uploadState.inputImageSha256;
     const fileSnapshot = file;
     const contextSnapshot = context;
 
     setPhase("generating");
     setGenerateError(null);
+    setLabelsChangedSincePlan(false);
 
     try {
       const response = await generateReorganisation({
         runId: runIdSnapshot,
         analysis: analysisSnapshot,
         selectedItemIds: selectedSnapshot,
+        labelCorrections: labelCorrectionsSnapshot,
         file: fileSnapshot,
         inputImageSha256: inputImageSha256Snapshot,
         userContext: contextSnapshot,
@@ -252,7 +340,16 @@ export function useReorganiseFlow() {
     setUploadError(null);
     setGenerateResult(null);
     setGenerateError(null);
+    setLabelsChangedSincePlan(false);
   }, []);
+
+  const items = useMemo(
+    () =>
+      uploadState.analysis
+        ? applyLabelCorrections(uploadState.analysis.items, uploadState.labelCorrectionsById)
+        : [],
+    [uploadState.analysis, uploadState.labelCorrectionsById]
+  );
 
   return {
     phase,
@@ -260,9 +357,11 @@ export function useReorganiseFlow() {
     context,
     runId: uploadState.runId,
     analysis: uploadState.analysis,
-    items: uploadState.analysis ? uploadState.analysis.items : [],
+    items, // display items: corrected labels applied, analysis itself untouched
     inputImageSha256: uploadState.inputImageSha256,
     selectedItemIds: uploadState.selectedItemIds,
+    labelCorrectionsById: uploadState.labelCorrectionsById,
+    labelsChangedSincePlan,
     uploadError,
     generateError,
     generateResult,
@@ -270,6 +369,8 @@ export function useReorganiseFlow() {
     toggleItemSelected,
     selectAllActionable,
     deselectAll,
+    correctItemLabel,
+    clearItemLabelCorrection,
     generate,
     reset,
   };

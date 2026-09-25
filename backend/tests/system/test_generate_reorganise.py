@@ -9,6 +9,7 @@ that real response, exactly as a real frontend would.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import io
 import subprocess
@@ -772,3 +773,153 @@ assert not leaked, sorted(leaked)
         [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(_BACKEND_DIR)
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# label_corrections: Select items label corrections
+# ---------------------------------------------------------------------------
+
+
+def _rope_and_cable_upload() -> dict:
+    return _do_reorganise_upload(
+        detections=[
+            FakeDetection(label="rope", box_xyxy=(0.1, 0.1, 0.2, 0.2), confidence=0.9),
+            FakeDetection(label="cable", box_xyxy=(0.7, 0.7, 0.8, 0.8), confidence=0.9),
+        ]
+    )
+
+
+def _all_step_text(result: dict) -> str:
+    return " ".join(step["text"] for phase in result["tidy_plan"]["phases"] for step in phase["steps"])
+
+
+def test_generate_without_label_corrections_still_succeeds():
+    upload_body = _rope_and_cable_upload()
+    _override_generate_deps()
+    body = _generate_request_body(upload_body, PNG_BYTES)
+    assert "label_corrections" not in body
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    assert "- rope (" in response.json()["image_prompt"]
+
+
+def test_generate_uses_corrected_label_in_tidy_plan_storage_and_image_prompt():
+    upload_body = _rope_and_cable_upload()
+    planner, generator = _override_generate_deps()
+    body = _generate_request_body(
+        upload_body, PNG_BYTES, label_corrections=[{"item_id": "item_001", "corrected_label": "  charger "}]
+    )
+    analysis_before = copy.deepcopy(body["analysis"])
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    result = response.json()
+    assert "charger" in _all_step_text(result)
+    assert "rope" not in _all_step_text(result)
+    assert [(s["name"], s["related_item_ids"]) for s in result["storage_suggestions"]] == [
+        ("Cable and accessory organiser", ["item_001", "item_002"])
+    ]
+    assert "- charger (" in result["image_prompt"]
+    assert "rope" not in result["image_prompt"]
+    assert generator.calls[0]["prompt"] == result["image_prompt"]
+    # The checklist stage saw the corrected item, with its detector label kept.
+    first = planner.calls[0]["selected_items"][0]
+    assert (first.effective_label, first.clean_label, first.label_source) == ("charger", "rope", "user")
+    # The request's own analysis object was not the carrier of the correction.
+    assert body["analysis"] == analysis_before
+
+
+def test_generate_label_correction_preserves_the_selection():
+    upload_body = _do_reorganise_upload(
+        detections=[
+            FakeDetection(label="rope", box_xyxy=(0.1, 0.1, 0.2, 0.2), confidence=0.9),
+            FakeDetection(label="cable", box_xyxy=(0.4, 0.4, 0.5, 0.5), confidence=0.9),
+            FakeDetection(label="lamp", box_xyxy=(0.7, 0.7, 0.8, 0.8), confidence=0.9),
+        ]
+    )
+    planner, _generator = _override_generate_deps()
+    body = _generate_request_body(
+        upload_body,
+        PNG_BYTES,
+        selected_item_ids=["item_001", "item_003"],
+        label_corrections=[
+            {"item_id": "item_001", "corrected_label": "charger"},
+            {"item_id": "item_002", "corrected_label": "extension cord"},
+        ],
+    )
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    result = response.json()
+    assert [item.item_id for item in planner.calls[0]["selected_items"]] == ["item_001", "item_003"]
+    assert "extension cord" not in result["image_prompt"]
+    assert "- charger (" in result["image_prompt"]
+
+
+def test_generate_corrects_duplicate_labels_independently_by_item_id():
+    upload_body = _do_reorganise_upload(
+        detections=[
+            FakeDetection(label="lamp", box_xyxy=(0.1, 0.1, 0.2, 0.2), confidence=0.9),
+            FakeDetection(label="lamp", box_xyxy=(0.4, 0.4, 0.5, 0.5), confidence=0.9),
+        ]
+    )
+    planner, _generator = _override_generate_deps()
+    body = _generate_request_body(
+        upload_body, PNG_BYTES, label_corrections=[{"item_id": "item_002", "corrected_label": "desk fan"}]
+    )
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 200
+    labels = {item.item_id: item.effective_label for item in planner.calls[0]["selected_items"]}
+    assert labels == {"item_001": "lamp", "item_002": "desk fan"}
+    listed = [line for line in response.json()["image_prompt"].splitlines() if line.startswith("- ")]
+    assert [line.split(" (")[0] for line in listed] == ["- lamp", "- desk fan"]
+
+
+@pytest.mark.parametrize(
+    "corrections",
+    [
+        [{"item_id": "item_001", "corrected_label": ""}],
+        [{"item_id": "item_001", "corrected_label": "   "}],
+        [{"item_id": "item_001", "corrected_label": "x" * 81}],
+        [{"item_id": "item_001", "corrected_label": "phone\ncharger"}],
+        [{"item_id": "item_001", "corrected_label": None}],
+        [{"item_id": "item_001"}],
+        [{"item_id": "item_001", "corrected_label": "charger", "label_source": "user"}],
+        [{"item_id": "not-an-id", "corrected_label": "charger"}],
+        [{"item_id": "item_999", "corrected_label": "charger"}],
+        [{"item_id": "item_001", "corrected_label": "charger"}, {"item_id": "item_001", "corrected_label": "cord"}],
+        {"item_001": "charger"},
+    ],
+    ids=[
+        "empty", "blank", "too-long", "multi-line", "null-label", "missing-label", "extra-field",
+        "malformed-id", "unknown-id", "duplicate-id", "not-a-list",
+    ],
+)
+def test_generate_invalid_label_corrections_return_422_before_generation(corrections):
+    upload_body = _rope_and_cable_upload()
+    planner, generator = _override_generate_deps()
+    body = _generate_request_body(upload_body, PNG_BYTES, label_corrections=corrections)
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 422
+    assert planner.calls == [] and generator.calls == []
+
+
+def test_generate_rejects_a_correction_smuggled_inside_the_analysis():
+    upload_body = _rope_and_cable_upload()
+    planner, generator = _override_generate_deps()
+    body = _generate_request_body(upload_body, PNG_BYTES)
+    body["analysis"] = copy.deepcopy(body["analysis"])
+    body["analysis"]["items"][0]["corrected_label"] = "charger"
+
+    response = client.post("/generate", json=body)
+
+    assert response.status_code == 422
+    assert planner.calls == [] and generator.calls == []

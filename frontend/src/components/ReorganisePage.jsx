@@ -143,6 +143,10 @@ export default function ReorganisePage() {
                 imageUrl={imageUrl}
                 selectionDisabled={flow.phase !== "selecting"}
                 enableBackToTop
+                onCorrectLabel={flow.correctItemLabel}
+                onClearLabelCorrection={flow.clearItemLabelCorrection}
+                correctionDisabled={flow.phase === "generating"}
+                planExists={flow.generateResult !== null}
               />
               <WizardNav
                 backLabel="Back to Analyse space"
@@ -181,6 +185,12 @@ export default function ReorganisePage() {
                     preview from the {flow.selectedItemIds.length} item
                     {flow.selectedItemIds.length === 1 ? "" : "s"} you included on Select items.
                   </p>
+                  {flow.labelsChangedSincePlan && (
+                    <p role="status" className="mt-3 rounded-control border border-border bg-surface-muted p-3 text-sm text-foreground">
+                      You corrected an item label after your last tidy plan, so that plan was cleared. Create the tidy
+                      plan again to use the corrected labels.
+                    </p>
+                  )}
                   {/* The image-service notice belongs here, inside the tidy
                       plan section, and is the ONE notice: the banner renders
                       nothing when the service is available, and it never

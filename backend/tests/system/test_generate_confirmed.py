@@ -661,3 +661,19 @@ def test_health_endpoint_still_works_and_is_unrelated():
     response = client.get("/image-gen/health")
     assert response.status_code == 200
     assert response.json() == {"available": True}
+
+
+def test_generate_confirmed_rejects_label_corrections_field():
+    """Direct Reorganise's label_corrections channel does not exist on
+    Both's route: Both's labels and Keep set come from server-side
+    confirmation only."""
+    upload_body = _do_both_upload([{"item_number": 1, "label": "lamp", "decision": "keep", "reason": "useful"}])
+    planner, generator = _override_generate_deps()
+    body = _confirmed_generate_body(upload_body, PNG_BYTES)
+    body["label_corrections"] = [{"item_id": "item_001", "corrected_label": "desk fan"}]
+
+    response = client.post("/generate/confirmed", json=body)
+
+    assert response.status_code == 422
+    assert planner.calls == []
+    assert generator.calls == []

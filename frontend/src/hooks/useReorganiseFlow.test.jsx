@@ -631,3 +631,286 @@ describe("useReorganiseFlow, generation ownership token (correction 1)", () => {
     expect(result.current.phase).toBe("result");
   });
 });
+
+describe("useReorganiseFlow, label corrections", () => {
+  async function uploadedFlow(items) {
+    client.uploadImage.mockResolvedValue(makeUploadResponse({ items }));
+    const { result } = renderHook(() => useReorganiseFlow());
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+    return result;
+  }
+
+  const ROPE_AND_CABLE = [
+    makeItem({ item_id: "item_001", raw_phrase: "rope", clean_label: "rope", effective_label: "rope" }),
+    makeItem({ item_id: "item_002", raw_phrase: "cable", clean_label: "cable", effective_label: "cable" }),
+  ];
+
+  test("a correction changes the displayed item, keeps the detector label, and leaves the analysis untouched", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    const analysisBefore = structuredClone(result.current.analysis);
+
+    let changed;
+    act(() => {
+      changed = result.current.correctItemLabel("item_001", "  charger ");
+    });
+
+    expect(changed).toBe(true);
+    expect(result.current.items[0]).toMatchObject({
+      item_id: "item_001",
+      clean_label: "rope",
+      corrected_label: "charger",
+      effective_label: "charger",
+      label_source: "user",
+    });
+    expect(result.current.items[1].effective_label).toBe("cable");
+    expect(result.current.labelCorrectionsById).toEqual({ item_001: "charger" });
+    expect(result.current.analysis).toEqual(analysisBefore);
+    expect(result.current.analysis.items[0].effective_label).toBe("rope");
+  });
+
+  test("a correction never changes the selection, for included or excluded items", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    act(() => result.current.toggleItemSelected("item_002"));
+    expect(result.current.selectedItemIds).toEqual(["item_001"]);
+
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+    act(() => {
+      result.current.correctItemLabel("item_002", "extension cord");
+    });
+
+    expect(result.current.selectedItemIds).toEqual(["item_001"]);
+  });
+
+  test("duplicate labels are corrected independently by item_id", async () => {
+    const result = await uploadedFlow([
+      makeItem({ item_id: "item_001" }),
+      makeItem({ item_id: "item_002" }),
+      makeItem({ item_id: "item_003" }),
+    ]);
+
+    act(() => {
+      result.current.correctItemLabel("item_002", "desk fan");
+    });
+
+    expect(result.current.items.map((item) => item.effective_label)).toEqual(["lamp", "desk fan", "lamp"]);
+    expect(result.current.items.map((item) => item.label_source)).toEqual(["detector", "user", "detector"]);
+  });
+
+  test("generate sends the corrections as labelCorrections alongside the unedited analysis", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+
+    const args = client.generateReorganisation.mock.calls[0][0];
+    expect(args.labelCorrections).toEqual([{ item_id: "item_001", corrected_label: "charger" }]);
+    expect(args.analysis).toBe(result.current.analysis);
+    expect(args.analysis.items[0]).toMatchObject({ clean_label: "rope", corrected_label: null, effective_label: "rope" });
+    expect(args.selectedItemIds).toEqual(["item_001", "item_002"]);
+  });
+
+  test("without corrections generate sends an empty labelCorrections list", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+    await act(async () => {
+      await result.current.generate();
+    });
+    expect(client.generateReorganisation.mock.calls[0][0].labelCorrections).toEqual([]);
+  });
+
+  test("saving the detector label, or clearing, removes the correction; saving the same label is a no-op", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+
+    let changed;
+    act(() => {
+      changed = result.current.correctItemLabel("item_001", "charger");
+    });
+    expect(changed).toBe(false);
+
+    act(() => {
+      changed = result.current.correctItemLabel("item_001", " rope ");
+    });
+    expect(changed).toBe(true);
+    expect(result.current.labelCorrectionsById).toEqual({});
+    expect(result.current.items[0].label_source).toBe("detector");
+
+    act(() => {
+      result.current.correctItemLabel("item_002", "charger");
+    });
+    act(() => {
+      changed = result.current.clearItemLabelCorrection("item_002");
+    });
+    expect(changed).toBe(true);
+    expect(result.current.labelCorrectionsById).toEqual({});
+    act(() => {
+      changed = result.current.clearItemLabelCorrection("item_002");
+    });
+    expect(changed).toBe(false);
+  });
+
+  test.each([
+    ["blank", "item_001", "   "],
+    ["too long", "item_001", "x".repeat(81)],
+    ["multi-line", "item_001", "phone\ncharger"],
+    ["non-string", "item_001", null],
+    ["unknown id", "item_999", "charger"],
+  ])("an invalid correction (%s) throws and changes nothing", async (_name, itemId, label) => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    expect(() => result.current.correctItemLabel(itemId, label)).toThrow(/correctItemLabel/);
+    expect(result.current.labelCorrectionsById).toEqual({});
+    expect(result.current.items[0].effective_label).toBe("rope");
+  });
+
+  test("a contextual item cannot be corrected", async () => {
+    const result = await uploadedFlow([
+      makeItem({ item_id: "item_001" }),
+      makeItem({ item_id: "item_002", item_role: "contextual" }),
+    ]);
+    expect(() => result.current.correctItemLabel("item_002", "rug")).toThrow(/unknown actionable item_id/);
+  });
+
+  test("before any analysis a correction is a no-op", () => {
+    const { result } = renderHook(() => useReorganiseFlow());
+    expect(result.current.correctItemLabel("item_001", "charger")).toBe(false);
+    expect(result.current.clearItemLabelCorrection("item_001")).toBe(false);
+  });
+
+  test("a correction while generating discards the in-flight success and requires a new plan", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    const pending = deferred();
+    client.generateReorganisation.mockReturnValueOnce(pending.promise);
+
+    let generatePromise;
+    act(() => {
+      generatePromise = result.current.generate();
+    });
+    expect(result.current.phase).toBe("generating");
+
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+    expect(result.current.phase).toBe("selecting");
+    expect(result.current.labelsChangedSincePlan).toBe(true);
+
+    await act(async () => {
+      pending.resolve(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+      expect(await generatePromise).toBeNull();
+    });
+
+    expect(result.current.generateResult).toBeNull();
+    expect(result.current.generateError).toBeNull();
+    expect(result.current.phase).toBe("selecting");
+    expect(result.current.labelsChangedSincePlan).toBe(true);
+  });
+
+  test("a correction while generating also discards a late rejection", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    const pending = deferred();
+    client.generateReorganisation.mockReturnValueOnce(pending.promise);
+
+    let generatePromise;
+    act(() => {
+      generatePromise = result.current.generate();
+    });
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+
+    await act(async () => {
+      pending.reject(new Error("network down"));
+      expect(await generatePromise).toBeNull();
+    });
+
+    expect(result.current.generateError).toBeNull();
+    expect(result.current.phase).toBe("selecting");
+  });
+
+  test("a correction after a finished plan clears it; regenerating uses the new label", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+    await act(async () => {
+      await result.current.generate();
+    });
+    expect(result.current.phase).toBe("result");
+
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+
+    expect(result.current.generateResult).toBeNull();
+    expect(result.current.phase).toBe("selecting");
+    expect(result.current.labelsChangedSincePlan).toBe(true);
+    expect(result.current.selectedItemIds).toEqual(["item_001", "item_002"]);
+
+    await act(async () => {
+      await result.current.generate();
+    });
+
+    expect(client.generateReorganisation).toHaveBeenCalledTimes(2);
+    expect(client.generateReorganisation.mock.calls[1][0].labelCorrections).toEqual([
+      { item_id: "item_001", corrected_label: "charger" },
+    ]);
+    expect(result.current.phase).toBe("result");
+    expect(result.current.labelsChangedSincePlan).toBe(false);
+  });
+
+  test("a no-op correction keeps a finished plan", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+    await act(async () => {
+      await result.current.generate();
+    });
+    const plan = result.current.generateResult;
+
+    act(() => {
+      result.current.correctItemLabel("item_001", "rope");
+    });
+
+    expect(result.current.generateResult).toBe(plan);
+    expect(result.current.phase).toBe("result");
+    expect(result.current.labelsChangedSincePlan).toBe(false);
+  });
+
+  test("a new upload clears corrections and the changed-labels notice", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse("run1", ["item_001", "item_002"]));
+    await act(async () => {
+      await result.current.generate();
+    });
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+    expect(result.current.labelsChangedSincePlan).toBe(true);
+
+    client.uploadImage.mockResolvedValue(makeUploadResponse({ runId: "run2", items: ROPE_AND_CABLE }));
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+
+    expect(result.current.labelCorrectionsById).toEqual({});
+    expect(result.current.items[0].effective_label).toBe("rope");
+    expect(result.current.labelsChangedSincePlan).toBe(false);
+  });
+
+  test("reset clears corrections", async () => {
+    const result = await uploadedFlow(ROPE_AND_CABLE);
+    act(() => {
+      result.current.correctItemLabel("item_001", "charger");
+    });
+    act(() => result.current.reset());
+    expect(result.current.labelCorrectionsById).toEqual({});
+    expect(result.current.items).toEqual([]);
+  });
+});

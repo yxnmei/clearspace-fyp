@@ -71,6 +71,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapte
 from app.core.image_validation import ImageValidationError, validate_image_bytes
 from app.core.reorganise_focus_areas import MAX_FOCUS_AREAS, FocusArea, derive_focus_areas
 from app.core.reorganise_image_prompt import build_reorganise_image_prompt
+from app.core.reorganise_label_corrections import (
+    LabelCorrectionError,
+    ReorganiseLabelCorrection,
+    apply_label_corrections,
+)
 from app.core.reorganise_storage import MAX_STORAGE_SUGGESTIONS, StorageSuggestion, derive_storage_suggestions
 from app.core.reorganise_phases import TidyPlan, build_tidy_plan
 from app.core.schemas import AnalysisResult, ConfirmedDecision, Decision, DetectedItem, ItemId, NonEmptyStr
@@ -104,8 +109,9 @@ ImageUnavailableReason = Literal[
 
 class ReorganisePipelineInputError(ValueError):
     """Malformed caller input to the Reorganise generation pipeline:
-    empty/duplicate/unknown selected_item_ids, a run_id that doesn't
-    match analysis.run_id, image bytes that fail
+    empty/duplicate/unknown selected_item_ids, malformed/duplicate/unknown
+    label_corrections, a run_id that doesn't match analysis.run_id, image
+    bytes that fail
     app.core.image_validation.validate_image_bytes, or an
     input_image_sha256 that doesn't match the actually-supplied image
     bytes. Never raised for a checklist or image-generation OUTCOME;
@@ -298,6 +304,7 @@ def run_reorganise_pipeline(
     action_generator: ReorganiseActionGenerator | None,
     image_generator: ImageGenerator,
     departing_decisions: list[ConfirmedDecision] | None = None,
+    label_corrections: list[ReorganiseLabelCorrection] | None = None,
 ) -> ReorganisePipelineResult:
     """
     `action_generator` is REQUIRED and has no default; every caller must
@@ -318,6 +325,9 @@ def run_reorganise_pipeline(
     any model is called, so a malformed request never costs a call:
 
       1. run_id validated, and checked against analysis.run_id.
+         label_corrections (Direct Reorganise only; Both never passes
+         them) validated and applied to a COPY of the analysis, so every
+         derivation below reads the corrected effective_label.
       2. selected_item_ids validated (non-empty, unique, all present in
          analysis.items) and reordered into analysis.items' own order.
       3. image_bytes validated against image_media_type (genuine Pillow
@@ -333,12 +343,18 @@ def run_reorganise_pipeline(
     preserved. Any OTHER (unexpected) exception from image_generator
     propagates uncaught.
 
-    Raises ReorganisePipelineInputError for any of the four caller-input
+    Raises ReorganisePipelineInputError for any of the caller-input
     checks above. Safe to call directly, outside FastAPI.
     """
     run_id = _validate_run_id(run_id)
     if run_id != analysis.run_id:
         raise ReorganisePipelineInputError("run_id must match analysis.run_id")
+
+    if label_corrections is not None:
+        try:
+            analysis = apply_label_corrections(analysis, label_corrections)
+        except LabelCorrectionError as exc:
+            raise ReorganisePipelineInputError(f"invalid label corrections: {exc}") from exc
 
     selected_items = _validate_and_order_selection(analysis, selected_item_ids)
     _check_image(image_bytes, image_media_type)

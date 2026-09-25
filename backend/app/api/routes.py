@@ -169,6 +169,7 @@ from app.models.whisper_stt import (
     validate_transcript_result,
 )
 from app.core.reorganise_focus_areas import FocusArea
+from app.core.reorganise_label_corrections import ReorganiseLabelCorrection
 from app.core.reorganise_storage import StorageSuggestion
 from app.core.reorganise_phases import TidyPlan
 from app.core.listing_schemas import ListingItemDetails
@@ -765,13 +766,23 @@ class GenerateRequest(BaseModel):
     unrecognised field must get a loud 422, never a silent 200 that lets
     them wrongly believe an unsupported field affected generation —
     pydantic's default (extra="ignore") would otherwise accept and
-    silently drop it."""
+    silently drop it.
+
+    label_corrections: the user's Select items label corrections, keyed
+    by item_id (see app/core/reorganise_label_corrections.py). This is the
+    ONLY channel for a Direct Reorganise correction: `analysis` must be
+    the unedited /upload analysis, so an item already carrying a
+    corrected_label is rejected rather than silently trusted. Duplicate
+    or unknown item_ids and blank/over-long/multi-line labels are 422s
+    before any generation. Both's /generate/confirmed has no such field
+    and still rejects one (extra="forbid" there)."""
 
     model_config = ConfigDict(extra="forbid")
 
     run_id: NonEmptyStr
     analysis: AnalysisResult
     selected_item_ids: list[ItemId]
+    label_corrections: list[ReorganiseLabelCorrection] = Field(default_factory=list)
     image: NonEmptyStr
     image_media_type: Literal["image/png", "image/jpeg"]
     input_image_sha256: Sha256Hex
@@ -800,6 +811,15 @@ class GenerateRequest(BaseModel):
         unknown = [i for i in self.selected_item_ids if i not in analysis_ids]
         if unknown:
             raise ValueError(f"selected_item_ids not present in analysis.items: {unknown}")
+
+        if any(item.corrected_label is not None for item in self.analysis.items):
+            raise ValueError("analysis must be unedited; send label corrections in label_corrections")
+        correction_ids = [correction.item_id for correction in self.label_corrections]
+        if len(correction_ids) != len(set(correction_ids)):
+            raise ValueError("label_corrections contains a duplicate item_id")
+        unknown_corrections = [i for i in correction_ids if i not in analysis_ids]
+        if unknown_corrections:
+            raise ValueError(f"label_corrections not present in analysis.items: {unknown_corrections}")
         return self
 
 
@@ -975,6 +995,7 @@ def generate_reorganisation(
             action_generator=None,  # explicit production choice — deterministic_direct, no model call
             image_generator=image_generator,
             departing_decisions=None,
+            label_corrections=request.label_corrections,
         )
     except ReorganisePipelineInputError as exc:
         raise HTTPException(status_code=422, detail="invalid reorganise generation request") from exc

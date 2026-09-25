@@ -587,3 +587,65 @@ describe("ReorganisePage Tidy plan screen (cleanup pass)", () => {
     expect(createTidyPlan()).toBeEnabled();
   });
 });
+
+describe("ReorganisePage label correction", () => {
+  async function correctLabel(currentLabel, nextLabel) {
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`for item 1, ${currentLabel}$`, "i") }));
+    const input = screen.getByRole("textbox", { name: "Corrected label for item 1" });
+    await userEvent.clear(input);
+    await userEvent.type(input, `${nextLabel}{Enter}`);
+  }
+
+  test("a corrected label is sent to /generate without editing the analysis, and selection is kept", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await userEvent.click(screen.getByRole("button", { name: /continue to select items/i }));
+
+    await correctLabel("lamp", "desk fan");
+
+    expect(document.getElementById("reorganise-item-item_001")).toBeChecked();
+    expect(screen.getByRole("button", { name: "Detection 1: desk fan" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
+
+    await waitFor(() => expect(client.generateReorganisation).toHaveBeenCalledTimes(1));
+    const args = client.generateReorganisation.mock.calls[0][0];
+    expect(args.labelCorrections).toEqual([{ item_id: "item_001", corrected_label: "desk fan" }]);
+    expect(args.selectedItemIds).toEqual(["item_001"]);
+    expect(args.analysis.items[0]).toMatchObject({ clean_label: "lamp", corrected_label: null, effective_label: "lamp" });
+  });
+
+  test("correcting a label after a plan clears that plan and asks for an explicit regeneration", async () => {
+    client.uploadImage.mockResolvedValue(makeUploadResponse());
+    client.generateReorganisation.mockResolvedValue(makeGeneratedResponse());
+    render(<ReorganisePage />);
+    await analyseRoom();
+    await continueToGenerate();
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: /create your tidy plan/i })).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /back to select items/i }));
+    await userEvent.click(screen.getByRole("button", { name: /for item 1, lamp$/i }));
+    expect(screen.getByRole("textbox", { name: "Corrected label for item 1" })).toHaveAccessibleDescription(
+      /clears your current tidy plan/i
+    );
+    const input = screen.getByRole("textbox", { name: "Corrected label for item 1" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "desk fan{Enter}");
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to tidy plan/i }));
+
+    expect(screen.getByRole("heading", { name: /create your tidy plan/i })).toBeInTheDocument();
+    expect(screen.getByText(/you corrected an item label after your last tidy plan/i)).toBeInTheDocument();
+    expect(client.generateReorganisation).toHaveBeenCalledTimes(1); // no automatic regeneration
+
+    await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
+    await waitFor(() => expect(client.generateReorganisation).toHaveBeenCalledTimes(2));
+    expect(client.generateReorganisation.mock.calls[1][0].labelCorrections).toEqual([
+      { item_id: "item_001", corrected_label: "desk fan" },
+    ]);
+  });
+});

@@ -292,11 +292,21 @@ describe("generateReorganisation", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(Object.keys(body).sort()).toEqual(
-      ["analysis", "image", "image_media_type", "input_image_sha256", "run_id", "selected_item_ids", "user_context"].sort()
+      [
+        "analysis",
+        "image",
+        "image_media_type",
+        "input_image_sha256",
+        "label_corrections",
+        "run_id",
+        "selected_item_ids",
+        "user_context",
+      ].sort()
     );
     expect(body.run_id).toBe("run1");
     expect(body.analysis).toEqual(analysis);
     expect(body.selected_item_ids).toEqual(["item_001", "item_002"]);
+    expect(body.label_corrections).toEqual([]);
     expect(body.image_media_type).toBe("image/png");
     expect(body.input_image_sha256).toBe("a".repeat(64));
     expect(body.user_context).toBe("downsizing");
@@ -304,6 +314,27 @@ describe("generateReorganisation", () => {
     expect(body).not.toHaveProperty("controlnet_conditioning_scale");
     expect(body).not.toHaveProperty("seed");
     expect(body).not.toHaveProperty("kept_item_labels");
+  });
+
+  test("sends label corrections as their own field and never edits the analysis", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1" });
+    const analysis = { run_id: "run1", items: [{ item_id: "item_001", clean_label: "rope", corrected_label: null }] };
+    const analysisBefore = structuredClone(analysis);
+    const labelCorrections = [{ item_id: "item_001", corrected_label: "charger" }];
+
+    await generateReorganisation({
+      runId: "run1",
+      analysis,
+      selectedItemIds: ["item_001"],
+      labelCorrections,
+      file: makeFile(),
+      inputImageSha256: "a".repeat(64),
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.label_corrections).toEqual([{ item_id: "item_001", corrected_label: "charger" }]);
+    expect(body.analysis).toEqual(analysisBefore);
+    expect(analysis).toEqual(analysisBefore);
   });
 
   test("the image field is base64 with no data: URL prefix", async () => {

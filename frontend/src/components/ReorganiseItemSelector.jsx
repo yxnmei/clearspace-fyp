@@ -4,6 +4,8 @@ import { itemNumberLabel } from "../utils/format";
 import AnalysedRoomPanel from "./AnalysedRoomPanel";
 import BackToTopButton from "./BackToTopButton";
 import ItemCropThumbnail from "./ItemCropThumbnail";
+import ReorganiseLabelCorrection from "./ReorganiseLabelCorrection";
+import { Badge } from "./ui/badge";
 import { cn } from "../lib/cn";
 
 // Box colouring for the analysed-room overlay: an included item's box is
@@ -33,6 +35,16 @@ function reorganiseBoxClassName(item, isActive, isQuiet, selectedSet) {
 // contextual items are never selectable. Layout and long-list navigation
 // match the Declutter review workspace: preview first on mobile, sticky
 // preview beside the list from lg.
+//
+// Label correction: when onCorrectLabel is supplied each actionable row
+// gets a ReorganiseLabelCorrection control BELOW its checkbox <label>, a
+// sibling rather than a descendant, so typing, clicking or pressing Enter
+// in it can never toggle the item's selection. `items` already carry any
+// corrected effective_label (see useReorganiseFlow), so the row text and
+// the photo-box labels show the same name; a corrected row also shows the
+// detector's label. Correction stays available while selection is
+// locked on a finished plan (it clears that plan), and is disabled only
+// by correctionDisabled.
 export default function ReorganiseItemSelector({
   items,
   selectedItemIds,
@@ -40,6 +52,10 @@ export default function ReorganiseItemSelector({
   imageUrl,
   selectionDisabled = false,
   enableBackToTop = false,
+  onCorrectLabel = null,
+  onClearLabelCorrection = () => {},
+  correctionDisabled = false,
+  planExists = false,
 }) {
   const selectedSet = new Set(selectedItemIds);
   const [activeItemId, setActiveItemId] = useState(null);
@@ -95,6 +111,11 @@ export default function ReorganiseItemSelector({
           Remove incorrect detections or items you don't want considered. Keep desks or shelves if you want the plan
           to account for them.
         </p>
+        {onCorrectLabel && (
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            If an item has the wrong name, correct its label so your tidy plan uses the right one.
+          </p>
+        )}
 
         <dl aria-label="Selection summary" className="mt-3 flex flex-wrap gap-2 text-sm">
           <div className="inline-flex min-h-9 items-center gap-1.5 rounded-pill border border-border bg-surface px-3 py-1 text-foreground">
@@ -200,9 +221,15 @@ export default function ReorganiseItemSelector({
                               {itemNumberLabel(item.item_id)}
                             </span>
                             <span className="min-w-0 break-words">{item.effective_label}</span>
+                            {item.label_source === "user" && <Badge variant="primary">Corrected</Badge>}
                           </span>
                           {showWhere && whereBits.length > 0 && (
                             <span className="mt-0.5 block text-xs text-muted-foreground">{whereBits.join(", ")}</span>
+                          )}
+                          {item.label_source === "user" && (
+                            <span className="mt-0.5 block break-words text-xs text-muted-foreground">
+                              Detected as {item.clean_label}
+                            </span>
                           )}
                         </span>
 
@@ -232,6 +259,15 @@ export default function ReorganiseItemSelector({
                           />
                         </span>
                       </label>
+                      {onCorrectLabel && (
+                        <ReorganiseLabelCorrection
+                          item={item}
+                          onCorrectLabel={onCorrectLabel}
+                          onClearCorrection={onClearLabelCorrection}
+                          disabled={correctionDisabled}
+                          planExists={planExists}
+                        />
+                      )}
                     </li>
                   );
                 })}

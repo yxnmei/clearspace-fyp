@@ -87,6 +87,11 @@ export function transcribeAudio({ audioBlob }) {
 // object POST /upload (path="reorganise") returned, round-tripped whole,
 // same discipline as confirmDecisions()/overrideItem() above.
 //
+// `labelCorrections` is the user's Select items label corrections, an
+// array of { item_id, corrected_label }, sent as its own
+// `label_corrections` field. The analysis itself is never edited to
+// carry a correction (the backend rejects an analysis that does).
+//
 // Deliberately NEVER sends denoise_strength/controlnet_conditioning_scale
 // /seed, R4 always uses the backend's configured defaults; these are
 // provisional generation-tuning values, not an ordinary user decision
@@ -100,6 +105,7 @@ export async function generateReorganisation({
   runId,
   analysis,
   selectedItemIds,
+  labelCorrections = [],
   file,
   inputImageSha256,
   userContext = null,
@@ -117,6 +123,7 @@ export async function generateReorganisation({
       run_id: runId,
       analysis,
       selected_item_ids: selectedItemIds,
+      label_corrections: labelCorrections,
       image,
       image_media_type: file.type,
       input_image_sha256: inputImageSha256,
