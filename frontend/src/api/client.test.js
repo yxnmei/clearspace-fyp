@@ -683,8 +683,30 @@ describe("generateListings", () => {
       analysis: LISTING_ANALYSIS,
       declutter: LISTING_DECLUTTER,
       overrides,
+      listing_details: [],
     });
-    expect(Object.keys(body).sort()).toEqual(["analysis", "declutter", "overrides", "run_id"]);
+    expect(Object.keys(body).sort()).toEqual(["analysis", "declutter", "listing_details", "overrides", "run_id"]);
+  });
+
+  test("sends seller-supplied listing details as the structured listing_details field, verbatim", async () => {
+    const fetchMock = mockFetchOnce({ run_id: "run1", drafts: [] });
+    const listingDetails = [
+      { item_id: "item_001", listing_name: "Oak desk lamp", condition: "good" },
+      { item_id: "item_003", listing_name: null, condition: "not_specified" },
+    ];
+
+    await generateListings({
+      runId: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      overrides: [],
+      listingDetails,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.listing_details).toEqual(listingDetails);
+    expect(body).not.toHaveProperty("condition");
+    expect(body).not.toHaveProperty("listing_name");
   });
 
   test("round-trips analysis and declutter whole (fields, validity, timings preserved)", async () => {
@@ -809,7 +831,13 @@ describe("regenerateListing", () => {
     });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body).toEqual({ run_id: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, overrides });
+    expect(body).toEqual({
+      run_id: "run1",
+      analysis: LISTING_ANALYSIS,
+      declutter: LISTING_DECLUTTER,
+      overrides,
+      listing_details: [],
+    });
     expect(body).not.toHaveProperty("item_id");
     expect(body).not.toHaveProperty("itemId");
   });

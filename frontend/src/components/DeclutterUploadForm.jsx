@@ -74,8 +74,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
           Upload a photo of your space
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          Upload one clear photo of your space, with most items in frame. You can also provide optional context to
-          help the AI better understand your space.
+          Upload one clear photo with most items in frame. Context is optional.
         </p>
       </div>
 
@@ -125,13 +124,16 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
         </div>
       </div>
 
+      {/* Footer: the one primary action sits at the right edge at every
+          width (self-end, natural width, 44px tall on phones); the status
+          and error lines below it keep the full width. */}
       <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
         <Button
           type="submit"
           disabled={!file || isUploading || voiceBusy}
           aria-busy={isUploading || undefined}
           aria-describedby={showError ? "declutter-upload-error" : undefined}
-          className="min-h-11 w-full sm:min-h-0 sm:w-auto sm:self-start"
+          className="min-h-11 self-end sm:min-h-0"
         >
           {isUploading && <Loader2 aria-hidden="true" width={16} height={16} className="animate-spin" />}
           {isUploading ? "Analysing…" : "Analyse space"}

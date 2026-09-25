@@ -377,10 +377,10 @@ describe("ReorganisePage Upload photo and Analyse space screens", () => {
     expect(screen.getByRole("form", { name: "Upload a photo of your space" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+        "Upload one clear photo with most items in frame. Context is optional."
       )
     ).toBeInTheDocument();
-    expect(screen.getByText(/choose which detected items to include, then get a prioritised tidy plan/i)).toBeInTheDocument();
+    expect(screen.getByText("Choose which items to include, then get a phased tidy plan with storage ideas and an optional preview.")).toBeInTheDocument();
     expect(screen.queryByText(/reorganisation checklist|storage suggestions when relevant/i)).not.toBeInTheDocument();
     const upload = screen.getByRole("form", { name: "Upload a photo of your space" }).parentElement;
     expect(upload.textContent).not.toMatch(/\broom\b|^\s*1\./i);

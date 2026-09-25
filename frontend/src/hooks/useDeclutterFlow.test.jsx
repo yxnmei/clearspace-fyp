@@ -1324,6 +1324,12 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
       analysis: result.current.analysis,
       declutter: result.current.declutter,
       overrides: [],
+      // one entry per eligible Sell item, in confirmation order, defaulting
+      // to the reviewed label and "not specified"
+      listingDetails: [
+        { item_id: "item_001", listing_name: "lamp", condition: "not_specified" },
+        { item_id: "item_003", listing_name: "book", condition: "not_specified" },
+      ],
     });
   });
 
@@ -1384,7 +1390,10 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
     expect(result.current.listingResult.modelName).toBeNull();
     expect(result.current.listingResult.promptVersion).toBeNull();
     expect(result.current.listingResult.maxAttempts).toBeNull();
-    expect(out).toBe(result.current.listingResult);
+    // listingResult is derived from the confirmation and the run's draft
+    // cache, so the returned value is structurally, not referentially,
+    // the exposed result.
+    expect(out).toEqual(result.current.listingResult);
   });
 
   test("batch failure: error status, but confirmation and Declutter data are preserved", async () => {
@@ -1449,6 +1458,7 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
       declutter: result.current.declutter,
       overrides: [],
       itemId: "item_003",
+      listingDetails: [{ item_id: "item_003", listing_name: "book", condition: "not_specified" }],
     });
     expect(listingApi.generateListings).toHaveBeenCalledTimes(1); // not called again
     const after = result.current.listingResult.drafts;
@@ -1680,7 +1690,6 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
     ["a new upload", async (r) => { client.uploadImage.mockResolvedValue(listUpload(TWO_SELL)); await r.current.submit({ file: makeFile(), context: null }); }],
     ["a decision override change", (r) => r.current.setDecisionOverride("item_001", "keep")],
     ["an exclusion change", (r) => r.current.setItemExcluded("item_001", true)],
-    ["a fresh confirmation", async (r) => { await r.current.confirm(); }],
     ["full reset", (r) => r.current.reset()],
   ])("listing state is invalidated by %s", async (_label, trigger) => {
     const { result } = await primeReady(TWO_SELL);
@@ -1894,5 +1903,464 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
     // the default listing seam exists and is inert
     expect(result.current.listingStatus).toBe("idle");
     expect(typeof result.current.generateListingDrafts).toBe("function");
+  });
+});
+
+describe("useDeclutterFlow, seller-supplied listing details", () => {
+  const TWO_LAMPS = [
+    { id: "item_001", ai: "sell", label: "lamp" },
+    { id: "item_002", ai: "keep", label: "chair" },
+    { id: "item_003", ai: "sell", label: "lamp" },
+  ];
+
+  test("details set before the first draft are sent per item_id, independently, even when labels repeat", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_LAMPS);
+    act(() => {
+      result.current.setListingDetails("item_003", { listing_name: "Brass reading lamp" });
+      result.current.setListingDetails("item_003", { condition: "good" });
+    });
+    listingApi.generateListings.mockResolvedValue(
+      batchResp(confirmResponse, [genDraft("item_001", "lamp"), genDraft("item_003", "lamp")])
+    );
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(listingApi.generateListings.mock.calls[0][0].listingDetails).toEqual([
+      { item_id: "item_001", listing_name: "lamp", condition: "not_specified" },
+      { item_id: "item_003", listing_name: "Brass reading lamp", condition: "good" },
+    ]);
+    const [first, second] = result.current.listingDrafts;
+    expect(first.listing_name).toBe("lamp");
+    expect(first.condition).toBe("not_specified");
+    expect(second.listing_name).toBe("Brass reading lamp");
+    expect(second.condition).toBe("good");
+    expect(first.is_stale).toBe(false);
+    expect(second.is_stale).toBe(false);
+    // Listing metadata never touches the reviewed label or the decision.
+    expect(result.current.reviewItems.find((i) => i.item_id === "item_003").effective_label).toBe("lamp");
+    expect(result.current.confirmationStatus).toBe("confirmed");
+  });
+
+  test("changing details after a draft never rewrites its text; it only marks that draft stale", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    const before = result.current.listingDrafts.map((d) => [d.item_id, d.edited_title, d.edited_description]);
+
+    act(() => {
+      result.current.setListingDetails("item_003", { condition: "fair" });
+    });
+
+    const after = result.current.listingDrafts;
+    expect(after.map((d) => [d.item_id, d.edited_title, d.edited_description])).toEqual(before);
+    expect(after.find((d) => d.item_id === "item_003").is_stale).toBe(true);
+    expect(after.find((d) => d.item_id === "item_001").is_stale).toBe(false);
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.confirmationStatus).toBe("confirmed");
+
+    // Setting the details back to what the draft was made with clears the flag.
+    act(() => {
+      result.current.setListingDetails("item_003", { condition: "not_specified" });
+    });
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_003").is_stale).toBe(false);
+  });
+
+  test("an explicit regeneration sends only the target's latest details and clears its stale flag", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "Desk lamp", condition: "new" });
+      result.current.setListingDetails("item_003", { listing_name: "Paperback novel", condition: "well_used" });
+    });
+    expect(result.current.listingDrafts.every((d) => d.is_stale)).toBe(true);
+
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(confirmResponse, genDraft("item_003", "book", { title: "Paperback novel" }))
+    );
+
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_003");
+    });
+
+    expect(listingApi.regenerateListing.mock.calls[0][0].listingDetails).toEqual([
+      { item_id: "item_003", listing_name: "Paperback novel", condition: "well_used" },
+    ]);
+    const drafts = result.current.listingDrafts;
+    expect(drafts.find((d) => d.item_id === "item_003").is_stale).toBe(false);
+    expect(drafts.find((d) => d.item_id === "item_003").title).toBe("Paperback novel");
+    // The other item stays stale until it is regenerated itself.
+    expect(drafts.find((d) => d.item_id === "item_001").is_stale).toBe(true);
+  });
+
+  test("a blank listing name is sent as null so the server falls back to the detected label", async () => {
+    const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "   " });
+    });
+    listingApi.generateListings.mockResolvedValue(
+      batchResp(confirmResponse, [genDraft("item_001", "lamp"), genDraft("item_003", "book")])
+    );
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+    expect(listingApi.generateListings.mock.calls[0][0].listingDetails[0]).toEqual({
+      item_id: "item_001",
+      listing_name: null,
+      condition: "not_specified",
+    });
+  });
+
+  test("setListingDetails rejects bad input synchronously and changes nothing", async () => {
+    const { result } = await primeConfirmed(TWO_SELL);
+    expect(() => result.current.setListingDetails("", { condition: "good" })).toThrow();
+    expect(() => result.current.setListingDetails("item_001", { condition: "mint" })).toThrow();
+    expect(() => result.current.setListingDetails("item_001", { listing_name: 5 })).toThrow();
+    expect(() => result.current.setListingDetails("item_001", {})).toThrow();
+    expect(() => result.current.setListingDetails("item_001", { price: 10 })).toThrow();
+    expect(result.current.listingDetailsById).toEqual({});
+  });
+
+  test("details survive a confirmation invalidation (no drafts are active without a confirmation); reset clears details", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "Desk lamp", condition: "good" });
+    });
+
+    act(() => {
+      result.current.setDecisionOverride("item_002", "donate");
+    });
+    expect(result.current.confirmationStatus).toBe("idle");
+    expect(result.current.listingDrafts).toEqual([]);
+    expect(result.current.listingDetailsById).toEqual({ item_001: { listing_name: "Desk lamp", condition: "good" } });
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.listingDetailsById).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Draft reconciliation across confirmations, and one user-facing name per item
+// ---------------------------------------------------------------------------
+
+// A full /override response for a multi-item run: the whole analysis and
+// declutter, with one item's label corrected and its AI decision rerun.
+function correctedOverrideResp(specs, itemId, label, decision) {
+  const upload = listUpload(specs);
+  return {
+    run_id: upload.run_id,
+    analysis: {
+      ...upload.analysis,
+      items: upload.analysis.items.map((item) =>
+        item.item_id === itemId ? { ...item, corrected_label: label, label_source: "user", effective_label: label } : item
+      ),
+    },
+    declutter: {
+      ...upload.declutter,
+      ai_decisions: upload.declutter.ai_decisions.map((d) =>
+        d.item_id === itemId ? { ...d, decision: decision ?? d.decision } : d
+      ),
+    },
+  };
+}
+
+async function reconfirmAs(result, specs) {
+  client.confirmDecisions.mockResolvedValue(listConfirmResponse(specs));
+  await act(async () => {
+    await result.current.confirm();
+  });
+}
+
+describe("useDeclutterFlow, listing drafts reconcile by item_id across confirmations", () => {
+  test("re-confirming unchanged decisions shows the same drafts at once, with edits, discards and details, and no request", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "My lamp title" });
+      result.current.discardListingDraft("item_003");
+      result.current.setListingDetails("item_001", { condition: "good" });
+    });
+    const draftBefore = result.current.listingResult.drafts[0];
+
+    await reconfirmAs(result, TWO_SELL);
+
+    expect(result.current.listingStatus).toBe("ready");
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1); // the original batch only
+    expect(listingApi.regenerateListing).not.toHaveBeenCalled();
+    const drafts = result.current.listingDrafts;
+    expect(drafts.map((d) => d.item_id)).toEqual(["item_001", "item_003"]);
+    expect(drafts[0].edited_title).toBe("My lamp title");
+    expect(drafts[0].condition).toBe("good");
+    expect(drafts[1].is_discarded).toBe(true);
+    expect(result.current.listingResult.drafts[0]).toBe(draftBefore);
+    expect(result.current.missingListingItemIds).toEqual([]);
+  });
+
+  test("a newly confirmed Sell item is drafted on its own: one single-item request, existing drafts untouched", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_003", { description: "My own description of the book." });
+    });
+
+    act(() => {
+      result.current.setDecisionOverride("item_002", "sell");
+    });
+    const NOW_THREE_SELL = [
+      { id: "item_001", ai: "sell", label: "lamp" },
+      { id: "item_002", ai: "keep", decision: "sell", label: "chair" },
+      { id: "item_003", ai: "sell", label: "book" },
+    ];
+    await reconfirmAs(result, NOW_THREE_SELL);
+
+    // Existing drafts are back immediately; the new item is listed as missing.
+    expect(result.current.listingStatus).toBe("ready");
+    expect(result.current.listingDrafts.map((d) => d.item_id)).toEqual(["item_001", "item_003"]);
+    expect(result.current.missingListingItemIds).toEqual(["item_002"]);
+
+    const confirmResponse = listConfirmResponse(NOW_THREE_SELL);
+    listingApi.regenerateListing.mockResolvedValue(singleResp(confirmResponse, genDraft("item_002", "chair", { title: "Oak chair" })));
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1); // still only the first batch
+    expect(listingApi.regenerateListing).toHaveBeenCalledTimes(1);
+    expect(listingApi.regenerateListing.mock.calls[0][0].itemId).toBe("item_002");
+    expect(listingApi.regenerateListing.mock.calls[0][0].listingDetails).toEqual([
+      { item_id: "item_002", listing_name: "chair", condition: "not_specified" },
+    ]);
+    const drafts = result.current.listingDrafts;
+    expect(drafts.map((d) => d.item_id)).toEqual(["item_001", "item_002", "item_003"]);
+    expect(drafts.find((d) => d.item_id === "item_002").title).toBe("Oak chair");
+    expect(drafts.find((d) => d.item_id === "item_003").edited_description).toBe("My own description of the book.");
+    expect(result.current.missingListingItemIds).toEqual([]);
+    expect(result.current.regeneratingItemId).toBeNull();
+  });
+
+  test("an item that stops being Sell leaves the active listings and cannot be edited or regenerated; its draft returns if it is Sell again", async () => {
+    const { result } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_003", { title: "Kept book title" });
+    });
+
+    act(() => {
+      result.current.setDecisionOverride("item_003", "keep");
+    });
+    const BOOK_KEPT = [
+      { id: "item_001", ai: "sell", label: "lamp" },
+      { id: "item_002", ai: "keep", label: "chair" },
+      { id: "item_003", ai: "sell", decision: "keep", label: "book" },
+    ];
+    await reconfirmAs(result, BOOK_KEPT);
+
+    expect(result.current.listingDrafts.map((d) => d.item_id)).toEqual(["item_001"]);
+    expect(result.current.listingResult.eligibleItemIds).toEqual(["item_001"]);
+    expect(() => result.current.regenerateListingDraft("item_003")).toThrow();
+    expect(() => result.current.editListingDraft("item_003", { title: "x" })).toThrow();
+    expect(() => result.current.discardListingDraft("item_003")).toThrow();
+
+    act(() => {
+      result.current.setDecisionOverride("item_003", "sell");
+    });
+    await reconfirmAs(result, TWO_SELL);
+    const book = result.current.listingDrafts.find((d) => d.item_id === "item_003");
+    expect(book.edited_title).toBe("Kept book title");
+    expect(result.current.missingListingItemIds).toEqual([]);
+  });
+
+  test("a Decide-items label correction keeps the draft text, marks it older, and single-item regeneration updates it", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    client.overrideItem.mockResolvedValue(correctedOverrideResp(TWO_SELL, "item_001", "desk lamp"));
+    await act(async () => {
+      await result.current.correctLabel("item_001", "desk lamp");
+    });
+    expect(result.current.confirmationStatus).toBe("idle"); // the correction reran reasoning
+    await reconfirmAs(result, TWO_SELL);
+
+    const lamp = result.current.listingDrafts.find((d) => d.item_id === "item_001");
+    expect(lamp.title).toBe("Wooden chair"); // the old draft text, untouched
+    expect(lamp.effective_label).toBe("desk lamp");
+    expect(lamp.generated_with.label).toBe("lamp");
+    expect(lamp.is_stale).toBe(true);
+    expect(listingApi.regenerateListing).not.toHaveBeenCalled();
+
+    listingApi.regenerateListing.mockResolvedValue(
+      singleResp(listConfirmResponse(TWO_SELL), genDraft("item_001", "desk lamp", { title: "Desk lamp" }))
+    );
+    await act(async () => {
+      await result.current.regenerateListingDraft("item_001");
+    });
+    const refreshed = result.current.listingDrafts.find((d) => d.item_id === "item_001");
+    expect(refreshed.title).toBe("Desk lamp");
+    expect(refreshed.is_stale).toBe(false);
+  });
+
+  test("a stale single-item response after a decision change never restores or overwrites a draft", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    const d = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(d.promise);
+    let p;
+    act(() => {
+      p = result.current.regenerateListingDraft("item_003");
+    });
+    act(() => {
+      result.current.setDecisionOverride("item_002", "donate"); // confirmation gone mid-flight
+    });
+    await act(async () => {
+      d.resolve(singleResp(listConfirmResponse(TWO_SELL), genDraft("item_003", "book", { title: "LATE" })));
+      await p;
+    });
+
+    await reconfirmAs(result, TWO_SELL);
+    const book = result.current.listingDrafts.find((dr) => dr.item_id === "item_003");
+    expect(book.title).toBe("Wooden chair"); // the pre-regeneration draft, not the late one
+    expect(result.current.regenerationError).toBeNull();
+  });
+
+  test("a stale new-item generation after a decision change writes nothing", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.setDecisionOverride("item_002", "sell");
+    });
+    const NOW_THREE_SELL = [
+      { id: "item_001", ai: "sell", label: "lamp" },
+      { id: "item_002", ai: "keep", decision: "sell", label: "chair" },
+      { id: "item_003", ai: "sell", label: "book" },
+    ];
+    await reconfirmAs(result, NOW_THREE_SELL);
+    const d = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(d.promise);
+    let p;
+    act(() => {
+      p = result.current.generateListingDrafts();
+    });
+    expect(result.current.regeneratingItemId).toBe("item_002");
+    act(() => {
+      result.current.setDecisionOverride("item_002", "keep");
+    });
+    await act(async () => {
+      d.resolve(singleResp(listConfirmResponse(NOW_THREE_SELL), genDraft("item_002", "chair")));
+      await p;
+    });
+
+    // Sell again later: the chair has NO draft, because the late response was dropped.
+    act(() => {
+      result.current.setDecisionOverride("item_002", "sell");
+    });
+    await reconfirmAs(result, NOW_THREE_SELL);
+    expect(result.current.missingListingItemIds).toEqual(["item_002"]);
+    expect(result.current.listingError).toBeNull();
+  });
+
+  test("an edit made while a regeneration is in flight is kept, not overwritten by the response", async () => {
+    const { result, listingApi, confirmResponse } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "First edit" });
+    });
+    const d = makeDeferred();
+    listingApi.regenerateListing.mockReturnValueOnce(d.promise);
+    let p;
+    act(() => {
+      p = result.current.regenerateListingDraft("item_001");
+    });
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "Newer edit during regeneration" });
+    });
+    await act(async () => {
+      d.resolve(singleResp(confirmResponse, genDraft("item_001", "lamp", { title: "Regenerated" })));
+      await p;
+    });
+    const lamp = result.current.listingDrafts.find((dr) => dr.item_id === "item_001");
+    expect(lamp.title).toBe("Regenerated");
+    expect(lamp.edited_title).toBe("Newer edit during regeneration");
+  });
+
+  test("a new photo clears every cached draft, edit, discard and name", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.editListingDraft("item_001", { title: "Edited" });
+      result.current.setListingDetails("item_001", { listing_name: "Brass lamp" });
+    });
+    client.uploadImage.mockResolvedValue(listUpload(TWO_SELL, "run1"));
+    await act(async () => {
+      await result.current.submit({ file: makeFile(), context: null });
+    });
+    await reconfirmAs(result, TWO_SELL);
+
+    expect(result.current.listingStatus).toBe("idle");
+    expect(result.current.listingDrafts).toEqual([]);
+    expect(result.current.missingListingItemIds).toEqual(["item_001", "item_003"]);
+    expect(result.current.listingEditsById).toEqual({});
+    expect(result.current.listingDetailsById).toEqual({});
+    expect(result.current.reviewItems.find((i) => i.item_id === "item_001").display_label).toBe("lamp");
+    expect(listingApi.generateListings).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useDeclutterFlow, one user-facing name per item_id", () => {
+  const TWO_LAMPS = [
+    { id: "item_001", ai: "sell", label: "lamp" },
+    { id: "item_002", ai: "keep", label: "chair" },
+    { id: "item_003", ai: "sell", label: "lamp" },
+  ];
+
+  test("a listing rename becomes the review item's display_label without an override call or a decision change", async () => {
+    const { result } = await primeReady(TWO_LAMPS);
+    const confirmationBefore = result.current.confirmation;
+    act(() => {
+      result.current.setListingDetails("item_003", { listing_name: "Brass reading lamp" });
+    });
+
+    const byId = Object.fromEntries(result.current.reviewItems.map((i) => [i.item_id, i]));
+    // Duplicate labels stay distinct by item_id.
+    expect(byId.item_001.display_label).toBe("lamp");
+    expect(byId.item_003.display_label).toBe("Brass reading lamp");
+    // Provenance: reasoning and detector labels are unchanged.
+    expect(byId.item_003.effective_label).toBe("lamp");
+    expect(byId.item_003.clean_label).toBe("lamp");
+    expect(client.overrideItem).not.toHaveBeenCalled();
+    expect(result.current.confirmation).toBe(confirmationBefore);
+    expect(result.current.confirmationStatus).toBe("confirmed");
+    expect(result.current.overridesById).toEqual({});
+    // The draft is flagged, not rewritten.
+    expect(result.current.listingDrafts.find((d) => d.item_id === "item_003").is_stale).toBe(true);
+  });
+
+  test("a blank rename falls back to the reasoning label as the display name", async () => {
+    const { result } = await primeReady(TWO_LAMPS);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "   " });
+    });
+    expect(result.current.reviewItems.find((i) => i.item_id === "item_001").display_label).toBe("lamp");
+  });
+
+  test("a later Decide-items correction replaces the listing name, so both screens show the corrected label", async () => {
+    const { result } = await primeReady(TWO_LAMPS);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "Brass lamp", condition: "fair" });
+    });
+    client.overrideItem.mockResolvedValue(correctedOverrideResp(TWO_LAMPS, "item_001", "desk lamp"));
+    await act(async () => {
+      await result.current.correctLabel("item_001", "desk lamp");
+    });
+
+    const lamp = result.current.reviewItems.find((i) => i.item_id === "item_001");
+    expect(lamp.display_label).toBe("desk lamp");
+    expect(lamp.effective_label).toBe("desk lamp");
+    // Only the name override is dropped; the condition is kept.
+    expect(result.current.listingDetailsById.item_001).toEqual({ condition: "fair" });
+    // The other lamp is untouched.
+    expect(result.current.reviewItems.find((i) => i.item_id === "item_003").display_label).toBe("lamp");
+  });
+
+  test("a failed correction keeps the listing name", async () => {
+    const { result } = await primeReady(TWO_LAMPS);
+    act(() => {
+      result.current.setListingDetails("item_001", { listing_name: "Brass lamp" });
+    });
+    client.overrideItem.mockRejectedValue(new Error("service unavailable"));
+    await act(async () => {
+      await result.current.correctLabel("item_001", "desk lamp");
+    });
+    expect(result.current.reviewItems.find((i) => i.item_id === "item_001").display_label).toBe("Brass lamp");
   });
 });

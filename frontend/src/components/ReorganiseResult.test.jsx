@@ -43,7 +43,8 @@ describe("ReorganiseResult phased plan composition", () => {
     const plan = screen.getByRole("region", { name: "Tidy plan" });
     const row = plan.parentElement;
     expect(row.className).toMatch(/lg:grid-cols-2/);
-    expect(row.children[1]).toBe(screen.getByRole("region", { name: "Visual preview" }));
+    const rightColumn = row.children[1];
+    expect(rightColumn.children[0]).toBe(screen.getByRole("region", { name: "Visual preview" }));
   });
 
   test("uses one local progress state and resets when the result run changes", async () => {
@@ -57,12 +58,13 @@ describe("ReorganiseResult phased plan composition", () => {
     expect(screen.getByText("0 of 2 completed")).toBeInTheDocument();
   });
 
-  test("storage suggestions appear after the top row and do not show item IDs", () => {
+  test("storage suggestions sit beneath the preview in the right column and do not show item IDs", () => {
     renderResult(makeResult({ storageSuggestions: [{ name: "Compartment tray", reason: "Keeps small objects together.", related_item_ids: ["item_001"] }] }));
     const storage = screen.getByRole("region", { name: "Storage and organisation ideas" });
     expect(within(storage).getByText("Compartment tray")).toBeInTheDocument();
     expect(storage.textContent).not.toMatch(/item_001/);
-    expect(storage.previousElementSibling.className).toMatch(/grid/);
+    expect(storage.previousElementSibling).toBe(screen.getByRole("region", { name: "Visual preview" }));
+    expect(storage.parentElement.parentElement.className).toMatch(/lg:grid-cols-2/);
   });
 
   test("empty storage suggestions omit the section", () => {
@@ -101,6 +103,35 @@ describe("ReorganiseResult phased plan composition", () => {
       expect(img.getAttribute("alt")).not.toBe("");
       expect(img.className).toMatch(/object-contain/);
     }
+  });
+
+  test("each preview figure has a Expand image control that opens the right image in a lightbox", async () => {
+    const user = userEvent.setup();
+    renderResult(makeResult(), { originalImageUrl: "blob:mock-original" });
+    const triggers = screen.getAllByRole("button", { name: "Expand image" });
+    expect(triggers).toHaveLength(2);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(triggers[0]);
+    let dialog = screen.getByRole("dialog", { name: "Before" });
+    expect(within(dialog).getByRole("img", { name: /original space photo you uploaded/i })).toHaveAttribute("src", "blob:mock-original");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(triggers[0]).toHaveFocus();
+
+    await user.click(triggers[1]);
+    dialog = screen.getByRole("dialog", { name: "AI preview" });
+    expect(dialog).toHaveAccessibleDescription(/may not preserve every object or its exact placement/i);
+    expect(within(dialog).getByRole("img", { name: /impression of a tidier version/i })).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  test("no Expand image for a missing original photo, and none at all when the preview is unavailable", () => {
+    renderResult(makeResult(), { originalImageUrl: null });
+    expect(screen.getAllByRole("button", { name: "Expand image" })).toHaveLength(1);
+    renderResult(makeResult({ imageStatus: "unavailable", image: null, imageUnavailableReason: "timeout" }));
+    expect(screen.getAllByRole("button", { name: "Expand image" })).toHaveLength(1);
   });
 
   test("an unknown unavailable reason still gets a safe generic message", () => {

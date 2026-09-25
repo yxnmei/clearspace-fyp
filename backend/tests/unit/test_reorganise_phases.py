@@ -65,8 +65,7 @@ def test_repeated_furniture_soft_furnishings_and_large_items_have_no_store_the_r
 def test_surface_aware_opening_precedes_room_template_and_carries_ids():
     with_surface = build_tidy_plan([item(1, "desk", "large"), item(2, "shelf", "large")], "bedroom")
     opening = with_surface.phases[0].steps
-    assert opening[0].text.startswith("Clear these surfaces first:")
-    assert "desk" in opening[0].text and "shelf" in opening[0].text
+    assert opening[0].text == "Clear the desk and shelf first. That is where loose items collect."
     assert opening[0].item_ids == ["item_001", "item_002"]
     assert _FORBIDDEN_CONTENT_RE.search(opening[0].text) is None
     assert not re.search(r"\b(?:left|right|centre|center|upper|lower)\b", opening[0].text, re.I)
@@ -151,6 +150,40 @@ def test_schema_rejects_duplicate_or_out_of_order_phase():
         TidyPlan(phases=list(reversed(plan.phases)))
     with pytest.raises(ValidationError):
         TidyPlan(phases=[plan.phases[0], plan.phases[0]])
+
+
+def test_natural_phrasing_uses_known_plurals_and_complete_sentences():
+    selected = [item(1, "desk", "large"), item(2, "shelf", "large"), item(3, "shelf", "large")]
+    departing = [(item(4, "box"), Decision.DISCARD), (item(5, "bottle"), Decision.DISCARD),
+                 (item(6, "bottle"), Decision.DISCARD), (item(7, "bottle"), Decision.DISCARD),
+                 (item(8, "printer"), Decision.SELL), (item(9, "chair"), Decision.SELL)]
+    plan = build_tidy_plan(selected, "bedroom", departing)
+    texts = [step.text for step in all_steps(plan)]
+    assert texts[0] == "Clear the desk and 2 shelves first. That is where loose items collect."
+    assert "Set aside to sell: the printer and chair." in texts
+    assert "Throw out or recycle: the box and 3 bottles." in texts
+    sell = next(step for step in all_steps(plan) if step.text.startswith("Set aside to sell"))
+    assert sell.item_ids == ["item_008", "item_009"]
+
+
+def test_natural_phrasing_never_guesses_a_plural_for_an_unknown_label():
+    corrected = [item(1, "book").model_copy(update={"corrected_label": "gundam"}),
+                 item(2, "book").model_copy(update={"corrected_label": "gundam"})]
+    plan = build_tidy_plan([item(3, "lamp")], "bedroom", [(x, Decision.SELL) for x in corrected])
+    assert "Set aside to sell: the 2 gundam items." in [step.text for step in all_steps(plan)]
+    repeated = build_tidy_plan([item(1, "cup"), item(2, "cup"), item(3, "cup")], "home office desk")
+    assert any(step.text == "You have 3 cups. Decide which one you use daily and store the rest." for step in all_steps(repeated))
+
+
+def test_no_step_text_uses_the_label_xn_form():
+    items = [item(n, label) for n, label in enumerate(
+        ["cup", "cup", "book", "book", "book", "cable", "cable", "pillow", "pillow", "key", "watch", "pen"], 1)]
+    departing = [(item(20, "bottle"), Decision.DISCARD), (item(21, "bottle"), Decision.DISCARD)]
+    for scene in ("home office desk", "bedroom", "kitchen", "garage"):
+        plan = build_tidy_plan(items, scene, departing)
+        for step in all_steps(plan):
+            assert not re.search(r"\bx\d", step.text), step.text
+            assert step.text.endswith("."), step.text
 
 
 def test_determinism_and_long_corrected_label():

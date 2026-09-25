@@ -240,6 +240,44 @@ describe("DeclutterItemCard", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/correcting label/i);
     });
 
+    test("an applied correction reads Correction applied and is disabled until the label is edited again", async () => {
+      const user = userEvent.setup();
+      const onCorrectLabel = vi.fn();
+      render(
+        <DeclutterItemCard
+          item={makeReviewItem({ item_id: "item_004", clean_label: "box", corrected_label: "hoodie", label_source: "user", effective_label: "hoodie" })}
+          onDecisionChange={vi.fn()}
+          onExcludedChange={vi.fn()}
+          onCorrectLabel={onCorrectLabel}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      const applied = screen.getByRole("button", { name: /correction applied/i });
+      expect(applied).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /submit correction|update correction/i })).not.toBeInTheDocument();
+
+      const input = screen.getByLabelText(/corrected label/i);
+      await user.clear(input);
+      await user.type(input, "jacket");
+      const update = screen.getByRole("button", { name: /update correction/i });
+      expect(update).toBeEnabled();
+      await user.click(update);
+      expect(onCorrectLabel).toHaveBeenCalledWith("item_004", "jacket");
+
+      await user.clear(input);
+      await user.type(input, "  hoodie ");
+      expect(screen.getByRole("button", { name: /correction applied/i })).toBeDisabled();
+    });
+
+    test("a detector label shows Submit correction even when the input still equals the current label", async () => {
+      const user = userEvent.setup();
+      render(<DeclutterItemCard item={makeReviewItem()} onDecisionChange={vi.fn()} onExcludedChange={vi.fn()} />);
+      await user.click(screen.getByRole("button", { name: /wrong label/i }));
+      expect(screen.getByRole("button", { name: /submit correction/i })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: /correction applied|update correction/i })).not.toBeInTheDocument();
+    });
+
     test("an item-local failure is shown accessibly without losing the entered correction", async () => {
       const user = userEvent.setup();
       render(

@@ -70,7 +70,7 @@ export default function WorkflowProgress({
   return (
     <nav
       aria-label={`${workflowName} workflow progress`}
-      className="mx-auto w-full max-w-4xl rounded-card border border-border bg-surface p-4 sm:p-5"
+      className="mx-auto w-full max-w-4xl rounded-card border border-border bg-surface p-3 sm:p-4"
     >
       {/* Mobile summary (below sm). No list, no buttons, no percentage. */}
       <div className="sm:hidden">
@@ -87,14 +87,14 @@ export default function WorkflowProgress({
           aria-valuemax={stepCount}
           aria-valuenow={stepNumber}
           aria-valuetext={`Step ${stepNumber} of ${stepCount}: ${viewedLabel}`}
-          className="mt-3 h-1.5 w-full overflow-hidden rounded-pill bg-surface-muted"
+          className="mt-2 h-1.5 w-full overflow-hidden rounded-pill bg-surface-muted"
         >
           <div
             className="h-full rounded-pill bg-primary transition-[width]"
             style={{ width: `${(stepNumber / stepCount) * 100}%` }}
           />
         </div>
-        <p className="mt-3 text-base font-semibold text-foreground">{viewedLabel}</p>
+        <p className="mt-2 text-base font-semibold text-foreground">{viewedLabel}</p>
       </div>
 
       {/* Full step row (sm and up). */}
@@ -109,7 +109,7 @@ export default function WorkflowProgress({
           const circle = (
             <span
               className={cn(
-                "relative z-10 flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors",
+                "relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors",
                 isViewed
                   ? "border-primary bg-primary text-primary-foreground"
                   : completed
@@ -124,7 +124,7 @@ export default function WorkflowProgress({
           const label = (
             <span
               className={cn(
-                "mt-2 rounded-pill px-2 py-0.5 text-center text-xs leading-tight transition-colors",
+                "mt-1 rounded-pill px-2 py-0.5 text-center text-xs leading-tight transition-colors",
                 isViewed
                   ? "bg-accent font-bold text-accent-foreground"
                   : completed
@@ -164,7 +164,7 @@ export default function WorkflowProgress({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "absolute right-1/2 top-4 z-0 w-full border-t-2",
+                    "absolute right-1/2 top-3.5 z-0 w-full border-t-2",
                     connectorDone
                       ? "border-solid border-success"
                       : "border-dashed border-border"
@@ -177,7 +177,7 @@ export default function WorkflowProgress({
         })}
       </ol>
 
-      <div className="mt-4 border-t border-border pt-3 text-center">
+      <div className="mt-3 border-t border-border pt-2 text-center">
         <p className="hidden text-xs font-medium uppercase tracking-wide text-muted-foreground sm:block">
           Step {stepNumber} of {stepCount} · {viewedLabel}
         </p>

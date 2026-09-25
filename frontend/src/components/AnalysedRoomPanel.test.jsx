@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import AnalysedRoomPanel from "./AnalysedRoomPanel";
@@ -65,7 +65,7 @@ describe("AnalysedRoomPanel", () => {
 
     expect(screen.getByRole("button", { name: /detection 4: picture frame/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /detection 6: picture frame/i })).toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^detection/i })).toHaveLength(2);
   });
 
   test("every box shows a visible item number", () => {
@@ -90,7 +90,7 @@ describe("AnalysedRoomPanel", () => {
 
   test("Show all boxes off with no active item renders no boxes, but does not remove the guidance/image", () => {
     render(<AnalysedRoomPanel {...baseProps({ showAllBoxes: false, activeItemId: null })} />);
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^detection/i })).not.toBeInTheDocument();
     expect(screen.getByRole("img")).toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe("AnalysedRoomPanel", () => {
     const items = [makeItem({ item_id: "item_001" }), makeItem({ item_id: "item_002" })];
     render(<AnalysedRoomPanel {...baseProps({ items, showAllBoxes: false, activeItemId: "item_002" })} />);
 
-    const boxes = screen.getAllByRole("button");
+    const boxes = screen.getAllByRole("button", { name: /^detection/i });
     expect(boxes).toHaveLength(1);
     expect(boxes[0]).toHaveAttribute("aria-label", expect.stringContaining("Detection 2"));
   });
@@ -168,11 +168,61 @@ describe("AnalysedRoomPanel", () => {
   });
 
   describe("analysed-room presentation and controls", () => {
-    test("the only controls are the detection boxes and the Show all boxes checkbox, no zoom or retake", () => {
+    test("the only controls are the detection boxes, the Show all boxes checkbox and Expand image; no retake or crop", () => {
       render(<AnalysedRoomPanel {...baseProps()} />);
       expect(screen.getByRole("checkbox", { name: /show all boxes/i })).toBeInTheDocument();
-      expect(screen.getAllByRole("button")).toHaveLength(1); // one box, nothing else
-      expect(screen.queryByRole("button", { name: /zoom|retake|camera|crop/i })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^detection/i })).toHaveLength(1); // one box
+      expect(screen.getByRole("button", { name: "Expand image" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button")).toHaveLength(2);
+      expect(screen.queryByRole("button", { name: /retake|camera|crop/i })).not.toBeInTheDocument();
+    });
+
+    test("Expand image opens the enlarged image with the same outlines, aligned by the same boxes, and closing returns focus", async () => {
+      const user = userEvent.setup();
+      const onBoxClick = vi.fn();
+      const items = [
+        makeItem({ item_id: "item_001", box: { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.6 } }),
+        makeItem({ item_id: "item_002", box: { x1: 0.5, y1: 0.5, x2: 0.9, y2: 0.9 } }),
+      ];
+      render(<AnalysedRoomPanel {...baseProps({ items, onBoxClick, showAllBoxes: true })} />);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      const trigger = screen.getByRole("button", { name: "Expand image" });
+      await user.click(trigger);
+      const dialog = screen.getByRole("dialog", { name: "Analysed space" });
+      expect(dialog).toHaveAccessibleDescription(/show or hide the detected item outlines/i);
+      expect(within(dialog).getByRole("img", { name: "The space photo you uploaded" })).toHaveAttribute("src", "blob:mock-preview");
+      // Outlines are decorative in the enlarged view: no box buttons, but
+      // one positioned outline per item, numbered like the panel's own.
+      expect(within(dialog).queryByRole("button", { name: /^detection/i })).not.toBeInTheDocument();
+      const outlines = within(dialog).getAllByTestId("lightbox-overlay");
+      expect(outlines).toHaveLength(2);
+      expect(outlines[0].style.left).toBe("10%");
+      expect(outlines[0].style.width).toBe("20%");
+      expect(outlines[0]).toHaveTextContent("1");
+      expect(within(dialog).getByRole("checkbox", { name: "Show boxes" })).toBeChecked();
+      await user.click(within(dialog).getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(onBoxClick).not.toHaveBeenCalled();
+    });
+
+    test("the lightbox's Show boxes toggle starts from the panel's Show all boxes setting and never changes it", async () => {
+      const user = userEvent.setup();
+      const onToggleShowAllBoxes = vi.fn();
+      render(<AnalysedRoomPanel {...baseProps({ showAllBoxes: false, onToggleShowAllBoxes })} />);
+      await user.click(screen.getByRole("button", { name: "Expand image" }));
+      const dialog = screen.getByRole("dialog", { name: "Analysed space" });
+      const toggle = within(dialog).getByRole("checkbox", { name: "Show boxes" });
+      expect(toggle).not.toBeChecked();
+      expect(within(dialog).queryAllByTestId("lightbox-overlay")).toHaveLength(0);
+      await user.click(toggle);
+      expect(within(dialog).getAllByTestId("lightbox-overlay")).toHaveLength(1);
+      expect(onToggleShowAllBoxes).not.toHaveBeenCalled();
+    });
+
+    test("no Expand image control when there is no image", () => {
+      render(<AnalysedRoomPanel {...baseProps({ imageUrl: null })} />);
+      expect(screen.queryByRole("button", { name: "Expand image" })).not.toBeInTheDocument();
     });
 
     test("the default classifier still distinguishes unresolved / contextual / resolved boxes", () => {

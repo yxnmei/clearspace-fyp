@@ -83,3 +83,76 @@ export function deriveEligibleSellItemIds(confirmation) {
     .filter((d) => d && d.confirmed_decision === "sell" && d.excluded === false)
     .map((d) => d.item_id);
 }
+
+// ---------------------------------------------------------------------------
+// Seller-supplied listing details: a listing name and a declared condition
+// per item_id. Listing metadata only: they never touch the detected label,
+// the decision or the confirmation, and the server ignores them for any
+// item that is not a confirmed non-excluded Sell item.
+// ---------------------------------------------------------------------------
+
+export const LISTING_NAME_MAX = 80;
+
+// Mirrors the backend ListingCondition enum, in display order. The first
+// entry is the default and means the model is told nothing about
+// condition; it is never inferred from the image.
+export const LISTING_CONDITIONS = [
+  { value: "not_specified", label: "Not specified" },
+  { value: "new", label: "New" },
+  { value: "like_new", label: "Like new" },
+  { value: "good", label: "Good" },
+  { value: "fair", label: "Fair" },
+  { value: "well_used", label: "Well used" },
+];
+
+export const DEFAULT_LISTING_CONDITION = LISTING_CONDITIONS[0].value;
+
+export function isListingCondition(value) {
+  return LISTING_CONDITIONS.some((option) => option.value === value);
+}
+
+export function listingConditionLabel(value) {
+  return LISTING_CONDITIONS.find((option) => option.value === value)?.label ?? LISTING_CONDITIONS[0].label;
+}
+
+// The current details for one item: explicit user values from
+// `detailsById` over the defaults (listing name = the reviewed effective
+// label, condition = not specified). Pure; never mutates its inputs.
+export function resolveListingDetails(itemId, detailsById, reviewItem) {
+  const explicit = detailsById && detailsById[itemId] ? detailsById[itemId] : {};
+  const fallbackName = reviewItem?.effective_label ?? reviewItem?.clean_label ?? "";
+  const listingName = typeof explicit.listing_name === "string" ? explicit.listing_name : fallbackName;
+  const condition = isListingCondition(explicit.condition) ? explicit.condition : DEFAULT_LISTING_CONDITION;
+  return { listing_name: listingName, condition };
+}
+
+// The request-side shape for a set of eligible item ids, in the given
+// order. A blank listing name is sent as null (server: "use the detected
+// label") rather than as an empty string the schema would reject.
+export function serialiseListingDetails(itemIds, detailsById, reviewItems) {
+  const byId = new Map((reviewItems ?? []).map((item) => [item.item_id, item]));
+  return itemIds.map((itemId) => {
+    const details = resolveListingDetails(itemId, detailsById, byId.get(itemId));
+    const trimmed = details.listing_name.trim();
+    return {
+      item_id: itemId,
+      listing_name: trimmed === "" ? null : trimmed.slice(0, LISTING_NAME_MAX),
+      condition: details.condition,
+    };
+  });
+}
+
+// Whether the details a draft was generated with still match the current
+// ones for that item. Compared on the same normalised shape the request
+// uses, so retyping the identical name is not a change.
+export function listingDetailsMatch(generatedWith, current) {
+  if (!generatedWith || !current) return false;
+  const normalise = (name) => {
+    const trimmed = (typeof name === "string" ? name : "").trim();
+    return trimmed === "" ? null : trimmed.slice(0, LISTING_NAME_MAX);
+  };
+  return (
+    normalise(generatedWith.listing_name) === normalise(current.listing_name) &&
+    (generatedWith.condition ?? DEFAULT_LISTING_CONDITION) === (current.condition ?? DEFAULT_LISTING_CONDITION)
+  );
+}

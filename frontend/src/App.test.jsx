@@ -42,7 +42,7 @@ describe("App, path selection", () => {
     render(<App />);
     await chooseWorkflow(user, /declutter/i);
     expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
-    expect(screen.getByText(/keep \/ sell \/ donate \/ discard/i)).toBeInTheDocument();
+    expect(screen.getByText(/get a suggested action for every item/i)).toBeInTheDocument();
   });
 
   test("choosing Reorganise mounts the Reorganise workflow", async () => {
@@ -82,7 +82,7 @@ describe("App, path selection", () => {
 
 describe("App, each workflow page shows its own progress stepper", () => {
   test.each([
-    [/declutter/i, /declutter workflow progress/i, ["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Listing drafts"]],
+    [/declutter/i, /declutter workflow progress/i, ["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Results"]],
     [/reorganise/i, /reorganise workflow progress/i, ["Upload photo", "Analyse space", "Select items", "Tidy plan"]],
     [/^both$/i, /both workflow progress/i, ["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Results"]],
   ])("mounting %s renders its stepper with its exact step sequence", async (card, navName, steps) => {
@@ -115,6 +115,7 @@ describe("App, each workflow page shows its own progress stepper", () => {
     expect(screen.getByRole("navigation", { name: /workflow progress/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
     expect(screen.queryByRole("navigation", { name: /workflow progress/i })).not.toBeInTheDocument();
   });
 });
@@ -127,6 +128,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
 
     expect(screen.getByRole("radio", { name: /declutter/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/space photo/i)).not.toBeInTheDocument();
@@ -139,6 +141,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     expect(screen.getByText(/^upload a photo of your space$/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
 
     expect(screen.getByRole("radio", { name: /declutter/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/space photo/i)).not.toBeInTheDocument();
@@ -149,6 +152,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     render(<App />);
     await chooseWorkflow(user, /declutter/i);
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
     expect(screen.getByRole("radio", { name: /reorganise/i })).toBeInTheDocument();
   });
 
@@ -160,6 +164,7 @@ describe("App, Back to workflows unmounts the active workflow", () => {
     await user.upload(screen.getByLabelText(/space photo/i), file);
 
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
 
     // The picked-file preview URL (owned by ReorganiseUploadForm's own
     // local state) is revoked on unmount via its existing cleanup effect.

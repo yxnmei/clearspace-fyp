@@ -183,11 +183,15 @@ export async function generateConfirmedReorganisation({
 // never sends a confirmation, effective labels, generated draft text,
 // image data, user context, or model configuration, so there is no way
 // to accidentally send one.
-export function generateListings({ runId, analysis, declutter, overrides = [] }) {
+// `listingDetails` is the seller-supplied name / condition per item_id
+// ({ item_id, listing_name, condition }[]), sent as an explicit structured
+// field. Eligibility stays server-derived: details for a non-Sell item are
+// ignored there, never honoured.
+export function generateListings({ runId, analysis, declutter, overrides = [], listingDetails = [] }) {
   return request("/listings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides }),
+    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides, listing_details: listingDetails }),
   });
 }
 
@@ -201,7 +205,7 @@ export function generateListings({ runId, analysis, declutter, overrides = [] })
 // missing/blank id fails fast client-side rather than as a sanitized
 // network error. Eligibility is NOT checked here, the backend is
 // authoritative and rejects a non-eligible target itself.
-export async function regenerateListing({ runId, analysis, declutter, overrides = [], itemId }) {
+export async function regenerateListing({ runId, analysis, declutter, overrides = [], itemId, listingDetails = [] }) {
   if (typeof itemId !== "string" || itemId.trim() === "") {
     throw new Error(`regenerateListing: itemId must be a non-blank string, got ${JSON.stringify(itemId)}`);
   }
@@ -209,6 +213,6 @@ export async function regenerateListing({ runId, analysis, declutter, overrides 
   return request(`/listings/${encodeURIComponent(itemId)}/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides }),
+    body: JSON.stringify({ run_id: runId, analysis, declutter, overrides, listing_details: listingDetails }),
   });
 }

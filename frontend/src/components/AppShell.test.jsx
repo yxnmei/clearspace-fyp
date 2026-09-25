@@ -28,7 +28,57 @@ describe("AppShell", () => {
     const back = screen.getByRole("button", { name: /back to workflows/i });
     expect(back).toHaveAttribute("type", "button");
     await user.click(back);
+    // Leaving discards the mounted workflow, so the button asks first.
+    expect(onBack).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Leave" }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  describe("leave guard", () => {
+    test("Back opens an alertdialog that takes focus, Stay closes it and returns focus, nothing is called", async () => {
+      const user = userEvent.setup();
+      const onBack = vi.fn();
+      render(<AppShell onBack={onBack}>x</AppShell>);
+      const back = screen.getByRole("button", { name: /back to workflows/i });
+      await user.click(back);
+      const dialog = screen.getByRole("alertdialog", { name: "Leave this workflow?" });
+      expect(dialog).toHaveTextContent(/decisions and drafts here will be lost/i);
+      expect(screen.getByRole("button", { name: "Stay" })).toHaveFocus();
+      await user.click(screen.getByRole("button", { name: "Stay" }));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(back).toHaveFocus();
+      expect(onBack).not.toHaveBeenCalled();
+    });
+
+    test("Escape closes the guard without leaving", async () => {
+      const user = userEvent.setup();
+      const onBack = vi.fn();
+      render(<AppShell onBack={onBack}>x</AppShell>);
+      await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(onBack).not.toHaveBeenCalled();
+    });
+
+    test("the brand is a button named ClearSpace home only while a workflow is open, and goes through the same guard", async () => {
+      const user = userEvent.setup();
+      const onBack = vi.fn();
+      const { rerender } = render(<AppShell>x</AppShell>);
+      expect(screen.queryByRole("button", { name: "ClearSpace home" })).not.toBeInTheDocument();
+      expect(screen.getByText("ClearSpace")).toBeInTheDocument();
+
+      rerender(<AppShell onBack={onBack}>x</AppShell>);
+      const home = screen.getByRole("button", { name: "ClearSpace home" });
+      await user.click(home);
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+      expect(onBack).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Leave" }));
+      expect(onBack).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      // The text button keeps its unique name alongside the brand button.
+      expect(screen.getAllByRole("button", { name: /back to workflows/i })).toHaveLength(1);
+    });
   });
 
   test("has no fake account, notification or settings chrome", () => {
@@ -81,6 +131,7 @@ describe("AppShell", () => {
       </AppShell>
     );
     await user.click(screen.getByRole("button", { name: /back to workflows/i }));
+    await user.click(screen.getByRole("button", { name: "Leave" }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 

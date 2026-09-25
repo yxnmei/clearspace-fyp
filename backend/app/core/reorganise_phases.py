@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.core.reorganise_storage import STORAGE_CATEGORY_RULES, format_label_list, shorten_for_display
+from app.core.reorganise_storage import STORAGE_CATEGORY_RULES, shorten_for_display
 from app.core.schemas import Decision, DetectedItem, ItemId
 
 PhaseId = Literal["empty_clean", "sort", "zones", "cables", "maintain"]
@@ -106,8 +106,60 @@ def _union(items: list[DetectedItem], *groups: list[DetectedItem]) -> list[Detec
     return [item for item in items if item.item_id in ids]
 
 
-def _phrase(items: list[DetectedItem]) -> str:
-    return format_label_list(items)
+# Plural forms for the detector's own vocabulary (app/models/grounding_dino.py)
+# plus the few extra labels the label cleanup and storage rules produce.
+# Plan prose is user-facing, so "3 bottles" reads naturally; a label
+# outside this map (a user-corrected label, for example) never gets a
+# guessed plural and falls back to "3 <label> items".
+_PLURALS = {
+    "artwork": "artworks", "backpack": "backpacks", "bag": "bags", "balloon": "balloons",
+    "basket": "baskets", "bin": "bins", "blanket": "blankets", "book": "books",
+    "bottle": "bottles", "bowl": "bowls", "box": "boxes", "cable": "cables",
+    "chair": "chairs", "charger": "chargers", "clock": "clocks", "clothes": "clothes",
+    "cord": "cords", "cup": "cups", "cushion": "cushions", "desk": "desks",
+    "document": "documents", "drawer": "drawers", "fan": "fans", "glasses": "glasses",
+    "guitar": "guitars", "heater": "heaters", "jacket": "jackets", "jewelry": "jewelry",
+    "jewellery": "jewellery", "key": "keys", "keyboard": "keyboards", "lamp": "lamps",
+    "laptop": "laptops", "magazine": "magazines", "mirror": "mirrors", "monitor": "monitors",
+    "mouse": "mice", "mug": "mugs", "necklace": "necklaces", "notebook": "notebooks",
+    "painting": "paintings", "paper": "papers", "pen": "pens", "phone": "phones",
+    "picture frame": "picture frames", "pillow": "pillows", "plant": "plants",
+    "plate": "plates", "printer": "printers", "remote control": "remote controls",
+    "shelf": "shelves", "shirt": "shirts", "shoe": "shoes", "speaker": "speakers",
+    "table": "tables", "tool": "tools", "towel": "towels", "toy": "toys",
+    "trash can": "trash cans", "utensil": "utensils", "watch": "watches",
+}
+_MAX_NATURAL_LABELS = 4
+
+
+def _natural_phrase(items: list[DetectedItem]) -> str:
+    """Article-free prose for a group of selected items: "desk",
+    "desk and shelves", "box and 3 bottles", "lamp, cup, book, toy and
+    other items". Distinct labels in first-seen order; a repeated label
+    renders as a count plus its known plural, or "N <label> items" when
+    the plural is not known. Callers supply "the" themselves. Never the
+    "label xN" form, which belongs to structured data, not instructions."""
+    order: list[str] = []
+    counts: Counter[str] = Counter()
+    for entry in items:
+        label = entry.effective_label.strip()
+        if label not in counts:
+            order.append(label)
+        counts[label] += 1
+    parts = []
+    for label in order[:_MAX_NATURAL_LABELS]:
+        count = counts[label]
+        if count == 1:
+            parts.append(shorten_for_display(label))
+        elif label.lower() in _PLURALS:
+            parts.append(f"{count} {_PLURALS[label.lower()]}")
+        else:
+            parts.append(f"{count} {shorten_for_display(label)} items")
+    if len(order) > _MAX_NATURAL_LABELS:
+        parts.append("other items")
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def build_tidy_plan(
@@ -181,74 +233,74 @@ def build_tidy_plan(
     if room == "office":
         add("empty_clean", "Clear everything off the desk surface.")
         add("empty_clean", "Wipe the desk surface and, if the desk has drawers, empty and wipe those too.")
-        if groups["daily_desk"]: add("empty_clean", f"Clean the {_phrase(groups['daily_desk'])}.", groups["daily_desk"])
+        if groups["daily_desk"]: add("empty_clean", f"Clean the {_natural_phrase(groups['daily_desk'])}.", groups["daily_desk"])
         add("sort", "Throw away obvious rubbish such as dried-out pens, old notes and wrappers.")
-        if groups["papers"]: add("sort", f"File, shred or recycle the {_phrase(groups['papers'])}.", groups["papers"])
-        if groups["dishes"]: add("sort", f"Move the {_phrase(groups['dishes'])} out of the workspace.", groups["dishes"])
-        if groups["daily_desk"]: add("zones", f"Daily zone: keep the {_phrase(groups['daily_desk'])} within easy arm's reach.", groups["daily_desk"])
+        if groups["papers"]: add("sort", f"File, shred or recycle the {_natural_phrase(groups['papers'])}.", groups["papers"])
+        if groups["dishes"]: add("sort", f"Move the {_natural_phrase(groups['dishes'])} out of the workspace.", groups["dishes"])
+        if groups["daily_desk"]: add("zones", f"Daily zone: keep the {_natural_phrase(groups['daily_desk'])} within easy arm's reach.", groups["daily_desk"])
         weekly = _union(selected_items, groups["papers"], groups["display"])
-        if weekly: add("zones", f"Weekly zone: keep the {_phrase(weekly)} nearby but out of the way, for example in a top drawer or along the desk edge.", weekly)
+        if weekly: add("zones", f"Weekly zone: keep the {_natural_phrase(weekly)} nearby but out of the way, for example in a top drawer or along the desk edge.", weekly)
         storage = _union(selected_items, groups["cables"], groups["soft"])
-        if storage: add("zones", f"Storage zone: put the {_phrase(storage)} in a bottom drawer or a closed box.", storage)
+        if storage: add("zones", f"Storage zone: put the {_natural_phrase(storage)} in a bottom drawer or a closed box.", storage)
         maintain = ("Remove cups, plates and rubbish at the end of every day.", "Spend two minutes resetting the desk before leaving so tomorrow starts clean.")
         cable_end = "Route cables behind the desk or monitor stand so they are out of view."
     elif room == "bedroom":
         add("empty_clean", "Clear the bed, the bedside surfaces and the floor.")
         add("empty_clean", "Wipe the surfaces and, if there are drawers, empty and wipe those too.")
         add("sort", "Throw away obvious rubbish and anything broken.")
-        if groups["clothing"]: add("sort", f"Put the {_phrase(groups['clothing'])} away or into the laundry.", groups["clothing"])
-        if groups["papers"]: add("sort", f"File or recycle the {_phrase(groups['papers'])}.", groups["papers"])
-        if groups["dishes"]: add("sort", f"Take the {_phrase(groups['dishes'])} out of the room.", groups["dishes"])
-        if groups["soft"]: add("zones", f"Daily zone: keep the {_phrase(groups['soft'])} on or beside the bed.", groups["soft"])
-        if groups["clothing"]: add("zones", f"Weekly zone: hang or fold the {_phrase(groups['clothing'])} and keep what you wear most at the front.", groups["clothing"])
+        if groups["clothing"]: add("sort", f"Put the {_natural_phrase(groups['clothing'])} away or into the laundry.", groups["clothing"])
+        if groups["papers"]: add("sort", f"File or recycle the {_natural_phrase(groups['papers'])}.", groups["papers"])
+        if groups["dishes"]: add("sort", f"Take the {_natural_phrase(groups['dishes'])} out of the room.", groups["dishes"])
+        if groups["soft"]: add("zones", f"Daily zone: keep the {_natural_phrase(groups['soft'])} on or beside the bed.", groups["soft"])
+        if groups["clothing"]: add("zones", f"Weekly zone: hang or fold the {_natural_phrase(groups['clothing'])} and keep what you wear most at the front.", groups["clothing"])
         storage = _union(selected_items, groups["display"], groups["cables"])
-        if storage: add("zones", f"Storage zone: put the {_phrase(storage)} in a closed box, a drawer or on a high shelf.", storage)
+        if storage: add("zones", f"Storage zone: put the {_natural_phrase(storage)} in a closed box, a drawer or on a high shelf.", storage)
         maintain = ("Make the bed and clear the bedside surfaces each morning.", "Spend two minutes putting things back in their zone before bed.")
         cable_end = "Route cables behind the bedside table or desk so they are out of view."
     elif room == "kitchen":
         add("empty_clean", "Clear the counters and the table.")
         add("empty_clean", "Wipe the counters, the table and the front of the cupboards.")
         add("sort", "Throw away rubbish and anything past its best.")
-        if groups["dishes"]: add("sort", f"Wash or put away the {_phrase(groups['dishes'])}.", groups["dishes"])
-        if groups["papers"]: add("sort", f"Move the {_phrase(groups['papers'])} out of the kitchen.", groups["papers"])
-        if groups["dishes"]: add("zones", f"Daily zone: keep the {_phrase(groups['dishes'])} you use every day within reach of the sink.", groups["dishes"])
+        if groups["dishes"]: add("sort", f"Wash or put away the {_natural_phrase(groups['dishes'])}.", groups["dishes"])
+        if groups["papers"]: add("sort", f"Move the {_natural_phrase(groups['papers'])} out of the kitchen.", groups["papers"])
+        if groups["dishes"]: add("zones", f"Daily zone: keep the {_natural_phrase(groups['dishes'])} you use every day within reach of the sink.", groups["dishes"])
         weekly = _union(selected_items, groups["papers"], groups["display"])
-        if weekly: add("zones", f"Weekly zone: keep the {_phrase(weekly)} together on one shelf or in one drawer.", weekly)
+        if weekly: add("zones", f"Weekly zone: keep the {_natural_phrase(weekly)} together on one shelf or in one drawer.", weekly)
         storage = _union(selected_items, groups["cables"], groups["soft"])
-        if storage: add("zones", f"Storage zone: put the {_phrase(storage)} in a cupboard or a closed box.", storage)
+        if storage: add("zones", f"Storage zone: put the {_natural_phrase(storage)} in a cupboard or a closed box.", storage)
         maintain = ("Wash up and clear the counters after every meal.", "Spend two minutes resetting the kitchen before bed.")
         cable_end = "Route cables behind the appliances so they are out of view."
     else:
         add("empty_clean", "Clear the main surfaces in the space.")
         add("empty_clean", "Wipe them down before putting anything back.")
         add("sort", "Throw away obvious rubbish and anything broken.")
-        if groups["papers"]: add("sort", f"File or recycle the {_phrase(groups['papers'])}.", groups["papers"])
-        if groups["dishes"]: add("sort", f"Take the {_phrase(groups['dishes'])} to the kitchen.", groups["dishes"])
-        if groups["clothing"]: add("sort", f"Put the {_phrase(groups['clothing'])} away.", groups["clothing"])
+        if groups["papers"]: add("sort", f"File or recycle the {_natural_phrase(groups['papers'])}.", groups["papers"])
+        if groups["dishes"]: add("sort", f"Take the {_natural_phrase(groups['dishes'])} to the kitchen.", groups["dishes"])
+        if groups["clothing"]: add("sort", f"Put the {_natural_phrase(groups['clothing'])} away.", groups["clothing"])
         daily = _union(selected_items, groups["daily_desk"], groups["dishes"], groups["soft"])
-        if daily: add("zones", f"Daily zone: keep the {_phrase(daily)} where you use them.", daily)
+        if daily: add("zones", f"Daily zone: keep the {_natural_phrase(daily)} where you use them.", daily)
         weekly = _union(selected_items, groups["papers"], groups["display"], groups["clothing"])
-        if weekly: add("zones", f"Weekly zone: keep the {_phrase(weekly)} together in one place.", weekly)
-        if groups["cables"]: add("zones", f"Storage zone: put the {_phrase(groups['cables'])} in a closed box or drawer.", groups["cables"])
+        if weekly: add("zones", f"Weekly zone: keep the {_natural_phrase(weekly)} together in one place.", weekly)
+        if groups["cables"]: add("zones", f"Storage zone: put the {_natural_phrase(groups['cables'])} in a closed box or drawer.", groups["cables"])
         maintain = ("Return items to their zone at the end of each day.", "Spend two minutes resetting the space before leaving it.")
         cable_end = "Route cables behind furniture so they are out of view."
 
     if surfaces:
         drafts["empty_clean"].insert(
-            0, (f"Clear these surfaces first: {_phrase(surfaces)}. They are where loose items collect.", surfaces, "evidence")
+            0, (f"Clear the {_natural_phrase(surfaces)} first. That is where loose items collect.", surfaces, "evidence")
         )
 
     for decision, prefix in ((Decision.SELL, "Set aside to sell"), (Decision.DONATE, "Set aside to donate"), (Decision.DISCARD, "Throw out or recycle")):
         items = [item for item, value in departing if value is decision]
-        if items: add("sort", f"{prefix}: {_phrase(items)}.", items, "departing")
+        if items: add("sort", f"{prefix}: the {_natural_phrase(items)}.", items, "departing")
 
     for label, items in repeated[:3]:
-        add("zones", f"You have {len(items)} {shorten_for_display(label)} items. Decide which one you use daily and store the rest.", items, "repeated")
+        add("zones", f"You have {_natural_phrase(items)}. Decide which one you use daily and store the rest.", items, "repeated")
     if len(groups["tray"]) >= 2:
-        add("zones", f"Use a tray or a small box for the {_phrase(groups['tray'])}.", groups["tray"], "tray")
+        add("zones", f"Use a tray or a small box for the {_natural_phrase(groups['tray'])}.", groups["tray"], "tray")
 
     if groups["cables"]:
-        add("cables", f"Untangle the {_phrase(groups['cables'])}.", groups["cables"])
+        add("cables", f"Untangle the {_natural_phrase(groups['cables'])}.", groups["cables"])
         add("cables", "Bundle loose cables with a strap, tie or clip.", groups["cables"])
         add("cables", cable_end, groups["cables"])
     for text in maintain:

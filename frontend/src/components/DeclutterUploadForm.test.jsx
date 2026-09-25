@@ -226,7 +226,7 @@ describe("DeclutterUploadForm, space photo presentation (redesign)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Upload a photo of your space" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+        "Upload one clear photo with most items in frame. Context is optional."
       )
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Space photo")).toBeInTheDocument();
@@ -311,7 +311,7 @@ describe("DeclutterUploadForm, shared Upload photo composition (redesign phase)"
     expect(within(form).getByRole("heading", { level: 2 })).toHaveTextContent(/^Upload a photo of your space$/);
     expect(
       within(form).getByText(
-        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+        "Upload one clear photo with most items in frame. Context is optional."
       )
     ).toBeInTheDocument();
     expect(form.textContent).not.toMatch(/^\s*1\./);
@@ -343,10 +343,14 @@ describe("DeclutterUploadForm, shared Upload photo composition (redesign phase)"
     expect(screen.queryByText(/no photo selected yet/i)).not.toBeInTheDocument();
   });
 
-  test("the primary action is full width with a 44px target on phones and natural width from sm", () => {
+  test("the primary action sits at the right edge at every width, at natural width, with a 44px target on phones", () => {
     render(<DeclutterUploadForm status="idle" error={null} onSubmit={vi.fn()} />);
     const cls = classes(button());
-    for (const c of ["min-h-11", "w-full", "sm:min-h-0", "sm:w-auto"]) expect(cls).toContain(c);
+    for (const c of ["min-h-11", "sm:min-h-0", "self-end"]) expect(cls).toContain(c);
+    // not stretched on phones, and never left-aligned from sm
+    expect(cls).not.toContain("w-full");
+    expect(cls.some((c) => /self-start$/.test(c))).toBe(false);
+    expect(button().parentElement.className).toMatch(/\bflex-col\b/);
   });
 
   test("disabled without a file, enabled with a valid file, and it stays the only primary control", async () => {
@@ -428,5 +432,14 @@ describe("DeclutterUploadForm, shared Upload photo composition (redesign phase)"
     expect(grid.children[0]).toContainElement(screen.getByLabelText(/space photo/i));
     expect(grid.children[1]).toContainElement(screen.getByLabelText(/context for the ai/i));
     expect(container.innerHTML).not.toMatch(/overflow-x-auto|w-screen/);
+  });
+});
+
+describe("DeclutterUploadForm footer alignment (shared by Declutter and Both)", () => {
+  test("the busy state keeps the same alignment and stays disabled", () => {
+    render(<DeclutterUploadForm status="uploading" error={null} onSubmit={vi.fn()} />);
+    const button = screen.getByRole("button", { name: /analysing/i });
+    expect(button).toBeDisabled();
+    expect(button.className.split(/\s+/)).toContain("self-end");
   });
 });

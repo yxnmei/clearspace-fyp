@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, RotateCcw, TriangleAlert } from "lucide-react";
+import { Button } from "./ui/button";
+import DeclutterResultsSummary from "./DeclutterResultsSummary";
 import { useDeclutterFlow } from "../hooks/useDeclutterFlow";
 import { useObjectUrl } from "../hooks/useObjectUrl";
 import { deriveDeclutterWizard } from "../lib/declutterWizard";
@@ -67,6 +69,10 @@ export default function DeclutterPage() {
     editListingDraft,
     discardListingDraft,
     restoreListingDraft,
+    listingDetailsById,
+    setListingDetails,
+    missingListingItemIds,
+    reset,
   } = useDeclutterFlow();
 
   const [submittedFile, setSubmittedFile] = useState(null);
@@ -139,6 +145,31 @@ export default function DeclutterPage() {
     setViewedStep(wizard.continueTargetId);
   }, [wizard.canContinue, wizard.continueTargetId]);
 
+  // A per-category Edit link on Confirm (or Edit decisions on Results)
+  // navigates to Decide items with that decision filter applied. Only
+  // presentation: no decision changes here, and the review section owns
+  // the filter afterwards. The nonce lets the same filter be requested
+  // twice in a row.
+  const [filterRequest, setFilterRequest] = useState(null);
+  const handleEditCategory = useCallback(
+    (filterId) => {
+      setFilterRequest((previous) => ({ id: filterId, nonce: (previous?.nonce ?? 0) + 1 }));
+      goToStep("review");
+    },
+    [goToStep]
+  );
+
+  // Start over from the closing Listing drafts view: the hook's reset
+  // clears analysis, decisions, confirmation and listing state (and
+  // relocks every step), and the page drops its own presentation state
+  // and the analysed-image URL, returning to Upload photo.
+  const handleStartOver = useCallback(() => {
+    reset();
+    setSubmittedFile(null);
+    setConfirmAcknowledged(false);
+    setViewedStep("upload");
+  }, [reset]);
+
   return (
     <div>
       <WorkflowProgress
@@ -155,12 +186,11 @@ export default function DeclutterPage() {
         nextActionText={wizard.nextActionText}
       />
 
-      <div className="mt-6">
+      <div className="mt-4">
         {/* ---------- Upload ---------- */}
         <div hidden={viewed !== "upload"}>
-          <p className="mb-6 max-w-2xl text-muted-foreground">
-            Get AI-suggested Keep / Sell / Donate / Discard decisions for what's in your space, then review and
-            confirm each one yourself before anything is finalised.
+          <p className="mb-4 max-w-2xl text-muted-foreground">
+            Get a suggested action for every item, then review and confirm each one.
           </p>
           <DeclutterUploadForm status={status} error={error} onSubmit={handleSubmit} />
         </div>
@@ -227,6 +257,7 @@ export default function DeclutterPage() {
                 correctingItemId={correctingItemId}
                 correctionError={correctionError}
                 enableBackToTop
+                filterRequest={filterRequest}
               />
               {/* The sticky summary bar is this view's ONLY Back / Continue
                   pair. The Continue guard is unchanged; the bar just says
@@ -270,6 +301,7 @@ export default function DeclutterPage() {
                 confirmation={confirmation}
                 reviewItems={reviewItems}
                 imageUrl={analysedImageUrl}
+                onEditCategory={handleEditCategory}
                 onReviewUnresolved={() => goToStep("review")}
               />
 
@@ -284,7 +316,7 @@ export default function DeclutterPage() {
                 // generation stays an explicit action on the Listings
                 // view (ListingsView's own "Generate listing drafts"
                 // button).
-                continueLabel="Continue to Listing drafts"
+                continueLabel="Continue to Results"
                 onContinue={confirmationStatus === "confirmed" && confirmation ? handleContinue : undefined}
                 continueDisabled={!(viewed === "confirm" && wizard.canContinue)}
               />
@@ -296,6 +328,21 @@ export default function DeclutterPage() {
         <div hidden={viewed !== "listings"}>
           {hasAnalysis && (
             <div className="space-y-6">
+              {/* The closing overview of a standalone Declutter run: counts
+                  first, the item chips collapsed behind one control, and
+                  Edit decisions back to Decide items. The listings below
+                  are the primary content. It renders only with a current
+                  successful confirmation, which is also the only way this
+                  view unlocks. */}
+              {confirmationStatus === "confirmed" && confirmation ? (
+                <DeclutterResultsSummary
+                  confirmation={confirmation}
+                  reviewItems={reviewItems}
+                  imageUrl={analysedImageUrl}
+                  onEditDecisions={() => handleEditCategory("all")}
+                />
+              ) : null}
+
               <ListingsView
                 confirmation={confirmation}
                 reviewItems={reviewItems}
@@ -310,13 +357,31 @@ export default function DeclutterPage() {
                 editListingDraft={editListingDraft}
                 discardListingDraft={discardListingDraft}
                 restoreListingDraft={restoreListingDraft}
+                listingDetailsById={listingDetailsById}
+                setListingDetails={setListingDetails}
+                missingListingItemIds={missingListingItemIds}
               />
 
-              <WizardNav
-                backLabel="Back to Confirm choices"
-                onBack={() => goToStep("confirm")}
-                backDisabled={wizard.navigationLocked}
-              />
+              {/* Start over is the one whole-workflow reset on this page,
+                  offered only here, at the end, beside the wizard's Back. */}
+              <div aria-label="Declutter actions" role="group" className="border-t border-border pt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStartOver}
+                  disabled={wizard.navigationLocked}
+                  className="min-h-11 w-full sm:min-h-0 sm:w-auto"
+                >
+                  <RotateCcw aria-hidden="true" width={14} height={14} />
+                  Start over
+                </Button>
+                <WizardNav
+                  backLabel="Back to Confirm choices"
+                  onBack={() => goToStep("confirm")}
+                  backDisabled={wizard.navigationLocked}
+                />
+              </div>
             </div>
           )}
         </div>

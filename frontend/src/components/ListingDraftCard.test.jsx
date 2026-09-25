@@ -140,7 +140,9 @@ describe("ListingDraftCard", () => {
         <ListingDraftCard draft={makeGeneratedDraft({ attempts: 3, was_repaired: true })} reviewItem={null} />
       );
       expect(screen.getByText("dining table")).toBeInTheDocument();
-      expect(container.textContent).not.toMatch(/item_001|attempt|repair|generated|status|run|model|prompt|sha|center/i);
+      // \b guards: adjacent button labels concatenate in textContent
+      // ("AI Regenerate" + "Discard" reads "...RegenerateDiscard").
+      expect(container.textContent).not.toMatch(/item_001|attempt|repair|\bgenerated\b|status|\brun\b|model|prompt|sha|center/i);
     });
   });
 
@@ -370,7 +372,7 @@ describe("ListingDraftCard", () => {
       const onRegenerate = vi.fn();
       render(<ListingDraftCard draft={makeUnavailableDraft()} onRegenerate={onRegenerate} />);
 
-      await user.click(screen.getByRole("button", { name: /regenerate draft/i }));
+      await user.click(screen.getByRole("button", { name: /ai regenerate/i }));
 
       expect(onRegenerate).toHaveBeenCalledWith("item_002");
       expect(screen.queryByText(/replace your local edits/i)).not.toBeInTheDocument();
@@ -385,7 +387,7 @@ describe("ListingDraftCard", () => {
         <ListingDraftCard draft={makeGeneratedDraft({ item_id: "item_009" })} onRegenerate={onRegenerate} />
       );
 
-      await user.click(screen.getByRole("button", { name: /regenerate draft/i }));
+      await user.click(screen.getByRole("button", { name: /ai regenerate/i }));
 
       expect(onRegenerate).toHaveBeenCalledWith("item_009");
       expect(onRegenerate).toHaveBeenCalledTimes(1);
@@ -397,7 +399,7 @@ describe("ListingDraftCard", () => {
       render(<EditableCard draft={makeGeneratedDraft()} onRegenerate={onRegenerate} />);
 
       await user.type(screen.getByLabelText(/listing title for/i), " edited");
-      await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+      await user.click(screen.getByRole("button", { name: /^ai regenerate$/i }));
 
       expect(onRegenerate).not.toHaveBeenCalled();
       expect(screen.getByText(/will replace your local edits/i)).toBeInTheDocument();
@@ -408,7 +410,7 @@ describe("ListingDraftCard", () => {
       expect(screen.queryByText(/will replace your local edits/i)).not.toBeInTheDocument();
 
       // Re-open and confirm with the explicitly named destructive action
-      await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+      await user.click(screen.getByRole("button", { name: /^ai regenerate$/i }));
       await user.click(screen.getByRole("button", { name: /replace my edits and regenerate/i }));
 
       expect(onRegenerate).toHaveBeenCalledTimes(1);
@@ -435,7 +437,7 @@ describe("ListingDraftCard", () => {
 
     test("regenerate is disabled when another listing operation is in flight", () => {
       render(<ListingDraftCard draft={makeGeneratedDraft()} listingBusy={true} />);
-      expect(screen.getByRole("button", { name: /regenerate draft/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /ai regenerate/i })).toBeDisabled();
     });
   });
 
@@ -454,7 +456,7 @@ describe("ListingDraftCard", () => {
         />
       );
 
-      await user.click(screen.getByRole("button", { name: /discard draft/i }));
+      await user.click(screen.getByRole("button", { name: /^discard$/i }));
 
       expect(onDiscard).toHaveBeenCalledWith("item_003");
       expect(onRegenerate).not.toHaveBeenCalled();
@@ -686,7 +688,7 @@ describe("ListingDraftCard", () => {
       render(<Wrapper />);
 
       await user.type(screen.getByLabelText(/listing title for/i), " edited");
-      await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+      await user.click(screen.getByRole("button", { name: /^ai regenerate$/i }));
       expect(screen.getByText(/will replace your local edits/i)).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: /go busy/i }));
@@ -703,7 +705,7 @@ describe("ListingDraftCard", () => {
       // force the warning open by clicking the trigger
       // (is_edited true -> click shows the warning)
       act(() => {
-        screen.getByRole("button", { name: /^regenerate draft$/i }).click();
+        screen.getByRole("button", { name: /^ai regenerate$/i }).click();
       });
       expect(screen.getByText(/will replace your local edits/i)).toBeInTheDocument();
 
@@ -717,7 +719,7 @@ describe("ListingDraftCard", () => {
     test("an open warning is cleared when regeneration begins", () => {
       const { rerender } = render(<ListingDraftCard draft={makeGeneratedDraft({ is_edited: true })} />);
       act(() => {
-        screen.getByRole("button", { name: /^regenerate draft$/i }).click();
+        screen.getByRole("button", { name: /^ai regenerate$/i }).click();
       });
       expect(screen.getByText(/will replace your local edits/i)).toBeInTheDocument();
 
@@ -730,8 +732,8 @@ describe("ListingDraftCard", () => {
     test("Copy is the single primary action, Regenerate secondary (outline) and Discard tertiary (ghost, muted)", () => {
       render(<ListingDraftCard draft={makeGeneratedDraft()} />);
       const copy = screen.getByRole("button", { name: /copy listing/i });
-      const regenerate = screen.getByRole("button", { name: /regenerate draft/i });
-      const discard = screen.getByRole("button", { name: /discard draft/i });
+      const regenerate = screen.getByRole("button", { name: /ai regenerate/i });
+      const discard = screen.getByRole("button", { name: /^discard$/i });
 
       expect(copy.className).toMatch(/\bbg-primary\b/);
       expect(regenerate.className).toMatch(/\bborder-input\b/);
@@ -751,9 +753,9 @@ describe("ListingDraftCard", () => {
       const actions = copy.parentElement;
       expect(actions.className).toMatch(/\bflex-col\b/);
       expect(actions.className).toMatch(/\bsm:flex-row\b/);
-      const secondary = screen.getByRole("button", { name: /regenerate draft/i }).parentElement;
+      const secondary = screen.getByRole("button", { name: /ai regenerate/i }).parentElement;
       expect(secondary.className).toMatch(/\bflex-wrap\b/);
-      expect(secondary).toContainElement(screen.getByRole("button", { name: /discard draft/i }));
+      expect(secondary).toContainElement(screen.getByRole("button", { name: /^discard$/i }));
       expect(screen.getByRole("article").className).not.toMatch(/overflow-x|whitespace-nowrap|w-screen/);
     });
 
@@ -774,8 +776,8 @@ describe("ListingDraftCard", () => {
       expect(screen.getByRole("heading", { name: "table lamp" })).toBeInTheDocument();
       expect(screen.getByText(/service was unavailable/i)).toBeInTheDocument();
       expect(container.textContent).not.toMatch(/service_unavailable|unavailable_reason|item_00\d|status/i);
-      expect(screen.getByRole("button", { name: /regenerate draft/i }).className).toMatch(/\bborder-input\b/);
-      expect(screen.getByRole("button", { name: /discard draft/i }).className).toMatch(/text-muted-foreground/);
+      expect(screen.getByRole("button", { name: /ai regenerate/i }).className).toMatch(/\bborder-input\b/);
+      expect(screen.getByRole("button", { name: /^discard$/i }).className).toMatch(/text-muted-foreground/);
       expect(screen.queryByRole("button", { name: /copy listing/i })).not.toBeInTheDocument();
     });
   });

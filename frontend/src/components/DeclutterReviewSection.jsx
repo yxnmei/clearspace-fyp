@@ -39,6 +39,11 @@ export default function DeclutterReviewSection({
   correctingItemId = null,
   correctionError = null,
   enableBackToTop = false,
+  // { id, nonce }: a one-shot request from the page to apply a decision
+  // filter (from the Confirm screen's per-category Edit links). Applied
+  // whenever the object changes; the chips remain the user's own control
+  // afterwards.
+  filterRequest = null,
 }) {
   const correctionDisabled = correctingItemId !== null;
   function correctionErrorFor(itemId) {
@@ -51,6 +56,11 @@ export default function DeclutterReviewSection({
   const [showAllBoxes, setShowAllBoxes] = useState(true);
   // Default "all"; filters by an item's current review_decision.
   const [decisionFilter, setDecisionFilter] = useState("all");
+  useEffect(() => {
+    if (!filterRequest) return;
+    const known = REVIEW_DECISION_FILTERS.some((filter) => filter.id === filterRequest.id);
+    setDecisionFilter(known ? filterRequest.id : "all");
+  }, [filterRequest]);
   const itemRefs = useRef(new Map());
 
   const workspaceRef = useRef(null);
@@ -119,9 +129,7 @@ export default function DeclutterReviewSection({
           Review your declutter decisions
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          ClearSpace suggested a Keep, Sell, Donate or Discard action for each item it detected. Every
-          suggestion is yours to change, exclude or correct. Nothing is finalised until you press Confirm
-          decisions.
+          Review and adjust each item's suggested action or label before confirming.
         </p>
         <p className="mt-3 inline-flex items-center gap-2 rounded-pill bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">
           <ShieldCheck aria-hidden="true" width={13} height={13} />

@@ -43,14 +43,16 @@ describe("StorageSuggestions layout contract", () => {
   test.each([
     ["two", 2],
     ["three", 3],
-  ])("%s suggestions: one column on phones, two from sm, three from lg", (_, count) => {
+  ])("%s suggestions: one column on phones, two from sm, one again in the lg side column, two from xl", (_, count) => {
     render(<StorageSuggestions storageSuggestions={IDEAS.slice(0, count)} />);
     expect(cards()).toHaveLength(count);
     const cls = classes(list());
     expect(cls).toContain("grid");
     expect(cls).toContain("grid-cols-1");
     expect(cls).toContain("sm:grid-cols-2");
-    expect(cls).toContain("lg:grid-cols-3");
+    expect(cls).toContain("lg:grid-cols-1");
+    expect(cls).toContain("xl:grid-cols-2");
+    expect(cls).not.toContain("lg:grid-cols-3");
     for (const card of cards()) expect(classes(card)).toContain("min-w-0");
   });
 

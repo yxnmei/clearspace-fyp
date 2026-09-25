@@ -11,7 +11,7 @@ const DECLUTTER_STEPS = [
   { id: "analyse", label: "Analyse space" },
   { id: "review", label: "Decide items" },
   { id: "confirm", label: "Confirm choices" },
-  { id: "listings", label: "Listing drafts" },
+  { id: "listings", label: "Results" },
 ];
 
 const REORGANISE_STEPS = [

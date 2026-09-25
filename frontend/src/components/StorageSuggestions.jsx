@@ -16,7 +16,10 @@
 // single suggestion keeps one column at every width, so its card uses
 // the section's width rather than sitting alone in a third of the row.
 // Same markup either way, only the grid classes change.
-const MULTI_COLUMN_GRID = "sm:grid-cols-2 lg:grid-cols-3";
+// From lg the section sits in the narrower right-hand column beneath the
+// visual preview (ReorganiseResult), so it drops back to one column there
+// and opens out to two again from xl.
+const MULTI_COLUMN_GRID = "sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2";
 
 export default function StorageSuggestions({ storageSuggestions }) {
   if (!storageSuggestions || storageSuggestions.length === 0) return null;

@@ -94,7 +94,7 @@ def _fake_llm_result(decisions: list[dict]) -> FakeLLMResult:
         parsed_json=decisions,
         is_valid_json=True,
         model_name="phi4-mini",
-        prompt_version="v2",
+        prompt_version="v1",
         item_provenance={d["item_number"]: ItemValidity.RAW_VALID for d in decisions},
     )
 
@@ -137,9 +137,20 @@ class FakeListingGenerator:
         self.default = default
         self.by_label = by_label or {}
         self.calls: list[dict] = []
+        # Seller-supplied details per call, kept apart from `calls` so the
+        # existing exact-equality assertions on {item_label, model_name}
+        # keep their meaning.
+        self.details: list[dict] = []
 
-    def __call__(self, item_label: str, model_name: str | None = None):
+    def __call__(
+        self,
+        item_label: str,
+        model_name: str | None = None,
+        listing_name: str | None = None,
+        condition: str = "not_specified",
+    ):
         self.calls.append({"item_label": item_label, "model_name": model_name})
+        self.details.append({"item_label": item_label, "listing_name": listing_name, "condition": condition})
         outcome = self.by_label.get(item_label, self.default)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -153,7 +164,7 @@ def _ok(title="Used item", description="An ordinary used household item in unspe
         is_valid_json=True,
         was_repaired=False,
         model_name="phi4-mini",
-        prompt_version="v1",
+        prompt_version="v2",
     )
 
 
@@ -197,7 +208,7 @@ def test_all_eligible_items_generate_200_with_confirmation_and_order():
     assert ids == sell_ids
     assert all(d["status"] == "generated" for d in body["drafts"])
     assert body["model_name"] == "phi4-mini"
-    assert body["prompt_version"] == "v1"
+    assert body["prompt_version"] == "v2"
     assert [c["item_label"] for c in gen.calls] == ["lamp", "book"]
 
 
@@ -380,7 +391,7 @@ def test_regenerate_one_item_returns_200_with_a_single_draft():
     assert body["draft"]["item_id"] == "item_002"
     assert body["draft"]["status"] == "generated"
     assert body["model_name"] == "phi4-mini"
-    assert body["prompt_version"] == "v1"
+    assert body["prompt_version"] == "v2"
     assert body["max_attempts"] == 3
     # exactly one model call, for the target only
     assert gen.calls == [{"item_label": "desk", "model_name": "phi4-mini"}]
@@ -579,3 +590,130 @@ def test_importing_routes_and_main_does_not_load_ollama_or_the_listing_model():
         [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(_BACKEND_DIR)
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# listing_details: seller-supplied name and condition through the API
+# ---------------------------------------------------------------------------
+
+
+def test_listing_details_are_forwarded_per_item_and_absent_details_default():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "lamp", "sell"), _dec(3, "chair", "keep")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    body = _listings_body(
+        upload,
+        listing_details=[{"item_id": "item_002", "listing_name": "Brass reading lamp", "condition": "good"}],
+    )
+    response = client.post("/listings", json=body)
+
+    assert response.status_code == 200, response.text
+    assert [d["item_id"] for d in response.json()["drafts"]] == ["item_001", "item_002"]
+    assert gen.details == [
+        {"item_label": "lamp", "listing_name": None, "condition": "not_specified"},
+        {"item_label": "lamp", "listing_name": "Brass reading lamp", "condition": "good"},
+    ]
+    # The response draft still carries the trusted label, never the listing name.
+    assert [d["effective_label"] for d in response.json()["drafts"]] == ["lamp", "lamp"]
+
+
+def test_listing_details_for_a_keep_item_never_make_it_eligible():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "chair", "keep")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    body = _listings_body(upload, listing_details=[{"item_id": "item_002", "listing_name": "Oak chair", "condition": "new"}])
+    response = client.post("/listings", json=body)
+
+    assert response.status_code == 200, response.text
+    assert [d["item_id"] for d in response.json()["drafts"]] == ["item_001"]
+    assert len(gen.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "bad_details",
+    [
+        [{"item_id": "item_999", "condition": "good"}],
+        [{"item_id": "item_001"}, {"item_id": "item_001", "condition": "fair"}],
+    ],
+)
+def test_unknown_or_duplicate_detail_ids_are_422_before_any_model_call(bad_details):
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings", json=_listings_body(upload, listing_details=bad_details))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "invalid listing request"
+    assert gen.calls == []
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [
+        {"item_id": "item_001", "condition": "mint"},
+        {"item_id": "item_001", "listing_name": ""},
+        {"item_id": "item_001", "price": 10},
+        {"item_id": "item_001", "listing_name": "x" * 81},
+    ],
+)
+def test_invalid_listing_detail_shapes_are_422(bad_entry):
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    response = client.post("/listings", json=_listings_body(upload, listing_details=[bad_entry]))
+
+    assert response.status_code == 422, response.text
+    assert gen.calls == []
+
+
+def test_regenerate_uses_the_targets_details_only():
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "desk", "sell")])
+    gen = FakeListingGenerator(default=_ok())
+    _override_listing_generator(gen)
+
+    body = _listings_body(
+        upload,
+        listing_details=[
+            {"item_id": "item_001", "listing_name": "Lamp A", "condition": "new"},
+            {"item_id": "item_002", "listing_name": "Oak desk", "condition": "well_used"},
+        ],
+    )
+    response = client.post("/listings/item_002/regenerate", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["draft"]["item_id"] == "item_002"
+    assert gen.details == [{"item_label": "desk", "listing_name": "Oak desk", "condition": "well_used"}]
+
+
+def test_single_item_endpoint_drafts_a_newly_eligible_sell_item_with_no_prior_draft():
+    """The frontend reconciles drafts by item_id across re-confirmations and
+    drafts ONLY newly confirmed Sell items through the single-item endpoint.
+    Despite its /regenerate path, the endpoint is stateless: it derives the
+    eligible Sell set from the submitted declutter + overrides and needs no
+    earlier draft for the item. Eligibility is still server-derived: an item
+    only becomes draftable by an override the server replays, never by any
+    client claim."""
+    upload = _do_declutter_upload([_dec(1, "lamp", "sell"), _dec(2, "chair", "keep")])
+    gen = FakeListingGenerator(default=_ok(title="Oak chair"))
+    _override_listing_generator(gen)
+
+    # Before the override, the chair is Keep: not draftable.
+    refused = client.post("/listings/item_002/regenerate", json=_listings_body(upload))
+    assert refused.status_code == 422, refused.text
+    assert gen.calls == []
+
+    # The person marks the chair Sell; no /listings batch has ever run.
+    overrides = [{"item_id": "item_002", "decision": "sell"}]
+    response = client.post("/listings/item_002/regenerate", json=_listings_body(upload, overrides=overrides))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["draft"]["item_id"] == "item_002"
+    assert body["draft"]["status"] == "generated"
+    assert gen.calls == [{"item_label": "chair", "model_name": "phi4-mini"}]
+    confirmed = {c["item_id"]: c["confirmed_decision"] for c in body["confirmation"]["confirmed_decisions"]}
+    assert confirmed == {"item_001": "sell", "item_002": "sell"}

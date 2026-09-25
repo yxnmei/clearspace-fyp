@@ -55,7 +55,7 @@ export default function DeclutterUnresolvedItems({
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
                   {itemNumberLabel(item.item_id)}
                 </span>
-                <span className="font-semibold text-foreground">{item.effective_label ?? item.clean_label}</span>
+                <span className="font-semibold text-foreground">{item.display_label ?? item.effective_label ?? item.clean_label}</span>
                 {item.label_source === "user" && <Badge variant="primary">Corrected by you</Badge>}
                 <Badge variant="warning">
                   <TriangleAlert aria-hidden="true" width={12} height={12} />

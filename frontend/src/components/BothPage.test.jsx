@@ -387,7 +387,7 @@ describe("BothPage independent final actions", () => {
     await reachActions(user, KEEP_AND_SELL);
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
     await screen.findByDisplayValue("Great lamp for sale");
-    await user.click(screen.getByRole("button", { name: /^regenerate draft$/i }));
+    await user.click(screen.getByRole("button", { name: /^ai regenerate$/i }));
 
     await waitFor(() => expect(screen.getByDisplayValue("Regenerated title")).toBeInTheDocument());
     expect(client.generateConfirmedReorganisation).not.toHaveBeenCalled();
@@ -608,11 +608,15 @@ describe("BothPage Results composition", () => {
     expect(screen.queryByRole("heading", { name: "Your results" })).not.toBeInTheDocument();
     expect(screen.queryByText(/you can start either one first/i)).not.toBeInTheDocument();
     const stack = tidyUp().parentElement;
-    expect(stack.firstElementChild).toBe(tidyUp());
+    // The compact Declutter overview comes first, then the two result
+    // sections, in that order, then the global actions.
+    const overview = screen.getByRole("region", { name: "Declutter complete" });
+    expect(stack.firstElementChild).toBe(overview);
+    expect(within(overview).getByLabelText("Confirmed decision counts")).toBeInTheDocument();
+    expect(within(overview).getByRole("button", { name: "View items" })).toHaveAttribute("aria-expanded", "false");
     expect(tidyUp().className).toMatch(/rounded-card/);
     expect(order(tidyUp(), listings(), actions())).toBe(true);
-    // the two sections are the stack's first two children, in that order
-    expect(Array.from(stack.children).slice(0, 2)).toEqual([tidyUp(), listings()]);
+    expect(Array.from(stack.children).slice(1, 3)).toEqual([tidyUp(), listings()]);
     // exactly one visible heading per result section, no tabs or nav cards
     expect(screen.getAllByRole("heading", { name: "Tidy up" })).toHaveLength(1);
     expect(screen.getAllByRole("heading", { name: "Marketplace listings" })).toHaveLength(1);
@@ -755,7 +759,7 @@ describe("BothPage Results composition", () => {
     const title = screen.getByDisplayValue("Great lamp for sale");
     await user.clear(title);
     await user.type(title, "Edited");
-    await user.click(screen.getByRole("button", { name: /discard draft/i }));
+    await user.click(screen.getByRole("button", { name: /^discard$/i }));
     expect(screen.getByText("1 of 1 completed")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Clear the desk" })).toBeChecked();
     expect(client.generateConfirmedReorganisation).toHaveBeenCalledTimes(1);
@@ -901,10 +905,10 @@ describe("BothPage Upload photo and Analyse space screens", () => {
     expect(screen.getByRole("form", { name: "Upload a photo of your space" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Upload one clear photo of your space, with most items in frame. You can also provide optional context to help the AI better understand your space."
+        "Upload one clear photo with most items in frame. Context is optional."
       )
     ).toBeInTheDocument();
-    expect(screen.getByText(/then create a tidy plan and marketplace listing drafts from your confirmed choices, in either order/i)).toBeInTheDocument();
+    expect(screen.getByText("Review suggested decisions, then create a tidy plan and listing drafts from your confirmed choices.")).toBeInTheDocument();
     expect(screen.queryByText(/reorganisation checklist/i)).not.toBeInTheDocument();
     const upload = screen.getByRole("form", { name: "Upload a photo of your space" }).parentElement;
     expect(upload.textContent).not.toMatch(/\broom\b|^\s*1\./i);

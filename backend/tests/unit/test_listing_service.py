@@ -86,7 +86,7 @@ def _declutter_result(**overrides) -> DeclutterResult:
         recovery_failures=[],
         provenance_warnings=[],
         model_name="phi4-mini",
-        prompt_version="v2",
+        prompt_version="v1",
         stage_timings=[],
     )
     base.update(overrides)
@@ -570,7 +570,7 @@ def _ok_result(
     description="A plain chair in ordinary used condition.",
     was_repaired=False,
     model_name=_RESOLVED_MODEL,
-    prompt_version="v1",
+    prompt_version="v2",
 ):
     return SimpleNamespace(
         raw_text=f'{{"title": "{title}", "description": "{description}"}}',
@@ -582,7 +582,7 @@ def _ok_result(
     )
 
 
-def _raw_result(parsed_json, *, is_valid_json=True, was_repaired=False, model_name=_RESOLVED_MODEL, prompt_version="v1"):
+def _raw_result(parsed_json, *, is_valid_json=True, was_repaired=False, model_name=_RESOLVED_MODEL, prompt_version="v2"):
     return SimpleNamespace(
         raw_text="<<raw>>",
         parsed_json=parsed_json,
@@ -602,10 +602,21 @@ class ScriptedGenerator:
     def __init__(self, outcomes):
         self.outcomes = outcomes
         self.calls: list[dict] = []
+        # The seller-supplied details each call received, in call order,
+        # kept apart from `calls` so the older exact-equality assertions
+        # on {item_label, model_name} stay meaningful.
+        self.details: list[dict] = []
         self._per_label_index: dict[str, int] = {}
 
-    def __call__(self, item_label: str, model_name: str | None = None):
+    def __call__(
+        self,
+        item_label: str,
+        model_name: str | None = None,
+        listing_name: str | None = None,
+        condition: str = "not_specified",
+    ):
         self.calls.append({"item_label": item_label, "model_name": model_name})
+        self.details.append({"item_label": item_label, "listing_name": listing_name, "condition": condition})
         if isinstance(self.outcomes, dict):
             seq = self.outcomes[item_label]
             i = self._per_label_index.get(item_label, 0)
@@ -619,7 +630,7 @@ class ScriptedGenerator:
 
 
 class _ExplodingGenerator:
-    def __call__(self, item_label: str, model_name: str | None = None):  # pragma: no cover
+    def __call__(self, item_label: str, model_name: str | None = None, **details):  # pragma: no cover
         raise AssertionError("listing_generator must not be called on this path")
 
 
@@ -676,7 +687,7 @@ def test_single_eligible_item_is_generated_with_trusted_identity():
     assert draft.description == "A used wooden chair, generally functional."
     assert draft.attempts == 1
     assert result.model_name == "phi4-mini"
-    assert result.prompt_version == "v1"
+    assert result.prompt_version == "v2"
     assert result.max_attempts == 3
     assert draft.was_repaired is False
     # the service resolves the model once and passes it explicitly
@@ -718,7 +729,7 @@ def test_unrepaired_success_records_was_repaired_false():
 
 def test_matching_provenance_generates():
     analysis, declutter = _make_pair([{"item_id": "item_001", "ai_decision": "sell", "label": "chair"}])
-    gen = ScriptedGenerator({"chair": [_ok_result(model_name="phi4-mini", prompt_version="v1")]})
+    gen = ScriptedGenerator({"chair": [_ok_result(model_name="phi4-mini", prompt_version="v2")]})
     result = generate_listing_drafts("run1", analysis, declutter, [], gen)
     assert result.drafts[0].status == "generated"
 
@@ -731,7 +742,7 @@ def test_matching_provenance_generates():
         {"model_name": "   "},
         {"model_name": 123},
         {"model_name": None},
-        {"prompt_version": "v2"},
+        {"prompt_version": "v1"},
         {"prompt_version": ""},
         {"prompt_version": 7},
         {"prompt_version": None},
@@ -896,7 +907,7 @@ def test_total_unavailability_still_returns_a_valid_result_with_provenance():
 
     assert [d.status for d in result.drafts] == ["unavailable", "unavailable"]
     assert result.model_name == "phi4-mini"
-    assert result.prompt_version == "v1"
+    assert result.prompt_version == "v2"
     assert result.confirmation.run_id == "run1"
 
 
@@ -1055,7 +1066,7 @@ def _draft(item_id, label="chair", attempts=1):
     )
 
 
-def _gen_result(confirmation, drafts, *, model_name="phi4-mini", prompt_version="v1", max_attempts=3, **extra):
+def _gen_result(confirmation, drafts, *, model_name="phi4-mini", prompt_version="v2", max_attempts=3, **extra):
     return ListingGenerationResult(
         run_id="run1",
         confirmation=confirmation,
@@ -1172,7 +1183,7 @@ def test_direct_construction_run_id_mismatch_is_rejected():
             confirmation=confirmation,
             drafts=[_draft("item_001")],
             model_name="phi4-mini",
-            prompt_version="v1",
+            prompt_version="v2",
             max_attempts=3,
         )
 
@@ -1223,7 +1234,7 @@ def test_regenerate_result_carries_authoritative_confirmation_and_provenance():
     assert result.run_id == "run1"
     assert result.confirmation.run_id == "run1"
     assert result.model_name == "phi4-mini"
-    assert result.prompt_version == "v1"
+    assert result.prompt_version == "v2"
     assert result.max_attempts == 3
 
 
@@ -1378,7 +1389,7 @@ def test_regenerate_targets_duplicate_label_item_strictly_by_id():
 # --- direct SingleListingDraftResult construction -------------------------
 
 
-def _single_result(confirmation, draft, *, model_name="phi4-mini", prompt_version="v1", max_attempts=3, **extra):
+def _single_result(confirmation, draft, *, model_name="phi4-mini", prompt_version="v2", max_attempts=3, **extra):
     return SingleListingDraftResult(
         run_id="run1",
         confirmation=confirmation,
@@ -1411,7 +1422,7 @@ def test_single_result_rejects_run_id_mismatch():
             confirmation=confirmation,
             draft=_draft("item_001"),
             model_name="phi4-mini",
-            prompt_version="v1",
+            prompt_version="v2",
             max_attempts=3,
         )
 
@@ -1441,3 +1452,106 @@ def test_single_result_rejects_extra_field():
     confirmation = _sell_pair_confirmation(["item_001"])
     with pytest.raises(ValidationError):
         _single_result(confirmation, _draft("item_001"), drafts=[])
+
+
+# ---------------------------------------------------------------------------
+# seller-supplied listing details: name + condition per item_id
+# ---------------------------------------------------------------------------
+
+from app.core.listing_schemas import ListingItemDetails  # noqa: E402
+
+
+def test_details_are_forwarded_per_item_and_default_when_absent():
+    analysis, declutter = _labelled_pair(
+        [("item_001", "sell", "lamp"), ("item_002", "sell", "lamp"), ("item_003", "keep", "desk")]
+    )
+    gen = ScriptedGenerator(_ok_result())
+    details = [ListingItemDetails(item_id="item_002", listing_name="Brass reading lamp", condition="good")]
+
+    result = generate_listing_drafts("run1", analysis, declutter, [], gen, listing_details=details)
+
+    assert [d.item_id for d in result.drafts] == ["item_001", "item_002"]
+    # Two items share a label; details are joined by item_id, never by label.
+    assert gen.details == [
+        {"item_label": "lamp", "listing_name": None, "condition": "not_specified"},
+        {"item_label": "lamp", "listing_name": "Brass reading lamp", "condition": "good"},
+    ]
+    # The trusted label on the draft is untouched by the listing name.
+    assert [d.effective_label for d in result.drafts] == ["lamp", "lamp"]
+
+
+def test_details_for_a_non_sell_item_are_ignored_and_never_widen_eligibility():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp"), ("item_002", "keep", "desk")])
+    gen = ScriptedGenerator(_ok_result())
+    details = [ListingItemDetails(item_id="item_002", listing_name="Oak desk", condition="new")]
+
+    result = generate_listing_drafts("run1", analysis, declutter, [], gen, listing_details=details)
+
+    assert [d.item_id for d in result.drafts] == ["item_001"]
+    assert gen.details == [{"item_label": "lamp", "listing_name": None, "condition": "not_specified"}]
+
+
+def test_details_for_an_excluded_sell_item_are_ignored():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp"), ("item_002", "sell", "desk")])
+    overrides = [DecisionOverride(item_id="item_002", excluded=True)]
+    gen = ScriptedGenerator(_ok_result())
+    details = [ListingItemDetails(item_id="item_002", condition="new")]
+
+    result = generate_listing_drafts("run1", analysis, declutter, overrides, gen, listing_details=details)
+
+    assert [d.item_id for d in result.drafts] == ["item_001"]
+    assert len(gen.calls) == 1
+
+
+def test_details_naming_an_unknown_item_id_are_rejected_before_any_model_call():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    details = [ListingItemDetails(item_id="item_999", condition="good")]
+    with pytest.raises(ListingEligibilityInputError):
+        generate_listing_drafts("run1", analysis, declutter, [], _ExplodingGenerator(), listing_details=details)
+
+
+def test_duplicate_detail_item_ids_are_rejected():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp")])
+    details = [ListingItemDetails(item_id="item_001"), ListingItemDetails(item_id="item_001", condition="fair")]
+    with pytest.raises(ListingEligibilityInputError):
+        generate_listing_drafts("run1", analysis, declutter, [], _ExplodingGenerator(), listing_details=details)
+
+
+def test_malformed_details_are_rejected_even_when_nothing_is_for_sale():
+    analysis, declutter = _labelled_pair([("item_001", "keep", "lamp")])
+    with pytest.raises(ListingEligibilityInputError):
+        generate_listing_drafts(
+            "run1", analysis, declutter, [], _ExplodingGenerator(),
+            listing_details=[ListingItemDetails(item_id="item_404")],
+        )
+
+
+def test_regenerate_uses_only_the_targets_details():
+    analysis, declutter = _labelled_pair(
+        [("item_001", "sell", "lamp"), ("item_002", "sell", "desk"), ("item_003", "sell", "shelf")]
+    )
+    gen = ScriptedGenerator(_ok_result(title="Desk", description="A used desk in ordinary condition."))
+    details = [
+        ListingItemDetails(item_id="item_001", listing_name="Lamp A", condition="new"),
+        ListingItemDetails(item_id="item_002", listing_name="Oak desk", condition="well_used"),
+    ]
+
+    result = regenerate_one_listing_draft("run1", analysis, declutter, [], "item_002", gen, listing_details=details)
+
+    assert result.draft.item_id == "item_002"
+    assert gen.details == [{"item_label": "desk", "listing_name": "Oak desk", "condition": "well_used"}]
+
+
+def test_regenerate_rejects_unknown_detail_ids_and_keeps_eligibility_authoritative():
+    analysis, declutter = _labelled_pair([("item_001", "sell", "lamp"), ("item_002", "keep", "desk")])
+    with pytest.raises(ListingEligibilityInputError):
+        regenerate_one_listing_draft(
+            "run1", analysis, declutter, [], "item_001", _ExplodingGenerator(),
+            listing_details=[ListingItemDetails(item_id="item_777")],
+        )
+    # Details for a Keep item do not make it regenerable.
+    with pytest.raises(ListingItemNotEligibleError):
+        regenerate_one_listing_draft(
+            "run1", analysis, declutter, [], "item_002", _ExplodingGenerator(),
+            listing_details=[ListingItemDetails(item_id="item_002", condition="new")],
+        )

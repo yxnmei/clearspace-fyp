@@ -181,6 +181,28 @@ describe("DeclutterReviewSection, decision filters", () => {
     expect(within(screen.getByText("broken mug").closest("li")).getByText(/excluded/i)).toBeInTheDocument();
   });
 
+  test("a filterRequest from the page applies that filter, repeats via its nonce, and leaves the chips in the user's hands", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DeclutterReviewSection {...baseProps({ reviewItems: rowsFixture(), filterRequest: { id: "sell", nonce: 1 } })} />
+    );
+    expect(chip("Sell")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("old chair")).toBeInTheDocument();
+    expect(screen.queryByText("lamp")).not.toBeInTheDocument();
+
+    // The user can still change it afterwards.
+    await user.click(chip("All"));
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
+
+    // The same id requested again (new nonce) re-applies it.
+    rerender(<DeclutterReviewSection {...baseProps({ reviewItems: rowsFixture(), filterRequest: { id: "sell", nonce: 2 } })} />);
+    expect(chip("Sell")).toHaveAttribute("aria-pressed", "true");
+
+    // An unknown id falls back to All rather than an empty list.
+    rerender(<DeclutterReviewSection {...baseProps({ reviewItems: rowsFixture(), filterRequest: { id: "nonsense", nonce: 3 } })} />);
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("changing the props' review_decision moves the item between filters and updates counts", () => {
     const { rerender } = render(<DeclutterReviewSection {...baseProps({ reviewItems: rowsFixture() })} />);
     expect(chip("Donate")).toHaveTextContent("1");

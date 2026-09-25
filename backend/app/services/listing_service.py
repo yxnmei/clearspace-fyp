@@ -58,6 +58,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from app.core.listing_schemas import ListingItemDetails
+
 from pydantic import BaseModel, ConfigDict, StrictInt, model_validator
 
 from app.config import get_settings
@@ -185,6 +187,36 @@ class ListingEligibilityResult(BaseModel):
         return self
 
 
+def _index_listing_details(
+    listing_details: list[ListingItemDetails] | None,
+    declutter: DeclutterResult,
+) -> dict[str, ListingItemDetails]:
+    """Validate the seller-supplied listing details and index them by
+    item_id. Details are optional and purely additive: a duplicate
+    item_id or an item_id that is not one of this run's actionable
+    (expected) items is a caller error (ListingEligibilityInputError,
+    422 at the route); details for an actionable item that is NOT in the
+    eligible Sell set are simply never read, so client-supplied metadata
+    can never widen eligibility. Never raises for an empty or None list."""
+    if listing_details is None:
+        return {}
+    if not isinstance(listing_details, list):
+        raise ListingEligibilityInputError("listing_details must be a list")
+    expected = set(declutter.expected_item_ids)
+    indexed: dict[str, ListingItemDetails] = {}
+    for index, entry in enumerate(listing_details):
+        if not isinstance(entry, ListingItemDetails):
+            raise ListingEligibilityInputError(f"listing_details[{index}] must be ListingItemDetails")
+        if entry.item_id in indexed:
+            raise ListingEligibilityInputError(f"listing_details contains a duplicate item_id: {entry.item_id!r}")
+        if entry.item_id not in expected:
+            raise ListingEligibilityInputError(
+                f"listing_details[{index}].item_id {entry.item_id!r} is not an actionable item of this run"
+            )
+        indexed[entry.item_id] = entry
+    return indexed
+
+
 def _check_matched_pair(run_id: str, analysis: AnalysisResult, declutter: DeclutterResult) -> None:
     """The same matched-pair rule app/services/both_service.py enforces
     at its own boundary — re-verified here (not imported), so this
@@ -294,7 +326,13 @@ class LLMListingGenerator(Protocol):
     exactly, so production wiring passes that function in directly. The
     service always passes an explicit, already-resolved `model_name`."""
 
-    def __call__(self, item_label: str, model_name: str | None = None) -> LLMListingResultLike: ...
+    def __call__(
+        self,
+        item_label: str,
+        model_name: str | None = None,
+        listing_name: str | None = None,
+        condition: str = "not_specified",
+    ) -> LLMListingResultLike: ...
 
 
 class ListingGenerationResult(BaseModel):
@@ -422,6 +460,7 @@ def _generate_one_draft(
     listing_generator: LLMListingGenerator,
     resolved_model: str,
     max_attempts: int,
+    details: ListingItemDetails | None = None,
 ) -> ListingDraft:
     """Generate one eligible item's draft, with up to `max_attempts`
     sequential model calls. Every EXPECTED failure — a typed
@@ -441,7 +480,12 @@ def _generate_one_draft(
     for _ in range(max_attempts):
         attempts += 1
         try:
-            result = listing_generator(item_label=item.effective_label, model_name=resolved_model)
+            result = listing_generator(
+                item_label=item.effective_label,
+                model_name=resolved_model,
+                listing_name=details.listing_name if details is not None else None,
+                condition=details.condition if details is not None else "not_specified",
+            )
         except ListingModelTimeoutError:
             last_reason = "timeout"
             continue
@@ -492,6 +536,7 @@ def generate_listing_drafts(
     overrides: list[DecisionOverride] | None,
     listing_generator: LLMListingGenerator,
     model_name: str | None = None,
+    listing_details: list[ListingItemDetails] | None = None,
 ) -> ListingGenerationResult:
     """
     Full listing-generation stage on top of derive_listing_eligibility().
@@ -519,6 +564,9 @@ def generate_listing_drafts(
     against analysis/declutter inside derive_listing_eligibility().
     """
     eligibility = derive_listing_eligibility(run_id, analysis, declutter, overrides)
+    # Validated before the zero-eligible early return, so malformed details
+    # are rejected consistently whether or not anything is for sale.
+    details_by_id = _index_listing_details(listing_details, declutter)
 
     if not eligibility.eligible_items:
         return ListingGenerationResult(
@@ -535,7 +583,7 @@ def generate_listing_drafts(
     resolved_model = model_name or settings.listing_llm_model_name
 
     drafts = [
-        _generate_one_draft(item, listing_generator, resolved_model, max_attempts)
+        _generate_one_draft(item, listing_generator, resolved_model, max_attempts, details_by_id.get(item.item_id))
         for item in eligibility.eligible_items
     ]
 
@@ -627,6 +675,7 @@ def regenerate_one_listing_draft(
     item_id: str,
     listing_generator: LLMListingGenerator,
     model_name: str | None = None,
+    listing_details: list[ListingItemDetails] | None = None,
 ) -> SingleListingDraftResult:
     """
     Regenerate the listing draft for EXACTLY ONE eligible Sell item,
@@ -653,6 +702,7 @@ def regenerate_one_listing_draft(
     generate_listing_drafts() are untouched.
     """
     eligibility = derive_listing_eligibility(run_id, analysis, declutter, overrides)
+    details_by_id = _index_listing_details(listing_details, declutter)
 
     target = next((item for item in eligibility.eligible_items if item.item_id == item_id), None)
     if target is None:
@@ -664,7 +714,9 @@ def regenerate_one_listing_draft(
     max_attempts = settings.listing_llm_max_attempts
     resolved_model = model_name or settings.listing_llm_model_name
 
-    draft = _generate_one_draft(target, listing_generator, resolved_model, max_attempts)
+    # Only the target's own details are read; details for any other item
+    # are validated above but never used here.
+    draft = _generate_one_draft(target, listing_generator, resolved_model, max_attempts, details_by_id.get(item_id))
 
     return SingleListingDraftResult(
         run_id=run_id,

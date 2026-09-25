@@ -100,6 +100,8 @@ def test_prompt_mentions_no_other_item_or_room_context():
     prompt = build_listing_prompt("chair")
     # Only the label is provided; nothing about a scene or other items.
     assert "only thing you know about it is a short label" in prompt
+    assert "<<<LISTING_NAME>>>" not in prompt
+    assert "Condition stated by the seller" not in prompt
 
 
 @pytest.mark.parametrize("bad", ["", "   ", None, 123])

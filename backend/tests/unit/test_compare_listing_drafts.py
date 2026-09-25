@@ -85,7 +85,7 @@ COMMITTED_CANDIDATES_PROMPT_FIRST = _BACKEND_DIR / "evaluation" / "fixtures" / "
 # Regenerate ONLY when a file is intentionally changed:
 #   python -c "import hashlib,pathlib; b=pathlib.Path(P).read_bytes().replace(b'\r\n',b'\n').replace(b'\r',b'\n'); print(hashlib.sha256(b).hexdigest())"
 _LISTING_DRAFT_EVAL_SHA256 = "ec0adeb5c0eb147df505848411b2e309c35bd23c6c6de8f132d1314704cd12f9"
-_LISTING_CANDIDATES_EXAMPLE_SHA256 = "90f8d0ead707ed0d5934464c2095c86801efcdd99df7874c52ee85ba27fb1e3b"
+_LISTING_CANDIDATES_EXAMPLE_SHA256 = "15453f8c55b71e9d522ba87967e6da8dacc516646f14d84f01ea6132468c73fd"
 
 
 def _normalised_sha256(path: Path) -> str:
@@ -122,7 +122,7 @@ def make_candidate(candidate_id: str = "prod", **overrides) -> dict:
     entry = {
         "candidate_id": candidate_id,
         "model_name": "phi4-mini",
-        "prompt_version": "v1",
+        "prompt_version": "v2",
         "temperature": 0.2,
         "num_predict": 512,
         "max_attempts": 3,
@@ -417,13 +417,13 @@ def test_multiple_distinct_registered_eval_prompt_versions_with_a_v1_baseline_va
     many REGISTERED evaluation prompts may be compared in one run, as
     long as a production v1 baseline is present."""
     candidates = [
-        make_candidate("prod", prompt_version="v1"),
+        make_candidate("prod", prompt_version="v2"),
         make_candidate("a1", prompt_version="eval-a1"),
         make_candidate("a2", prompt_version="eval-a2"),
         make_candidate("a3", prompt_version="eval-a3"),
     ]
     parsed = parse_candidate_set(candidate_file(candidates))
-    assert {c.prompt_version for c in parsed} == {"v1", "eval-a1", "eval-a2", "eval-a3"}
+    assert {c.prompt_version for c in parsed} == {"v2", "eval-a1", "eval-a2", "eval-a3"}
     runner.validate_candidates(parsed)  # no raise
 
 
@@ -431,7 +431,7 @@ def test_directly_constructed_candidate_with_an_unregistered_prompt_version_is_r
     """A hand-built CandidateConfig bypasses _parse_candidate's
     registration check, so validate_candidates() must catch it too."""
     candidates = (
-        CandidateConfig("prod", "phi4-mini", "v1", 0.2, 512, 3),
+        CandidateConfig("prod", "phi4-mini", "v2", 0.2, 512, 3),
         CandidateConfig("evalX", "phi4-mini", "eval-b9-hypothetical", 0.2, 512, 3),
     )
     with pytest.raises(CandidateContractError):
@@ -440,7 +440,7 @@ def test_directly_constructed_candidate_with_an_unregistered_prompt_version_is_r
 
 def test_reusing_the_same_eval_prompt_version_across_candidates_is_allowed():
     candidates = [
-        make_candidate("prod", prompt_version="v1"),
+        make_candidate("prod", prompt_version="v2"),
         make_candidate("eval_a", prompt_version=EVAL_PROMPT_VERSION, temperature=0.2),
         make_candidate("eval_b", prompt_version=EVAL_PROMPT_VERSION, temperature=0.8),
     ]
@@ -482,12 +482,12 @@ def test_the_committed_example_candidate_file_satisfies_the_schema():
 def test_the_committed_prompt_first_candidate_file_is_the_expected_four_arm_matrix():
     candidates = load_candidate_set(COMMITTED_CANDIDATES_PROMPT_FIRST)
     assert [c.candidate_id for c in candidates] == [
-        "prod_v1_phi4_t0.2",
+        "prod_v2_phi4_t0.2",
         "eval_a1_phi4_t0.2",
         "eval_a2_phi4_t0.2",
         "eval_a3_phi4_t0.2",
     ]
-    assert [c.prompt_version for c in candidates] == ["v1", "eval-a1", "eval-a2", "eval-a3"]
+    assert [c.prompt_version for c in candidates] == ["v2", "eval-a1", "eval-a2", "eval-a3"]
     for c in candidates:
         assert (c.model_name, c.temperature, c.num_predict, c.max_attempts) == ("phi4-mini", 0.2, 512, 3)
     runner.validate_candidates(candidates)  # no raise
@@ -663,7 +663,7 @@ def test_eval_a3_pins_the_safety_critical_exclusions_and_mixed_label_rule():
     assert "unless the label" not in text  # rejected "material-only carve-out" wording
 
 
-@pytest.mark.parametrize("version", ["v1", "eval-a1", "eval-a2", "eval-a3"])
+@pytest.mark.parametrize("version", ["v2", "eval-a1", "eval-a2", "eval-a3"])
 def test_all_four_prompt_versions_resolve_to_a_builder(version):
     builder = resolve_prompt_builder(version)
     assert callable(builder)
@@ -672,14 +672,14 @@ def test_all_four_prompt_versions_resolve_to_a_builder(version):
 
 
 def test_the_four_builders_are_all_distinct_callables():
-    builders = [resolve_prompt_builder(v) for v in ("v1", "eval-a1", "eval-a2", "eval-a3")]
+    builders = [resolve_prompt_builder(v) for v in ("v2", "eval-a1", "eval-a2", "eval-a3")]
     assert len({id(b) for b in builders}) == 4
     texts = [b("table lamp") for b in builders]
     assert len(set(texts)) == 4
 
 
 def test_registered_prompt_versions_is_exactly_v1_plus_the_three_eval_builders():
-    assert runner.registered_prompt_versions() == frozenset({"v1", "eval-a1", "eval-a2", "eval-a3"})
+    assert runner.registered_prompt_versions() == frozenset({"v2", "eval-a1", "eval-a2", "eval-a3"})
 
 
 def test_the_new_variants_do_not_change_the_production_prompt_or_eval_a1(tmp_path):
@@ -696,8 +696,8 @@ def test_the_new_variants_do_not_change_the_production_prompt_or_eval_a1(tmp_pat
     # And the new prompts are genuinely different from production.
     assert runner._build_eval_prompt_a2(label) != prod_before
     assert runner._build_eval_prompt_a3(label) != prod_before
-    # resolve_prompt_builder("v1") is still the imported production function object.
-    assert resolve_prompt_builder("v1") is build_listing_prompt
+    # resolve_prompt_builder("v2") is still the imported production function object.
+    assert resolve_prompt_builder("v2") is build_listing_prompt
 
 
 def test_protected_fixture_files_match_their_expected_normalised_sha256():
@@ -709,7 +709,7 @@ def test_protected_fixture_files_match_their_expected_normalised_sha256():
     assert _normalised_sha256(COMMITTED_CANDIDATES_EXAMPLE) == _LISTING_CANDIDATES_EXAMPLE_SHA256
     # And they still parse under the committed contract.
     assert len(load_fixture_set(COMMITTED_FIXTURES).cases) == 20
-    assert any(c.prompt_version == "v1" for c in load_candidate_set(COMMITTED_CANDIDATES_EXAMPLE))
+    assert any(c.prompt_version == "v2" for c in load_candidate_set(COMMITTED_CANDIDATES_EXAMPLE))
     # The prompt-first matrix is a NEW, separate file, not an edit of the example.
     assert COMMITTED_CANDIDATES_PROMPT_FIRST.exists()
     assert COMMITTED_CANDIDATES_PROMPT_FIRST != COMMITTED_CANDIDATES_EXAMPLE
@@ -1139,7 +1139,7 @@ def test_determinism_is_unassessable_when_a_repetition_is_missing_entirely():
     result rows than `reps` — it must be unassessable, with a stated
     reason, exactly like an unavailable repetition."""
     cases = (FixtureCase("c1", "lamp", ("t",), ("f",), ("price",), "g"),)
-    candidates = (CandidateConfig("k1", "phi4-mini", "v1", 0.2, 512, 3),)
+    candidates = (CandidateConfig("k1", "phi4-mini", "v2", 0.2, 512, 3),)
     results = [
         {
             "case_id": "c1",
@@ -1659,7 +1659,7 @@ def test_real_model_caller_never_calls_pull_and_returns_raw_text(monkeypatch):
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
 
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
     text = caller(candidate, "a prompt")
 
@@ -1679,7 +1679,7 @@ def test_real_model_caller_wraps_any_exception_as_model_call_error_with_no_raw_d
             return FakeClient()
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
 
     with pytest.raises(ModelCallError) as exc_info:
@@ -1704,7 +1704,7 @@ def test_real_model_caller_propagates_unexpected_exceptions_from_the_client_call
             return FakeClient()
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
 
     with pytest.raises(AssertionError):
@@ -1722,7 +1722,7 @@ def test_real_model_caller_propagates_various_programming_defects(monkeypatch, e
             return FakeClient()
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
 
     with pytest.raises(exc_type):
@@ -1739,7 +1739,7 @@ def test_real_model_caller_sanitises_a_malformed_response_shape(monkeypatch):
             return FakeClient()
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
 
     with pytest.raises(ModelCallError):
@@ -1756,7 +1756,7 @@ def test_real_model_caller_rejects_a_non_text_content_field(monkeypatch):
             return FakeClient()
 
     monkeypatch.setattr(runner, "_default_ollama_module", lambda: FakeOllamaModule())
-    candidate = CandidateConfig("c", "phi4-mini", "v1", 0.2, 512, 3)
+    candidate = CandidateConfig("c", "phi4-mini", "v2", 0.2, 512, 3)
     caller = runner.real_model_caller_factory(host=None, timeout_s=60.0)
 
     with pytest.raises(ModelCallError):
@@ -1809,7 +1809,7 @@ def test_human_review_queue_uses_only_rep_zero():
 
 def test_build_human_review_queue_is_a_pure_function_of_its_arguments():
     cases = (FixtureCase("c1", "lamp", ("t",), ("f",), ("price",), "g"),)
-    candidates = (CandidateConfig("k1", "phi4-mini", "v1", 0.2, 512, 3),)
+    candidates = (CandidateConfig("k1", "phi4-mini", "v2", 0.2, 512, 3),)
     results = [
         {
             "case_id": "c1",

@@ -22,7 +22,7 @@ export default function ReorganiseChecklist({ tidyPlan }) {
   return (
     <section aria-labelledby="reorganise-checklist-heading" className="rounded-card border border-border bg-surface p-4 shadow-card sm:p-5">
       <h3 id="reorganise-checklist-heading" className="text-lg font-semibold text-foreground">Tidy plan</h3>
-      <p className="mt-1 text-sm text-muted-foreground">Work through the phases in order. Check off each step as you finish.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Check off each step as you finish.</p>
       <div className="mt-3">
         <p className="flex items-baseline justify-between gap-3 text-sm">
           <span className="font-medium text-foreground">{completedCount} of {total} completed</span>

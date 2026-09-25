@@ -1,4 +1,6 @@
-import { ImageOff, RotateCcw } from "lucide-react";
+import { useState } from "react";
+import { ImageOff, Maximize2, RotateCcw } from "lucide-react";
+import ImageLightbox from "./ImageLightbox";
 import ReorganiseChecklist from "./ReorganiseChecklist";
 import StorageSuggestions from "./StorageSuggestions";
 import { Button } from "./ui/button";
@@ -29,6 +31,10 @@ import { Button } from "./ui/button";
 // prompt, hashes, provenance, attempts, unavailable reason codes) remain
 // in the normalised result and its contract, as do the focus areas; they
 // are simply not shown.
+// The expand control overlays each figure's top-right corner so it reads
+// as an image control rather than a separate action.
+const EXPAND_BUTTON_CLASS = "absolute right-2 top-2 bg-surface/90 text-xs shadow-card backdrop-blur hover:bg-surface";
+
 const UNAVAILABLE_REASON_COPY = {
   service_unreachable: "The image service could not be reached.",
   timeout: "The image took too long to generate.",
@@ -38,6 +44,11 @@ const UNAVAILABLE_REASON_COPY = {
 };
 
 function VisualPreview({ imageStatus, image, imageUnavailableReason, originalImageUrl }) {
+  // Which figure is enlarged: "before", "preview" or null. Hook first,
+  // before the unavailable early return, so the hook order is stable.
+  const [enlarged, setEnlarged] = useState(null);
+  const previewSrc = image ? `data:${image.image_media_type};base64,${image.image}` : null;
+
   if (imageStatus !== "generated") {
     return (
       <section
@@ -74,11 +85,23 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
         <figure>
           <figcaption className="mb-1 text-sm font-medium text-foreground">Before</figcaption>
           {originalImageUrl ? (
-            <img
-              src={originalImageUrl}
-              alt="The original space photo you uploaded"
-              className="w-full rounded-card border border-border bg-surface-muted object-contain"
-            />
+            <div className="relative">
+              <img
+                src={originalImageUrl}
+                alt="The original space photo you uploaded"
+                className="w-full rounded-card border border-border bg-surface-muted object-contain"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={EXPAND_BUTTON_CLASS}
+                onClick={() => setEnlarged("before")}
+              >
+                <Maximize2 aria-hidden="true" width={14} height={14} />
+                Expand image
+              </Button>
+            </div>
           ) : (
             <p className="rounded-card border border-border bg-surface-muted p-3 text-sm text-muted-foreground">
               Original photo unavailable.
@@ -87,13 +110,44 @@ function VisualPreview({ imageStatus, image, imageUnavailableReason, originalIma
         </figure>
         <figure>
           <figcaption className="mb-1 text-sm font-medium text-foreground">AI preview</figcaption>
-          <img
-            src={`data:${image.image_media_type};base64,${image.image}`}
-            alt="AI-generated impression of a tidier version of the space"
-            className="w-full rounded-card border border-border bg-surface-muted object-contain"
-          />
+          <div className="relative">
+            <img
+              src={previewSrc}
+              alt="AI-generated impression of a tidier version of the space"
+              className="w-full rounded-card border border-border bg-surface-muted object-contain"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={EXPAND_BUTTON_CLASS}
+              onClick={() => setEnlarged("preview")}
+            >
+              <Maximize2 aria-hidden="true" width={14} height={14} />
+              Expand image
+            </Button>
+          </div>
         </figure>
       </div>
+
+      {/* One lightbox for both figures; which image it shows is the only
+          state. It renders nothing while closed. */}
+      <ImageLightbox
+        open={enlarged !== null}
+        onClose={() => setEnlarged(null)}
+        src={enlarged === "before" ? originalImageUrl : previewSrc}
+        alt={
+          enlarged === "before"
+            ? "The original space photo you uploaded"
+            : "AI-generated impression of a tidier version of the space"
+        }
+        title={enlarged === "before" ? "Before" : "AI preview"}
+        description={
+          enlarged === "before"
+            ? undefined
+            : "An impression of a tidier space. It may not preserve every object or its exact placement."
+        }
+      />
     </section>
   );
 }
@@ -122,25 +176,31 @@ export default function ReorganiseResult({ generateResult, originalImageUrl, onS
           {heading}
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          Work through the phases at your own pace. The visual preview is an impression of a tidier space, not a
-          precise placement plan.
+          Work through the phases in order. The preview is an impression, not a placement plan.
         </p>
       </header>
 
+      {/* Two columns from lg: the plan on the left, and on the right the
+          preview with any storage ideas directly beneath it, so the
+          secondary guidance sits under the secondary visual instead of
+          spanning the page under both. Below lg everything stacks in
+          the same order: plan, preview, storage. */}
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
         <ReorganiseChecklist key={resultKey} tidyPlan={tidyPlan} />
-        <VisualPreview
-          imageStatus={imageStatus}
-          image={image}
-          imageUnavailableReason={imageUnavailableReason}
-          originalImageUrl={originalImageUrl}
-        />
+        <div className="space-y-6">
+          <VisualPreview
+            imageStatus={imageStatus}
+            image={image}
+            imageUnavailableReason={imageUnavailableReason}
+            originalImageUrl={originalImageUrl}
+          />
+          {/* Renders nothing at all when there are no suggestions: no
+              empty card, no placeholder. The cards show only name +
+              reason; related_item_ids stay in the result but are not
+              displayed. */}
+          <StorageSuggestions storageSuggestions={storageSuggestions} />
+        </div>
       </div>
-
-      {/* Renders nothing at all when there are no suggestions: no empty
-          column, no placeholder. The cards show only name + reason;
-          related_item_ids stay in the result but are not displayed. */}
-      <StorageSuggestions storageSuggestions={storageSuggestions} />
 
       {onStartOver ? (
         <div>

@@ -11,7 +11,7 @@ const labels = (steps) => steps.map((s) => s.label);
 describe("WORKFLOW_STEPS, each workflow's exact sequence", () => {
   test("Declutter: Upload → Analyse → Review → Confirm → Listings", () => {
     expect(ids(WORKFLOW_STEPS.declutter)).toEqual(["upload", "analyse", "review", "confirm", "listings"]);
-    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Listing drafts"]);
+    expect(labels(WORKFLOW_STEPS.declutter)).toEqual(["Upload photo", "Analyse space", "Decide items", "Confirm choices", "Results"]);
   });
 
   test("Direct Reorganise: Upload → Analyse → Review → Generate", () => {

@@ -39,7 +39,7 @@ describe("ReorganiseItemSelector, Select items screen", () => {
     expect(screen.getByRole("heading", { name: "Choose items for your tidy plan" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "These are the objects ClearSpace will use to build your tidy plan. Remove anything detected incorrectly or anything you do not want included."
+        "Remove incorrect detections or items you don't want considered. Keep desks or shelves if you want the plan to account for them."
       )
     ).toBeInTheDocument();
     expect(screen.queryByText(/spatial|floor plan|choose what to keep|declutter/i)).not.toBeInTheDocument();
@@ -109,7 +109,8 @@ describe("ReorganiseItemSelector, Select items screen", () => {
     const user = userEvent.setup();
     const onToggleItem = vi.fn();
     render(<ReorganiseItemSelector {...baseProps({ onToggleItem })} />);
-    // Tab order: Show all boxes -> the overlay box button -> the item checkbox
+    // Tab order: Show all boxes -> the overlay box button -> Expand image -> the item checkbox
+    await user.tab();
     await user.tab();
     await user.tab();
     await user.tab();

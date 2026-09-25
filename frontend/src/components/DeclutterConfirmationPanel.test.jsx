@@ -227,21 +227,35 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
     render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() })} />);
     expect(screen.getByRole("heading", { name: "Choices confirmed" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Confirm your choices" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("heading")).toHaveLength(4);
+    // No count chips or Changed chip after confirmation: the grouped item
+    // lists carry the categories, from the confirmation, not the live
+    // review counts passed in.
+    expect(screen.queryByLabelText(/confirmed decisions|your decisions/i)).not.toBeInTheDocument();
+    const summary = screen.getByLabelText("Confirmed choices summary");
+    expect(within(summary).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Keep", "Donate", "Discard"]);
+    expect(within(summary).getByRole("list", { name: "Keep items" })).toBeInTheDocument();
+    expect(within(summary).queryByRole("heading", { name: "Sell" })).not.toBeInTheDocument();
+    expect(within(summary).queryByRole("heading", { name: "Excluded" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/locked in/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/go back to decide items to change one/i);
+  });
 
-    // counts come from the confirmation, not the live review counts passed in
-    expect(ddFor("Keep")).toBe("1");
-    expect(ddFor("Donate")).toBe("1");
-    expect(ddFor("Discard")).toBe("1");
-    expect(ddFor("Changed")).toBe("1");
-    expect(screen.queryByText("Sell")).not.toBeInTheDocument();
-    expect(screen.queryByText("Excluded")).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/confirmed decisions/i).tagName).toBe("DL");
-    // the confirmed panel shares the same chip treatment
-    const keep = within(screen.getByLabelText(/confirmed decisions/i)).getByText("Keep").closest("div");
-    expect(keep.className.split(/\s+/)).toEqual(expect.arrayContaining(["bg-surface", "border-primary/50", "text-foreground"]));
-    expect(keep.className).not.toMatch(/bg-decision-/);
-    expect(keep.querySelector("svg").getAttribute("class").split(/\s+/)).toContain("text-decision-keep");
+  test("each category heading carries an Edit link that hands the category filter to the page", async () => {
+    const user = userEvent.setup();
+    const onEditCategory = vi.fn();
+    render(
+      <DeclutterConfirmationPanel
+        {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation(), onEditCategory })}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Edit Donate decisions" }));
+    expect(onEditCategory).toHaveBeenCalledWith("donate");
+    expect(screen.getAllByRole("button", { name: /^Edit .* decisions$/ })).toHaveLength(3);
+  });
+
+  test("without onEditCategory the confirmed panel offers no Edit links", () => {
+    render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation() })} />);
+    expect(screen.queryByRole("button", { name: /^Edit .* decisions$/ })).not.toBeInTheDocument();
   });
 
   test("announces success in a status region and describes the next step", () => {
@@ -278,12 +292,17 @@ describe("DeclutterConfirmationPanel, after confirmation", () => {
   });
 
   test("shows Excluded only when the confirmation has exclusions", () => {
-    render(
-      <DeclutterConfirmationPanel
-        {...baseProps({ confirmationStatus: "confirmed", confirmation: makeConfirmation({ excludedCount: 2 }) })}
-      />
-    );
-    expect(ddFor("Excluded")).toBe("2");
+    const withExclusion = makeConfirmation({
+      confirmedDecisions: [
+        makeConfirmedDecision({ item_id: "item_001", confirmed_decision: "keep" }),
+        makeConfirmedDecision({ item_id: "item_002", confirmed_decision: "discard", excluded: true }),
+      ],
+      excludedCount: 1,
+    });
+    render(<DeclutterConfirmationPanel {...baseProps({ confirmationStatus: "confirmed", confirmation: withExclusion })} />);
+    const summary = screen.getByLabelText("Confirmed choices summary");
+    expect(within(summary).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Keep", "Excluded"]);
+    expect(within(summary).queryByRole("heading", { name: "Discard" })).not.toBeInTheDocument();
   });
 
   test("exposes no run id, item id or hash, and offers Copy instead of Confirm", () => {

@@ -171,6 +171,7 @@ from app.models.whisper_stt import (
 from app.core.reorganise_focus_areas import FocusArea
 from app.core.reorganise_storage import StorageSuggestion
 from app.core.reorganise_phases import TidyPlan
+from app.core.listing_schemas import ListingItemDetails
 from app.services.reorganise_actions_service import ReorganiseActionPlan
 from app.services.transcription_service import (
     TranscriptionBusyError,
@@ -1236,6 +1237,10 @@ class ListingRequest(BaseModel):
     analysis: AnalysisResult
     declutter: DeclutterResult
     overrides: list[DecisionOverride] = Field(default_factory=list)
+    # Seller-supplied listing name / condition per item_id (optional,
+    # additive). Validated against the run's actionable items by the
+    # service; never widens eligibility, never touches a decision.
+    listing_details: list[ListingItemDetails] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_run_id_consistency(self) -> "ListingRequest":
@@ -1275,6 +1280,7 @@ def create_listings(
             declutter=request.declutter,
             overrides=request.overrides,
             listing_generator=listing_generator,
+            listing_details=request.listing_details,
         )
     except IncompleteDeclutterError as exc:
         raise HTTPException(
@@ -1319,6 +1325,7 @@ def regenerate_listing(
             overrides=request.overrides,
             item_id=item_id,
             listing_generator=listing_generator,
+            listing_details=request.listing_details,
         )
     except IncompleteDeclutterError as exc:
         raise HTTPException(

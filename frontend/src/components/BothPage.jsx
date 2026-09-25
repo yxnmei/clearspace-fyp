@@ -17,6 +17,7 @@ import DeclutterAnalysisSummary from "./DeclutterAnalysisSummary";
 import DeclutterReviewSection from "./DeclutterReviewSection";
 import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar";
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
+import DeclutterResultsSummary from "./DeclutterResultsSummary";
 import ReorganiseResult from "./ReorganiseResult";
 import ListingsView from "./ListingsView";
 import { Button } from "./ui/button";
@@ -87,6 +88,18 @@ export default function BothPage() {
     setViewedStep(wizard.continueTargetId);
   }, [wizard.canContinue, wizard.continueTargetId]);
 
+  // Same as DeclutterPage: Edit links on Confirm and Results navigate to
+  // Decide items with a decision filter applied; nothing here changes a
+  // decision, and the review section owns the filter afterwards.
+  const [filterRequest, setFilterRequest] = useState(null);
+  const handleEditCategory = useCallback(
+    (filterId) => {
+      setFilterRequest((previous) => ({ id: filterId, nonce: (previous?.nonce ?? 0) + 1 }));
+      goToStep("review");
+    },
+    [goToStep]
+  );
+
   const handleStartOver = useCallback(() => {
     flow.reset();
     setReviewAcknowledged(false);
@@ -116,11 +129,10 @@ export default function BothPage() {
         nextActionText={wizard.nextActionText}
       />
 
-      <div className="mt-6">
+      <div className="mt-4">
         <div hidden={viewed !== "upload"}>
-          <p className="mb-6 max-w-2xl text-muted-foreground">
-            Review Keep / Sell / Donate / Discard suggestions, then create a tidy plan and marketplace listing
-            drafts from your confirmed choices, in either order.
+          <p className="mb-4 max-w-2xl text-muted-foreground">
+            Review suggested decisions, then create a tidy plan and listing drafts from your confirmed choices.
           </p>
           <DeclutterUploadForm status={flow.status} error={flow.error} onSubmit={handleSubmit} />
         </div>
@@ -185,6 +197,7 @@ export default function BothPage() {
                 correctingItemId={flow.correctingItemId}
                 correctionError={flow.correctionError}
                 enableBackToTop
+                filterRequest={filterRequest}
               />
               {/* Same shared bar as the Declutter wizard: the only Back /
                   Continue pair on this screen, guard unchanged. */}
@@ -225,6 +238,7 @@ export default function BothPage() {
                 confirmation={flow.confirmation}
                 reviewItems={flow.reviewItems}
                 imageUrl={imageUrl}
+                onEditCategory={handleEditCategory}
                 onReviewUnresolved={() => goToStep("review")}
                 nextStepNote={NEXT_STEP_NOTE}
               />
@@ -244,6 +258,18 @@ export default function BothPage() {
         <div hidden={viewed !== "reorganise"}>
           {hasAnalysis && hasConfirmation && (
             <div className="space-y-8">
+              {/* The compact Declutter overview first: counts, the item
+                  chips collapsed behind one control, Edit decisions back to
+                  Decide items. Tidy up and Marketplace listings, the two
+                  result actions, follow it unchanged. */}
+              <DeclutterResultsSummary
+                confirmation={flow.confirmation}
+                reviewItems={flow.reviewItems}
+                imageUrl={imageUrl}
+                onEditDecisions={() => handleEditCategory("all")}
+                intro="Your decisions are confirmed. Tidy up uses the items you kept; listings use the items you chose to sell."
+              />
+
               {/* Results composition (brief §15): two visually and
                   semantically distinct result sections, Tidy up (confirmed
                   Keep items) then Marketplace listings (confirmed Sell
@@ -340,6 +366,9 @@ export default function BothPage() {
                 editListingDraft={flow.editListingDraft}
                 discardListingDraft={flow.discardListingDraft}
                 restoreListingDraft={flow.restoreListingDraft}
+                listingDetailsById={flow.listingDetailsById}
+                setListingDetails={flow.setListingDetails}
+                missingListingItemIds={flow.missingListingItemIds}
               />
 
               {/* Global actions, after BOTH result sections: the one Start

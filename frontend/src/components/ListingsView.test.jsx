@@ -152,6 +152,40 @@ describe("ListingsView", () => {
       await user.click(button);
       expect(generateListingDrafts).toHaveBeenCalledTimes(1);
     });
+
+    test("before the first draft, every eligible item shows its own name and condition, joined by item_id", async () => {
+      const user = userEvent.setup();
+      const setListingDetails = vi.fn();
+      const confirmation = makeConfirmation([
+        decision("item_001", "sell"),
+        decision("item_002", "keep"),
+        decision("item_003", "sell"),
+      ]);
+      renderView({
+        confirmation,
+        listingStatus: "idle",
+        reviewItems: [
+          reviewItem("item_001", { effective_label: "lamp" }),
+          reviewItem("item_002", { effective_label: "chair" }),
+          reviewItem("item_003", { effective_label: "lamp" }),
+        ],
+        listingDetailsById: { item_003: { listing_name: "Brass lamp", condition: "good" } },
+        setListingDetails,
+      });
+
+      const list = screen.getByRole("list", { name: "Items to list" });
+      const rows = within(list).getAllByRole("listitem");
+      expect(rows).toHaveLength(2); // Sell items only, never the Keep chair
+      const names = within(list).getAllByLabelText("Listing name for lamp");
+      expect(names.map((input) => input.value)).toEqual(["lamp", "Brass lamp"]);
+      const conditions = within(list).getAllByLabelText("Condition for lamp");
+      expect(conditions.map((select) => select.value)).toEqual(["not_specified", "good"]);
+      expect(screen.getByText(/leave the condition as not specified if you are unsure/i)).toBeInTheDocument();
+      expect(screen.queryByText(/price/i)).not.toBeInTheDocument();
+
+      await user.selectOptions(conditions[0], "fair");
+      expect(setListingDetails).toHaveBeenCalledWith("item_001", { condition: "fair" });
+    });
   });
 
   describe("state: generating", () => {
@@ -230,7 +264,9 @@ describe("ListingsView", () => {
       expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
       expect(screen.getByText("2 listing drafts ready")).toBeInTheDocument();
       expect(screen.getAllByText(/nothing is published/i)).toHaveLength(1);
-      expect(container.textContent).not.toMatch(/item_00\d|item_id|run_1|attempts|repaired|generated|phi|prompt|sha/i);
+      // \b guard: adjacent button labels concatenate in textContent
+      // ("AI Regenerate" + "Discard" reads "...RegenerateDiscard").
+      expect(container.textContent).not.toMatch(/item_00\d|item_id|run_1|attempts|repaired|\bgenerated\b|phi|prompt|sha/i);
       expect(container.querySelector("code")).toBeNull();
     });
 
@@ -275,7 +311,7 @@ describe("ListingsView", () => {
       const listingDrafts = [genDraft("item_001"), genDraft("item_002")];
       const { regenerateListingDraft } = renderView({ confirmation, listingStatus: "ready", listingDrafts });
 
-      await user.click(within(articleFor("item_002")).getByRole("button", { name: /regenerate draft/i }));
+      await user.click(within(articleFor("item_002")).getByRole("button", { name: /ai regenerate/i }));
 
       expect(regenerateListingDraft).toHaveBeenCalledTimes(1);
       expect(regenerateListingDraft).toHaveBeenCalledWith("item_002");
@@ -287,7 +323,7 @@ describe("ListingsView", () => {
       const listingDrafts = [unavailDraft("item_001", "generation_failed")];
       const { regenerateListingDraft } = renderView({ confirmation, listingStatus: "ready", listingDrafts });
 
-      await user.click(screen.getByRole("button", { name: /regenerate draft/i }));
+      await user.click(screen.getByRole("button", { name: /ai regenerate/i }));
 
       expect(regenerateListingDraft).toHaveBeenCalledWith("item_001");
     });
@@ -320,7 +356,7 @@ describe("ListingsView", () => {
         listingDrafts,
       });
 
-      await user.click(within(articleFor("item_001")).getByRole("button", { name: /discard draft/i }));
+      await user.click(within(articleFor("item_001")).getByRole("button", { name: /^discard$/i }));
       expect(discardListingDraft).toHaveBeenCalledTimes(1);
       expect(discardListingDraft).toHaveBeenCalledWith("item_001");
 

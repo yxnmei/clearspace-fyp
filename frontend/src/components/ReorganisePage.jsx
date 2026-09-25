@@ -87,11 +87,10 @@ export default function ReorganisePage() {
         nextActionText={wizard.nextActionText}
       />
 
-      <div className="mt-6">
+      <div className="mt-4">
         <div hidden={viewed !== "upload"}>
-          <p className="mb-6 max-w-2xl text-muted-foreground">
-            Choose which detected items to include, then get a prioritised tidy plan with storage and organisation
-            ideas when relevant and an optional AI visual preview.
+          <p className="mb-4 max-w-2xl text-muted-foreground">
+            Choose which items to include, then get a phased tidy plan with storage ideas and an optional preview.
           </p>
           <ReorganiseUploadForm phase={flow.phase} error={flow.uploadError} onSubmit={handleSubmit} />
         </div>

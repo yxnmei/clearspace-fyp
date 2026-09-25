@@ -105,7 +105,7 @@ function describeViewedStep({
       if (confirmationStatus === "confirmed" && hasConfirmation) {
         return {
           statusText: "Your decisions are locked in.",
-          nextActionText: "The confirmed summary is below. Continue to Listing drafts when you are ready.",
+          nextActionText: "The confirmed summary is below. Continue to Results when you are ready.",
           processing: false,
         };
       }
@@ -156,17 +156,20 @@ function describeViewedStep({
           processing: false,
         };
       }
+      // Both "complete" states name the closing overview on this screen
+      // (the confirmed-choices summary) rather than only the listings,
+      // because a Declutter run with nothing to sell is still finished.
       if (eligibleSellCount === 0) {
         return {
-          statusText: "Nothing was confirmed as Sell.",
-          nextActionText: "There are no listing drafts to generate for this run.",
+          statusText: "Your declutter is complete.",
+          nextActionText: "Nothing was confirmed as Sell, so there are no listing drafts. Your confirmed choices are below.",
           processing: false,
         };
       }
       if (listingStatus === "ready") {
         return {
-          statusText: "Your listing drafts are ready to review.",
-          nextActionText: "Edit, copy, regenerate or discard any draft below.",
+          statusText: "Your declutter is complete.",
+          nextActionText: "Your confirmed choices and listing drafts are below. Edit, copy, regenerate or discard any draft.",
           processing: false,
         };
       }

@@ -10,9 +10,16 @@ Scope is deliberately narrow. A V1 listing draft carries exactly:
   - a generated / unavailable status with a sanitised unavailable reason;
   - a bounded per-item attempt count.
 
-Deliberately excluded, and not to be added in this milestone: price,
-category, condition, brand, model number, age, dimensions, accessories,
-ownership, location, contact details, and any marketplace-publishing or
+Seller-supplied listing details (ListingItemDetails, below) are a
+separate, request-side concept: a listing name and a declared condition
+the person types or picks, sent to the model as data and never produced
+by it. They are listing metadata only; they never change the detected
+label, the decision or the confirmation. The model still returns exactly
+a title and a description.
+
+Deliberately excluded, and not to be added: price, category, brand,
+model number, age, dimensions, accessories, ownership, location, contact
+details, any model-inferred condition, and any marketplace-publishing or
 Carousell-integration field. Signed source/confirmation proof is also
 explicitly deferred — see app/services/listing_service.py's module
 docstring for the honest limit that recomputation validates internal
@@ -64,6 +71,44 @@ ListingUnavailableReason = Literal[
     "invalid_output",
     "generation_failed",
 ]
+
+# The seller's declared condition. "not_specified" is the default and
+# means exactly that: the model is told nothing about condition and must
+# not state or imply one. Never inferred from the image or the label.
+ListingCondition = Literal["not_specified", "new", "like_new", "good", "fair", "well_used"]
+
+LISTING_CONDITION_PHRASES: dict[str, str] = {
+    "not_specified": "not specified",
+    "new": "new",
+    "like_new": "like new",
+    "good": "good",
+    "fair": "fair",
+    "well_used": "well used",
+}
+
+ListingName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+
+
+class ListingItemDetails(BaseModel):
+    """Seller-supplied details for ONE item's listing, keyed by item_id.
+
+    listing_name: the person's own name for the item as it should appear
+    in the listing (defaults client-side to the reviewed label; None here
+    means "use the detected label"). condition: the declared condition,
+    "not_specified" by default.
+
+    These are listing metadata only. They never change the detected
+    label, the decision, the confirmation or eligibility: the service
+    derives the eligible Sell set server-side and simply ignores details
+    for any item that is not in it. extra="forbid" so a price, brand or
+    any other speculative field is a validation error, not a passenger."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    item_id: ItemId
+    listing_name: ListingName | None = None
+    condition: ListingCondition = "not_specified"
+
 
 class ListingDraftContent(BaseModel):
     """EXACTLY what the listing model is allowed to return: one JSON

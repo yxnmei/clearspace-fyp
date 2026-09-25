@@ -132,7 +132,7 @@ DEFAULT_FIXTURES_PATH = Path("evaluation/fixtures/listing_draft_eval.json")
 # include at least one production "v1" baseline — a comparison with no
 # production baseline proves nothing. Run size stays bounded by the
 # existing case and worst-case call ceilings, not by a prompt-count cap.
-PRODUCTION_PROMPT_VERSION = LISTING_PROMPT_VERSION  # "v1"
+PRODUCTION_PROMPT_VERSION = LISTING_PROMPT_VERSION  # "v2" since 2026-09-25; the 2026-09-07 run used "v1"
 EVAL_PROMPT_VERSION = "eval-a1"  # the first registered evaluation-only variant; see _EVAL_PROMPT_BUILDERS
 
 TEMPERATURE_MIN = 0.0

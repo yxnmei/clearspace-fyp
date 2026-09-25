@@ -1,4 +1,7 @@
+import { useState } from "react";
+import { Maximize2 } from "lucide-react";
 import { decisionBorderColor, itemNumberLabel } from "../utils/format";
+import ImageLightbox from "./ImageLightbox";
 
 // Overlays the analysed room photo with one box per detection, positioned
 // as CSS percentages derived directly from each item's normalized [0,1]
@@ -50,6 +53,9 @@ export default function AnalysedRoomPanel({
   getBoxClassName = declutterBoxClassName,
 }) {
   const visibleItems = showAllBoxes ? items : items.filter((item) => item.item_id === activeItemId);
+  // The enlarged view is presentation state local to this panel; opening
+  // it never changes the active item, the overlay or any callback.
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   return (
     <div>
@@ -81,7 +87,7 @@ export default function AnalysedRoomPanel({
                 key={item.item_id}
                 type="button"
                 onClick={() => onBoxClick(item.item_id)}
-                aria-label={`Detection ${itemNumberLabel(item.item_id)}: ${item.effective_label ?? item.clean_label}`}
+                aria-label={`Detection ${itemNumberLabel(item.item_id)}: ${item.display_label ?? item.effective_label ?? item.clean_label}`}
                 aria-current={isActive ? "true" : undefined}
                 className={getBoxClassName(item, isActive, isQuiet)}
                 style={{
@@ -97,10 +103,48 @@ export default function AnalysedRoomPanel({
               </button>
             );
           })}
+          {/* The expand control sits on the image itself, top-right,
+              above every outline (z-30 over the active box's z-20). A
+              plain button, not the Button primitive: the review
+              workspaces assert that nothing inside them carries a
+              no-wrap or overflow class, and the primitive's base
+              includes whitespace-nowrap. Placed after the boxes in DOM
+              order so the tab sequence stays boxes then expand. */}
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(true)}
+            className="absolute right-2 top-2 z-30 inline-flex items-center gap-1.5 rounded-control border border-border bg-surface/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-card backdrop-blur transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <Maximize2 aria-hidden="true" width={14} height={14} />
+            Expand image
+          </button>
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">Image preview unavailable.</p>
       )}
+
+      {imageUrl ? (
+        <div>
+          {/* The enlarged view carries the same outlines as the panel,
+              drawn from the same normalised boxes and box classes, and
+              starts from the panel's own Show all boxes setting. */}
+          <ImageLightbox
+            open={lightboxOpen}
+            onClose={() => setLightboxOpen(false)}
+            src={imageUrl}
+            alt="The space photo you uploaded"
+            title="Analysed space"
+            description="Zoom in to inspect items. Use Show boxes to show or hide the detected item outlines."
+            overlays={items.map((item) => ({
+              id: item.item_id,
+              box: item.box,
+              label: itemNumberLabel(item.item_id),
+              className: getBoxClassName(item, item.item_id === activeItemId, false),
+            }))}
+            initialShowOverlays={showAllBoxes}
+          />
+        </div>
+      ) : null}
 
       <p className="mt-2 text-xs text-muted-foreground">
         AI detection may miss or misidentify belongings. Review the highlighted image before confirming.

@@ -207,3 +207,55 @@ def test_draft_is_frozen():
     draft = ListingDraft(**_generated())
     with pytest.raises(ValidationError):
         draft.status = "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# ListingItemDetails: seller-supplied listing name and condition
+# ---------------------------------------------------------------------------
+
+from app.core.listing_schemas import LISTING_CONDITION_PHRASES, ListingItemDetails  # noqa: E402
+
+
+def test_listing_item_details_defaults_to_no_name_and_not_specified():
+    details = ListingItemDetails(item_id="item_001")
+    assert details.listing_name is None
+    assert details.condition == "not_specified"
+
+
+@pytest.mark.parametrize("condition", sorted(LISTING_CONDITION_PHRASES))
+def test_listing_item_details_accepts_every_declared_condition(condition):
+    assert ListingItemDetails(item_id="item_001", condition=condition).condition == condition
+
+
+@pytest.mark.parametrize("bad", ["mint", "NEW", "", None, 1, "like new"])
+def test_listing_item_details_rejects_unknown_condition(bad):
+    with pytest.raises(ValidationError):
+        ListingItemDetails(item_id="item_001", condition=bad)
+
+
+def test_listing_item_details_trims_and_bounds_the_listing_name():
+    assert ListingItemDetails(item_id="item_001", listing_name="  Oak desk lamp  ").listing_name == "Oak desk lamp"
+    with pytest.raises(ValidationError):
+        ListingItemDetails(item_id="item_001", listing_name="   ")
+    with pytest.raises(ValidationError):
+        ListingItemDetails(item_id="item_001", listing_name="x" * 81)
+    assert len(ListingItemDetails(item_id="item_001", listing_name="x" * 80).listing_name) == 80
+
+
+@pytest.mark.parametrize("extra", [{"price": 10}, {"brand": "IKEA"}, {"title": "x"}, {"decision": "sell"}])
+def test_listing_item_details_forbids_any_other_field(extra):
+    with pytest.raises(ValidationError):
+        ListingItemDetails(item_id="item_001", **extra)
+
+
+def test_listing_item_details_is_frozen_and_requires_a_valid_item_id():
+    details = ListingItemDetails(item_id="item_001", condition="good")
+    with pytest.raises(ValidationError):
+        details.condition = "new"
+    with pytest.raises(ValidationError):
+        ListingItemDetails(item_id="")
+
+
+def test_listing_draft_content_still_refuses_a_condition_field_from_the_model():
+    with pytest.raises(ValidationError):
+        ListingDraftContent(title="Used lamp", description="A used lamp for everyday use.", condition="good")

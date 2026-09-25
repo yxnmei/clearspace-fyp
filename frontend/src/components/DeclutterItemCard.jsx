@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pencil } from "lucide-react";
+import { Check, Pencil } from "lucide-react";
 import { itemNumberLabel } from "../utils/format";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -22,14 +22,32 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   const [labelInput, setLabelInput] = useState("");
 
   function handleOpen() {
-    setLabelInput(item.effective_label ?? item.clean_label);
+    // Pre-filled with the name the person sees, which may be a listing
+    // rename. Submitting still reruns reasoning for this item only.
+    setLabelInput(item.display_label ?? item.effective_label ?? item.clean_label);
     setIsOpen(true);
   }
 
+  // Three visible states for the one submit control, derived from the
+  // item itself rather than local memory, so a correction that the hook
+  // has applied (label_source becomes "user" and effective_label becomes
+  // the submitted text) reads as applied, and editing that text again
+  // reads as an update. Nothing here calls the API; onCorrectLabel is
+  // still the only way out.
+  const trimmed = labelInput.trim();
+  const appliedByUser = item.label_source === "user";
+  const isApplied = appliedByUser && trimmed !== "" && trimmed === (item.effective_label ?? "").trim();
+  const submitText = isCorrecting
+    ? "Correcting…"
+    : isApplied
+      ? "Correction applied"
+      : appliedByUser
+        ? "Update correction"
+        : "Submit correction";
+
   function handleSubmit(event) {
     event.preventDefault();
-    const trimmed = labelInput.trim();
-    if (!trimmed) return; // blank labels are never submitted, button is also disabled below
+    if (!trimmed || isApplied) return; // blank labels are never submitted, button is also disabled below
     onCorrectLabel(item.item_id, trimmed);
   }
 
@@ -66,8 +84,9 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
           disabled={isCorrecting}
           className="rounded-control border border-input bg-surface px-2 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
         />
-        <Button type="submit" variant="primary" size="sm" disabled={isCorrecting || labelInput.trim() === ""}>
-          {isCorrecting ? "Correcting…" : "Submit correction"}
+        <Button type="submit" variant="primary" size="sm" disabled={isCorrecting || trimmed === "" || isApplied}>
+          {isApplied && <Check aria-hidden="true" width={12} height={12} />}
+          {submitText}
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => setIsOpen(false)} disabled={isCorrecting}>
           Cancel
@@ -75,7 +94,7 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
       </div>
       {isCorrecting && (
         <p role="status" className="sr-only">
-          Correcting label for {item.effective_label ?? item.clean_label}…
+          Correcting label for {item.display_label ?? item.effective_label ?? item.clean_label}…
         </p>
       )}
       {correctionError && (
@@ -124,7 +143,12 @@ export default function DeclutterItemCard({
   correctionDisabled = false,
   correctionError = null,
 }) {
-  const displayLabel = item.effective_label ?? item.clean_label;
+  // One user-facing name per item_id: a listing rename if there is one,
+  // else the reasoning label. When the two differ the row also shows the
+  // detector's label, so the provenance is never hidden.
+  const reasoningLabel = item.effective_label ?? item.clean_label;
+  const displayLabel = item.display_label ?? reasoningLabel;
+  const isRenamed = displayLabel !== reasoningLabel;
   const suggestion = item.ai_decision ? DECISION_OPTIONS_BY_VALUE[item.ai_decision] ?? null : null;
   const whereBits = [item.position, item.relative_size].filter((v) => typeof v === "string" && v !== "");
 
@@ -166,6 +190,12 @@ export default function DeclutterItemCard({
           </p>
           {whereBits.length > 0 && (
             <p className="mt-0.5 text-xs text-muted-foreground">{whereBits.join(", ")}</p>
+          )}
+          {isRenamed && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Your listing name. Detected as {item.clean_label}
+              {reasoningLabel !== item.clean_label ? `, corrected to ${reasoningLabel}` : ""}.
+            </p>
           )}
         </div>
 

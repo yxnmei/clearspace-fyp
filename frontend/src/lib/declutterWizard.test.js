@@ -25,7 +25,7 @@ describe("DECLUTTER_WIZARD_STEPS", () => {
       "Analyse space",
       "Decide items",
       "Confirm choices",
-      "Listing drafts",
+      "Results",
     ]);
   });
 });
@@ -169,7 +169,7 @@ describe("deriveDeclutterWizard, Listings step (Stage 4B)", () => {
     const w = deriveDeclutterWizard({ ...confirmedBase, viewedStep: "confirm" });
     expect(w.canContinue).toBe(true);
     expect(w.continueTargetId).toBe("listings");
-    expect(w.nextStepLabel).toBe("Listing drafts");
+    expect(w.nextStepLabel).toBe("Results");
   });
 
   test("confirming alone does not navigate to or complete Listings (no automatic generation)", () => {
@@ -255,8 +255,9 @@ describe("deriveDeclutterWizard, Listings step (Stage 4B)", () => {
   describe("Listings status/next-action text", () => {
     test("zero eligible Sell items", () => {
       const w = deriveDeclutterWizard({ ...confirmedBase, viewedStep: "listings", eligibleSellCount: 0 });
-      expect(w.statusText).toMatch(/nothing was confirmed as sell/i);
-      expect(w.nextActionText).toMatch(/no listing drafts to generate/i);
+      expect(w.statusText).toMatch(/declutter is complete/i);
+      expect(w.nextActionText).toMatch(/nothing was confirmed as sell/i);
+      expect(w.nextActionText).toMatch(/no listing drafts/i);
     });
 
     test("idle with eligible items ready to generate", () => {
@@ -299,7 +300,8 @@ describe("deriveDeclutterWizard, Listings step (Stage 4B)", () => {
         listingStatus: "ready",
         eligibleSellCount: 2,
       });
-      expect(w.statusText).toMatch(/ready to review/i);
+      expect(w.statusText).toMatch(/declutter is complete/i);
+      expect(w.nextActionText).toMatch(/confirmed choices and listing drafts are below/i);
       expect(w.nextActionText).toMatch(/edit, copy, regenerate or discard/i);
     });
 

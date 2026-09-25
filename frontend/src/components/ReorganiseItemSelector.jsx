@@ -92,8 +92,8 @@ export default function ReorganiseItemSelector({
       <header>
         <h2 className="text-title font-semibold tracking-tight text-foreground">Choose items for your tidy plan</h2>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          These are the objects ClearSpace will use to build your tidy plan. Remove anything detected incorrectly or
-          anything you do not want included.
+          Remove incorrect detections or items you don't want considered. Keep desks or shelves if you want the plan
+          to account for them.
         </p>
 
         <dl aria-label="Selection summary" className="mt-3 flex flex-wrap gap-2 text-sm">

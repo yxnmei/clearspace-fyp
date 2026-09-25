@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Copy, RefreshCw, Trash2, Undo2, TriangleAlert, PackageX } from "lucide-react";
+import { Loader2, Copy, RefreshCw, Trash2, Undo2, TriangleAlert, PackageX, Info } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import ItemCropThumbnail from "./ItemCropThumbnail";
+import ImageLightbox from "./ImageLightbox";
+import ListingDetailsFields from "./ListingDetailsFields";
 import { itemNumberLabel } from "../utils/format";
 import {
   TITLE_MIN,
@@ -15,27 +17,31 @@ import {
 } from "../lib/listingDrafts";
 import { cn } from "../lib/cn";
 
-// One marketplace-listing draft. Identity is item_id: it is the React key
-// (set by the parent), every field id, and the only join key back to the
-// review item (never label text). This component is presentational, it
-// calls back into the Stage 3 hook actions passed as props and never
-// touches the API, the clipboard writer, or any other card's state.
+// One confirmed Sell item's marketplace draft, laid out as a usable
+// listing: a large crop of the item on the left (a button that opens the
+// original photo in the shared lightbox with only this item outlined) and
+// the listing editor on the right; on phones the image, the editor and
+// the actions stack. Shared by Declutter's Results and Both's Results.
 //
-// draft is one entry of useDeclutterFlow().listingDrafts: the server
-// fields (item_id, effective_label, status, title, description,
-// unavailable_reason, was_repaired, attempts) plus the local overlay
-// (edited_title, edited_description, is_edited, is_discarded).
+// Identity is item_id throughout: the article key, every field id, the
+// lightbox outline and the only value any callback receives. The header
+// shows the listing name (the seller's own name for the item, defaulting
+// to the reviewed label) with a Draft status badge; no numbered badge,
+// because nothing on this screen refers to items by number.
 //
-// reviewItem is the current review item with the same item_id, or null:
-// it supplies only the decorative crop box for the thumbnail. Raw
-// item_id, position/size, attempts, repair flags and statuses are never
-// rendered; item_id still keys the article (data-item-id), every field
-// id and every callback.
+// Seller details (listing name, condition) live beside the editor. They
+// are metadata: changing them never rewrites the title or description.
+// A generated draft whose details have since changed is flagged stale
+// and only an explicit AI Regenerate replaces it; regenerating an edited
+// draft still asks first. Copy writes only the edited title and
+// description, never the condition or any internal field. There is no
+// price anywhere by design.
 //
-// clipboardWriter(text) -> Promise is an injectable seam. The production
-// default calls navigator.clipboard.writeText, but only ever in direct
-// response to the user's Copy click, and treats a missing API as an
-// ordinary copy failure.
+// Clipboard discipline is unchanged from the first version: the write
+// happens synchronously inside the click handler, a token plus a mounted
+// flag mean only the newest attempt can set feedback, and a failure
+// shows a fixed generic message, never the browser's exception text.
+
 function defaultClipboardWriter(text) {
   if (
     typeof navigator !== "undefined" &&
@@ -46,6 +52,8 @@ function defaultClipboardWriter(text) {
   }
   return Promise.reject(new Error("Clipboard API unavailable"));
 }
+
+const HIGHLIGHT_BOX_CLASS = "z-20 border-4 border-primary bg-primary/10 ring-2 ring-ring ring-offset-1";
 
 export default function ListingDraftCard({
   draft,
@@ -58,34 +66,23 @@ export default function ListingDraftCard({
   onRegenerate = () => {},
   onDiscard = () => {},
   onRestore = () => {},
+  onDetailsChange = () => {},
   clipboardWriter = defaultClipboardWriter,
 }) {
   const itemId = draft.item_id;
-  const label = draft.effective_label ?? reviewItem?.effective_label ?? reviewItem?.clean_label ?? itemId;
+  const detectedLabel = draft.effective_label ?? reviewItem?.effective_label ?? reviewItem?.clean_label ?? itemId;
+  const listingName = typeof draft.listing_name === "string" && draft.listing_name.trim() !== "" ? draft.listing_name.trim() : detectedLabel;
+  const details = { listing_name: draft.listing_name ?? detectedLabel, condition: draft.condition ?? "not_specified" };
+  const canEnlarge = Boolean(imageUrl && reviewItem?.box);
 
-  // idle | copied | error. Local to this card, so one card's copy status
-  // can never appear on another.
   const [copyState, setCopyState] = useState("idle");
-  // The edited-draft regenerate warning. Not window.confirm: an inline
-  // Cancel / destructive-confirm pair rendered in the card.
   const [showRegenWarning, setShowRegenWarning] = useState(false);
+  const [enlarged, setEnlarged] = useState(false);
 
-  // Clipboard concurrency guard. Every Copy click claims the next token;
-  // a writer promise (success OR rejection) may only touch copyState if
-  // its token is still current AND the card is still mounted. So a
-  // pending write that settles AFTER an edit / regeneration / discard /
-  // restore / unmount, or after a newer Copy click, cannot restore stale
-  // feedback. mountedRef stops a late continuation writing state at all.
   const copyTokenRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
-    // React.StrictMode replays effect setup -> cleanup -> setup once in
-    // development while the component stays mounted. Re-asserting `true`
-    // on every setup (not just at the initial useRef value) means that
-    // replay leaves mountedRef correctly true afterwards, instead of
-    // stuck false from the throwaway cleanup and silently swallowing
-    // every real clipboard completion for the component's whole life.
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -98,28 +95,15 @@ export default function ListingDraftCard({
     []
   );
 
-  // Invalidate any pending copy and clear visible feedback. Bumping the
-  // token is what makes an already-pending clipboardWriter promise inert.
   const invalidateCopy = useCallback(() => {
     copyTokenRef.current += 1;
     setCopyState("idle");
   }, []);
 
-  // Editing, regeneration, discard and restore all make any prior
-  // "Copied" / copy-error feedback stale, and must also neutralise a
-  // still-pending write. edited_* change on every edit and on a
-  // successful regen (which also clears this item's edit); is_discarded
-  // covers discard and restore; isRegenerating covers the in-flight
-  // transition. This effect catches those transitions however they are
-  // driven, including externally (prop changes). No timers.
   useEffect(() => {
     invalidateCopy();
   }, [draft.edited_title, draft.edited_description, draft.is_discarded, isRegenerating, invalidateCopy]);
 
-  // Close a stale regenerate warning when it can no longer apply: the
-  // edits are gone (draft replaced / not edited), the card was discarded,
-  // or regeneration has already started. It is never re-opened here, so a
-  // discard followed by a restore does not resurrect the old warning.
   useEffect(() => {
     if (!draft.is_edited || draft.is_discarded || isRegenerating) setShowRegenWarning(false);
   }, [draft.is_edited, draft.is_discarded, isRegenerating]);
@@ -132,21 +116,69 @@ export default function ListingDraftCard({
     descriptionHelp: `listing-description-${itemId}-help`,
     copyStatus: `listing-copy-${itemId}-status`,
     regenStatus: `listing-regen-${itemId}-status`,
+    stale: `listing-stale-${itemId}`,
   };
 
-  // Number badge + item name: the card's header in every state.
-  const identityHeader = (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-        {itemNumberLabel(itemId)}
-      </span>
-      <h3 id={ids.heading} className="truncate text-sm font-semibold text-foreground">
-        {label}
-      </h3>
+  const header = (
+    <div className="min-w-0">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <h3 id={ids.heading} className="min-w-0 truncate text-base font-semibold text-foreground">
+          {listingName}
+        </h3>
+        <Badge variant="primary">Draft</Badge>
+        {draft.is_edited && <Badge variant="outline">Edited</Badge>}
+      </div>
+      {listingName !== detectedLabel && (
+        <p className="mt-0.5 text-xs text-muted-foreground">Detected as {detectedLabel}</p>
+      )}
     </div>
   );
 
-  // ---------------------------------------------------------------- discarded
+  const itemImage = (size) => (
+    <button
+      type="button"
+      onClick={() => setEnlarged(true)}
+      disabled={!canEnlarge}
+      aria-label={`Show ${listingName} in the photo`}
+      className="group relative shrink-0 rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default"
+    >
+      <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className={cn(size, "rounded-card")} />
+      {canEnlarge && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-pill bg-surface/90 px-2 py-0.5 text-[11px] font-medium text-foreground shadow-card backdrop-blur group-hover:bg-surface"
+        >
+          View in photo
+        </span>
+      )}
+    </button>
+  );
+
+  const lightbox = canEnlarge ? (
+    <ImageLightbox
+      open={enlarged}
+      onClose={() => setEnlarged(false)}
+      src={imageUrl}
+      alt="The space photo you uploaded"
+      title={`${listingName} in your photo`}
+      description="Only this item's outline is shown. Use Show boxes to hide it."
+      overlays={[{ id: itemId, box: reviewItem.box, label: itemNumberLabel(itemId), className: HIGHLIGHT_BOX_CLASS }]}
+      initialShowOverlays
+    />
+  ) : null;
+
+  const detailsFields = (
+    <ListingDetailsFields
+      itemId={itemId}
+      itemLabel={detectedLabel}
+      details={details}
+      onChange={onDetailsChange}
+      disabled={isRegenerating}
+      compact
+      className="mt-3"
+    />
+  );
+
   if (draft.is_discarded) {
     return (
       <article
@@ -155,10 +187,14 @@ export default function ListingDraftCard({
         className="rounded-card border border-dashed border-border bg-surface-muted p-3"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="h-8 w-8" />
-            {identityHeader}
-            <Badge variant="outline">Discarded</Badge>
+          <div className="flex min-w-0 items-center gap-3">
+            <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="h-12 w-12" />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 id={ids.heading} className="truncate text-sm font-semibold text-foreground">
+                {listingName}
+              </h3>
+              <Badge variant="outline">Discarded</Badge>
+            </div>
           </div>
           <Button
             type="button"
@@ -181,7 +217,7 @@ export default function ListingDraftCard({
   const regenProgress = isRegenerating && (
     <p id={ids.regenStatus} role="status" className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
       <Loader2 aria-hidden="true" width={14} height={14} className="animate-spin text-primary" />
-      Regenerating the listing draft for {label}…
+      Regenerating the listing draft for {listingName}…
     </p>
   );
 
@@ -191,7 +227,6 @@ export default function ListingDraftCard({
     </p>
   );
 
-  // -------------------------------------------------------------- unavailable
   if (draft.status === "unavailable") {
     return (
       <article
@@ -199,17 +234,16 @@ export default function ListingDraftCard({
         data-item-id={itemId}
         className="rounded-card border border-border bg-surface p-3 shadow-card sm:p-4"
       >
-        <div className="flex items-start gap-3">
-          <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} className="mt-0.5" />
-          <div className="min-w-0 flex-1">
-            {identityHeader}
-
+        <div className="grid gap-4 md:grid-cols-[auto_minmax(0,1fr)] md:items-start">
+          {itemImage("h-32 w-32 sm:h-40 sm:w-40")}
+          <div className="min-w-0">
+            {header}
             <p className="mt-2 flex items-start gap-2 text-sm text-foreground">
               <PackageX aria-hidden="true" width={16} height={16} className="mt-0.5 shrink-0 text-muted-foreground" />
               {unavailableReasonMessage(draft.unavailable_reason)}
             </p>
-
-            <div className="mt-3 flex flex-wrap gap-2">
+            {detailsFields}
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
               <Button
                 type="button"
                 variant="outline"
@@ -226,7 +260,7 @@ export default function ListingDraftCard({
                 ) : (
                   <RefreshCw aria-hidden="true" width={14} height={14} />
                 )}
-                {isRegenerating ? "Regenerating…" : "Regenerate draft"}
+                {isRegenerating ? "Regenerating…" : "AI Regenerate"}
               </Button>
               <Button
                 type="button"
@@ -239,41 +273,27 @@ export default function ListingDraftCard({
                 className="text-muted-foreground"
               >
                 <Trash2 aria-hidden="true" width={14} height={14} />
-                Discard draft
+                Discard
               </Button>
             </div>
-
             {regenProgress}
             {regenError}
           </div>
         </div>
+        {lightbox}
       </article>
     );
   }
 
-  // ---------------------------------------------------------------- generated
   const validity = draftEditValidity(draft.edited_title, draft.edited_description);
   const copyDisabled = !validity.valid || isRegenerating;
 
   function handleFieldEdit(patch) {
-    // Any edit invalidates a pending copy and clears feedback BEFORE the
-    // new text is forwarded, so a write in flight for the old text can
-    // never land as "Copied" against what is now on screen.
     invalidateCopy();
     onEdit(itemId, patch);
   }
 
   function handleCopy() {
-    // Exactly one write per click, using the CURRENT edited text.
-    // clipboardWriter is called SYNCHRONOUSLY, directly in this click
-    // handler, rather than deferred into a later microtask: real
-    // Clipboard API permissions are gated on user activation, which a
-    // later microtask can lose. The click claims the next token; only a
-    // settlement whose token is still current (and while mounted) may
-    // set feedback, so overlapping clicks and late settlements are
-    // inert. A synchronous throw and an async rejection both funnel into
-    // the same generic, token-guarded error state, so nothing is ever
-    // uncaught and no raw browser error text is shown.
     const token = (copyTokenRef.current += 1);
     setCopyState("idle");
     const payload = formatListingClipboardText(draft.edited_title, draft.edited_description);
@@ -305,9 +325,6 @@ export default function ListingDraftCard({
   }
 
   function confirmRegenerate() {
-    // This confirm control is itself a regeneration trigger: honour the
-    // same busy guard as the main button so a click during another
-    // listing operation cannot fire onRegenerate.
     if (listingBusy || isRegenerating) return;
     setShowRegenWarning(false);
     startRegeneration();
@@ -322,26 +339,33 @@ export default function ListingDraftCard({
       data-item-id={itemId}
       className="rounded-card border border-border bg-surface p-3 shadow-card sm:p-4"
     >
-      {/* header: thumbnail and name together, Edited kept subtle on the right */}
-      <div className="flex items-center gap-3">
-        <ItemCropThumbnail imageUrl={imageUrl} box={reviewItem?.box} />
-        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-          {identityHeader}
-          {draft.is_edited && <Badge variant="outline">Edited</Badge>}
-        </div>
-      </div>
+      {/* Two columns from md: the item image, then the editor. Below md
+          everything stacks: image, editor, actions. */}
+      <div className="grid gap-4 md:grid-cols-[auto_minmax(0,1fr)] md:items-start">
+        {itemImage("h-40 w-40 sm:h-48 sm:w-48 md:h-56 md:w-56")}
 
-      {/* the editable draft spans the full card width */}
-      <div className="mt-3">
-          {/* title */}
-          <div>
+        <div className="min-w-0">
+          {header}
+          {detailsFields}
+
+          {draft.is_stale && (
+            <p
+              id={ids.stale}
+              role="status"
+              className="mt-3 flex items-start gap-2 rounded-control border border-warning/40 bg-warning/10 p-2 text-xs text-foreground"
+            >
+              <Info aria-hidden="true" width={14} height={14} className="mt-0.5 shrink-0 text-warning" />
+              This draft was generated with different listing details. Use AI Regenerate to update it; your
+              text is unchanged until you do.
+            </p>
+          )}
+
+          <div className="mt-3">
             <div className="flex items-baseline justify-between gap-2">
               <label htmlFor={ids.title} className="text-xs font-medium text-foreground">
-                Listing title for {label}
+                Listing title for {detectedLabel}
               </label>
-              <span
-                className={cn("text-[11px]", validity.title.valid ? "text-muted-foreground" : "text-error")}
-              >
+              <span className={cn("text-[11px]", validity.title.valid ? "text-muted-foreground" : "text-error")}>
                 {validity.title.trimmedLength}/{TITLE_MAX}
               </span>
             </div>
@@ -364,24 +388,20 @@ export default function ListingDraftCard({
             )}
           </div>
 
-          {/* description */}
           <div className="mt-3">
             <div className="flex items-baseline justify-between gap-2">
               <label htmlFor={ids.description} className="text-xs font-medium text-foreground">
-                Listing description for {label}
+                Listing description for {detectedLabel}
               </label>
               <span
-                className={cn(
-                  "text-[11px]",
-                  validity.description.valid ? "text-muted-foreground" : "text-error"
-                )}
+                className={cn("text-[11px]", validity.description.valid ? "text-muted-foreground" : "text-error")}
               >
                 {validity.description.trimmedLength}/{DESCRIPTION_MAX}
               </span>
             </div>
             <textarea
               id={ids.description}
-              rows={4}
+              rows={5}
               value={draft.edited_description}
               onChange={(event) => handleFieldEdit({ description: event.target.value })}
               aria-invalid={validity.description.valid ? undefined : "true"}
@@ -399,9 +419,8 @@ export default function ListingDraftCard({
             )}
           </div>
 
-          {/* actions: Copy is the one primary control, full width on narrow
-              screens; Regenerate (secondary) and Discard (tertiary) wrap
-              beneath it there and sit beside it from sm up. */}
+          {/* Footer actions: Copy is the one primary action (full width on
+              phones), AI Regenerate secondary, Discard quiet. */}
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Button
               type="button"
@@ -421,13 +440,14 @@ export default function ListingDraftCard({
                 onClick={handleRegenerateClick}
                 disabled={isRegenerating || listingBusy}
                 aria-busy={isRegenerating || undefined}
+                aria-describedby={draft.is_stale ? ids.stale : undefined}
               >
                 {isRegenerating ? (
                   <Loader2 aria-hidden="true" width={14} height={14} className="animate-spin" />
                 ) : (
                   <RefreshCw aria-hidden="true" width={14} height={14} />
                 )}
-                {isRegenerating ? "Regenerating…" : "Regenerate draft"}
+                {isRegenerating ? "Regenerating…" : "AI Regenerate"}
               </Button>
               <Button
                 type="button"
@@ -440,16 +460,13 @@ export default function ListingDraftCard({
                 className="text-muted-foreground"
               >
                 <Trash2 aria-hidden="true" width={14} height={14} />
-                Discard draft
+                Discard
               </Button>
             </div>
           </div>
 
-          {/* copy feedback, scoped to this card, right under the actions */}
           <p id={ids.copyStatus} role="status" className="mt-2 min-h-4 text-xs">
-            {copyState === "copied" && (
-              <span className="text-success">Listing copied to your clipboard.</span>
-            )}
+            {copyState === "copied" && <span className="text-success">Listing copied to your clipboard.</span>}
             {copyState === "error" && (
               <span className="text-error">Could not copy the listing. Your text has not changed.</span>
             )}
@@ -481,7 +498,9 @@ export default function ListingDraftCard({
 
           {regenProgress}
           {regenError}
+        </div>
       </div>
+      {lightbox}
     </article>
   );
 }
