@@ -1,5 +1,84 @@
 # Evaluation
 
+## 2026-09-26 — Current implementation and evidence boundary
+
+This record complements the [product and setup overview](../../README.md).
+The dated entries below are historical snapshots: statements such as
+"production unchanged" or "prompt v1" describe their entry's date, not the
+current build. Raw evaluation artefacts remain local and gitignored.
+
+### Production behaviour
+
+- Direct Reorganise and Both produce a phased `tidy_plan` and conditional
+  storage suggestions using deterministic, room-sensitive rules with zero
+  planning LLM calls. The older `action_plan` remains in the response for
+  provenance; the UI displays `tidy_plan`. Earlier spatial-planning and LLM
+  checklist paths are retained as research-only alternatives, not active
+  production stages. Their rejected outputs and the decision not to promote
+  them are recorded in the August and September entries below.
+- Label correction is supported in all three workflows. Direct Reorganise
+  submits explicit corrections against the original analysis; the corrected
+  labels shape checklist, storage, and image-prompt generation. Declutter and
+  Both corrections rerun item reasoning and require reconfirmation.
+- Listing prompt **v2** accepts optional seller-provided listing names and
+  conditions. Condition defaults to `not_specified`; it is not inferred from
+  the photo. Without new seller details, the prompt preserves v1 wording.
+  A pre-filled name matching the reviewed label does not add a name block.
+  The listing-scoped phi4-mini default remains provisional, not a newly
+  validated winner.
+- Listing-name edits are display metadata and do not rerun decision reasoning.
+  Both's tidy steps still use the backend's reviewed effective label rather
+  than this display-only name. Drafts and manual edits are cached per `item_id`
+  for the current photo and survive reconfirmation; only currently confirmed,
+  non-excluded Sell items appear as active listings. New Sell items can be
+  drafted individually. Changed details mark a draft as outdated without
+  replacing its text until explicit regeneration.
+- Session state is not persisted across page reloads. This is a description
+  of frontend behaviour, not a guarantee that no personal data is stored or
+  transmitted anywhere: preview generation sends the original photo to the
+  configured remote service.
+
+### Output quality and remaining evaluation work
+
+- **Listings:** the 2026-09-07 real harness run assessed v1 and three
+  alternatives on 20 synthetic, label-only cases with one blinded reviewer
+  and one repetition. No arm cleared the predeclared hard safety rule; no
+  production-ready winner was selected. Those results remain historical v1
+  evidence. The v2 seller-detail branch has not received an equivalent
+  real-model harness evaluation. Passing a declared condition to the prompt
+  is not a post-generation guarantee of model compliance. Human review and
+  editing remain necessary; nothing is automatically published.
+- **Planning and storage:** deterministic rules make outputs repeatable but
+  do not establish usefulness. Advice depends on reviewed detection evidence
+  and can still be too general. Storage ideas are conditional methods, not
+  verified placements or product recommendations. Missing clutter cannot be
+  recovered through label correction alone; manual addition of undetected
+  items is not implemented. Occlusion, detection thresholds, and vocabulary
+  remain relevant sources of missing evidence.
+- **Visual preview:** the remote pipeline is runtime-proven, but its bounded
+  qualitative pilot rejected output quality. It does not establish faithful
+  item preservation or precise placement. Runtime and pilot details are in
+  [the Colab service record](../../colab_service/README.md). Preview failure
+  leaves the text plan and storage suggestions available.
+- **Usability:** P1–P3 findings motivated the phased plan and UI revisions.
+  P4 has since been conducted, but its complete results have not been
+  incorporated here; P5 results are not recorded here either. P4's reported
+  Direct Reorganise label-correction gap motivated the subsequent fix. That
+  implementation and manual verification are not evidence of improved
+  participant outcomes. Any later analysis must identify each participant's
+  tested build and distinguish prompted follow-up tasks from the original
+  protocol. No post-change improvement claim is made in this update.
+- **Automated verification:** fake-backed tests exercise core logic, HTTP
+  contracts, workflow state, and UI behaviour. Passing them, or skipping an
+  opt-in real-model check, does not establish real inference quality. No new
+  model evaluation or participant result was produced by this documentation
+  update.
+
+The entries below preserve the experimental history rather than rewriting
+past decisions to match the current implementation.
+
+---
+
 ## 2026-09-24 — Build 2: phased deterministic tidy plan and confirmed-choices summary
 
 The first three recorded UAT sessions motivated a focused revision, not a
