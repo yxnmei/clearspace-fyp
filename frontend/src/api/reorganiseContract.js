@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested, no React/DOM/fetch here. See
 // utils/format.js and api/declutterContract.js/confirmationContract.js
 // for the same convention. Small LOCAL validation helpers (fail/
 // isPlainObject/requireArray/etc. below) are duplicated here rather than
@@ -93,7 +93,7 @@ const VALID_UNAVAILABLE_REASONS = new Set([
 ]);
 const VALID_MEDIA_TYPES = new Set(["image/png", "image/jpeg"]);
 const VALID_ITEM_ROLES = new Set(["actionable", "contextual"]);
-// Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION (R3), the
+// Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION; the
 // generated image's api_version must equal this EXACT value, not merely
 // be some non-empty string.
 const EXPECTED_IMAGE_API_VERSION = "v1";
@@ -508,8 +508,8 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
 // 3. normaliseConfirmedGenerateResponse
 // ---------------------------------------------------------------------------
 
-// POST /generate/confirmed's response (ConfirmedGenerateResponse, R6,
-// Both), see app/api/routes.py: EXTENDS GenerateResponse's shape
+// POST /generate/confirmed's response (ConfirmedGenerateResponse, Both),
+// see app/api/routes.py: EXTENDS GenerateResponse's shape
 // (run_id/action_plan/tidy_plan/focus_areas/storage_suggestions/image_prompt/
 // image_status/image/image_unavailable_reason) with `confirmation`,
 // never reshaping it. This adapter mirrors that composition: it

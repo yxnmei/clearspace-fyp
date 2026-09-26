@@ -6,9 +6,7 @@ import ReorganisePage from "./components/ReorganisePage";
 import BothPage from "./components/BothPage";
 
 // Root shell, owns ONLY the top-level workflow choice ("choose" |
-// "declutter" | "reorganise" | "both"), nothing else. Both is real as of
-// R6 (BothPage), PathSelector renders it as a genuine, enabled card,
-// exactly like Declutter/Reorganise.
+// "declutter" | "reorganise" | "both"), nothing else.
 //
 // Switching workflows (or returning to path selection) fully UNMOUNTS
 // whichever page was showing, rather than hiding it, DeclutterPage's

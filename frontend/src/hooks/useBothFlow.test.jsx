@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { useBothFlow } from "./useBothFlow";
 import * as client from "../api/client";
-// Real listing normalisers, injected through the listingApi seam (Stage 3).
+// Real listing normalisers, injected through the listingApi seam.
 import { normaliseListingResponse, normaliseSingleListingResponse } from "../api/listingContract";
 
 // Only the frontend API functions are mocked, the real, validating
@@ -727,7 +727,7 @@ describe("useBothFlow, reset()", () => {
 });
 
 // ===========================================================================
-// Marketplace listing domain (Stage 3): composed through useDeclutterFlow,
+// Marketplace listing domain: composed through useDeclutterFlow,
 // fully independent of Both's Reorganise generate domain.
 // ===========================================================================
 

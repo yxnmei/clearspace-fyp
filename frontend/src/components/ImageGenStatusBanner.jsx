@@ -1,7 +1,7 @@
 import { Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 
-// §5: surfaces Colab/ngrok status in the UI itself, rather than only
+// Surfaces Colab/ngrok status in the UI itself, rather than only
 // failing once someone clicks Create tidy plan. Purely presentational,
 // status/recheck are passed in as props, this component never calls
 // useImageGenHealth() itself. ReorganisePage and BothPage each own ONE

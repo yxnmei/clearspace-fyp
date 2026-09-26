@@ -1,5 +1,5 @@
-// Every network call in the app lives here, once, per §4, no fetch()
-// calls scattered inline inside components or hooks. hooks/ import from
+// Every network call in the app lives here, with no fetch() calls
+// scattered inline inside components or hooks. hooks/ import from
 // this file; they never call fetch directly.
 
 import { fileToBase64 } from "../utils/fileEncoding";
@@ -36,7 +36,7 @@ export function getBackendHealth() {
   return request("/health");
 }
 
-// §5: surfaced proactively in the UI (useImageGenHealth hook), not just
+// Surfaced proactively in the UI (useImageGenHealth hook), not just
 // wrapped in a try/catch around the real generate() call.
 export function getImageGenHealth() {
   return request("/image-gen/health");
@@ -97,7 +97,7 @@ export function transcribeAudio({ audioBlob }) {
   return request("/transcribe", { method: "POST", body: form });
 }
 
-// POST /generate (Direct Reorganise, R4/R5), JSON body, matching
+// POST /generate (Direct Reorganise), JSON body, matching
 // app/api/routes.py's GenerateRequest exactly (extra="forbid" there, an
 // unrecognised field, including any tuning parameter, is a 422, never
 // silently ignored). `analysis` is the exact validated AnalysisResult
@@ -110,8 +110,8 @@ export function transcribeAudio({ audioBlob }) {
 // carry a correction (the backend rejects an analysis that does).
 //
 // Deliberately NEVER sends denoise_strength/controlnet_conditioning_scale
-// /seed, R4 always uses the backend's configured defaults; these are
-// provisional generation-tuning values, not an ordinary user decision
+// /seed; Direct Reorganise always uses the backend's configured defaults.
+// These are provisional generation-tuning values, not an ordinary user decision
 // (see app/services/reorganise_pipeline_service.py's own docstring).
 //
 // file.type is sent verbatim as image_media_type, validated here first
@@ -149,7 +149,7 @@ export async function generateReorganisation({
   });
 }
 
-// POST /generate/confirmed (Both, R6), matching app/api/routes.py's
+// POST /generate/confirmed (Both), matching app/api/routes.py's
 // ConfirmedGenerateRequest exactly (extra="forbid" there too). Carries
 // the INPUTS to confirmation (declutter + overrides), never confirmation
 // OUTPUT: selection is derived entirely server-side from
@@ -194,7 +194,7 @@ export async function generateConfirmedReorganisation({
   });
 }
 
-// POST /listings (marketplace listing draft generation, Stage 2 frontend),
+// POST /listings (marketplace listing draft generation),
 // JSON body, matching app/api/routes.py's ListingRequest exactly
 // (extra="forbid" there, so an unrecognised field is a 422, never
 // silently ignored). Sends run_id, the whole round-tripped analysis and

@@ -691,7 +691,7 @@ describe("normaliseOverrideResponse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// normaliseBothUploadResponse (R6)
+// normaliseBothUploadResponse (Both)
 // ---------------------------------------------------------------------------
 
 describe("normaliseBothUploadResponse", () => {

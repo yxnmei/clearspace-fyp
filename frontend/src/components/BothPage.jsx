@@ -270,7 +270,7 @@ export default function BothPage() {
                 intro="Your decisions are confirmed. Tidy up uses the items you kept; listings use the items you chose to sell."
               />
 
-              {/* Results composition (brief §15): two visually and
+              {/* Results composition: two visually and
                   semantically distinct result sections, Tidy up (confirmed
                   Keep items) then Marketplace listings (confirmed Sell
                   items), then the global actions. No introduction: the

@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested, no React/DOM/fetch here. See
 // utils/format.js and api/declutterContract.js for the same convention.
 //
 // Two related but distinct jobs live in this file:

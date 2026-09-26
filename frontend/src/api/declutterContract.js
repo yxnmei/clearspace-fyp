@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch here. See
+// Pure functions only, unit-tested, no React/DOM/fetch here. See
 // utils/format.js for the same convention.
 //
 // Adapts the backend's nested POST /upload (path="declutter") and POST
@@ -18,8 +18,8 @@
 // BothUploadResponse docstrings): the only thing that differs between the
 // three public functions is which `path` value (if any) is required,
 // see normaliseAnalysisDeclutterEnvelope's own `expectedPath` parameter.
-// normaliseBothUploadResponse additionally carries input_image_sha256
-// (R6), reorganiseContract.js's own SHA256_HEX_RE pattern, duplicated
+// normaliseBothUploadResponse additionally carries input_image_sha256;
+// reorganiseContract.js's own SHA256_HEX_RE pattern is duplicated
 // here rather than imported, matching that file's own stated convention
 // that each contract file owns its own small validation helpers.
 
@@ -239,7 +239,7 @@ export function normaliseOverrideResponse(response) {
   return normaliseAnalysisDeclutterEnvelope(response, { expectedPath: null });
 }
 
-// POST /upload's path="both" response (R6), see app/api/routes.py's
+// POST /upload's path="both" response, see app/api/routes.py's
 // BothUploadResponse: the exact same (analysis, declutter) envelope as
 // path="declutter" (full triage pipeline, reused verbatim server-side,
 // see that module's own docstring), PLUS input_image_sha256, reused

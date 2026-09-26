@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch here.
+// Pure functions only, unit-tested, no React/DOM/fetch here.
 //
 // (formatConfidence and decisionColor were removed once the redesigned
 // screens stopped showing confidence percentages and text-colour-only

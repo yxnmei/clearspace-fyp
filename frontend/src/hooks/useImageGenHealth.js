@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getImageGenHealth } from "../api/client";
 
-// §5: the UI checks Colab/ngrok health up front, before the user ever
+// The UI checks Colab/ngrok health up front, before the user ever
 // clicks Reorganise, not only on failure after they try. Poll on mount
 // and expose a manual refresh for a "check again" button.
 //

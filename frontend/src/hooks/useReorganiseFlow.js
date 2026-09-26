@@ -23,9 +23,9 @@ const TIDY_PLAN_ERROR = "We couldn't create your tidy plan.";
 // belong to instead:
 //   "upload"    , the upload form is shown; uploadError is set here
 //                  after a failed upload attempt (the form/file/context
-//                  the user already entered are still usable, see
-//                  submit()'s own docstring for why analysis is always
-//                  cleared first, never left stale).
+//                  the user already entered are still usable; submit()
+//                  clears the previous analysis before requesting a new
+//                  one, so stale analysis is never left visible).
 //   "analysing" , POST /upload (path="reorganise") in flight.
 //   "selecting" , a validated analysis exists; the user is choosing
 //                  items, or a previous /generate attempt failed

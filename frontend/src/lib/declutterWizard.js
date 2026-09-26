@@ -195,7 +195,7 @@ export function deriveDeclutterWizard(input = {}) {
     unresolvedCount = 0,
     viewedStep = "upload",
     confirmAcknowledged = false,
-    // Marketplace listing state (Stage 4B), explicit inputs rather than
+    // Marketplace listing state, explicit inputs rather than
     // the raw confirmation/hook objects, so this module keeps its
     // existing plain-flag style. eligibleSellCount MUST be derived by the
     // caller only from the current confirmation's confirmedDecisions

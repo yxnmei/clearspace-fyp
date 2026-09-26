@@ -20,12 +20,12 @@ import { Button } from "./ui/button";
 // type, selected items, your notes). It is never claimed to follow the
 // phases step by step; the prompt is built separately and deterministically.
 //
-// No visual-preview Retry button here, deliberately (R5 decision): the
+// No visual-preview Retry button here, deliberately: the
 // current /generate contract has no "regenerate image only" endpoint,
 // a Retry would silently re-run the whole pipeline for what looks like
-// a cheap image-only action. Start
-// over (a full reset) is the only recovery action offered until a
-// future backend contract supports a genuinely cheap retry.
+// a cheap image-only action. Start over (a full reset) is the only
+// recovery action offered until a future backend contract supports a
+// genuinely cheap retry.
 //
 // Technical fields (model, seed, ControlNet, service/API version, timing,
 // prompt, hashes, provenance, attempts, unavailable reason codes) remain

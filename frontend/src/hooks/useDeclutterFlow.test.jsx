@@ -1114,7 +1114,7 @@ describe("useDeclutterFlow, reset() (R6)", () => {
 });
 
 // ===========================================================================
-// Marketplace listing domain (Stage 3)
+// Marketplace listing domain
 // ===========================================================================
 
 // specs: [{ id, ai, decision?, excluded?, label }]

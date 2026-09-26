@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch here. Same
+// Pure functions only, unit-tested, no React/DOM/fetch here. Same
 // convention as declutterContract.js / confirmationContract.js /
 // reorganiseContract.js, including the deliberate duplication of the
 // small local helpers below rather than sharing a helpers module.
@@ -73,9 +73,8 @@ export function normaliseTranscriptionResponse(response) {
 
   const transcript = requireString(response.transcript, "transcript");
   const modelName = requireNonEmptyString(response.model_name, "model_name");
-  // Inference wall-clock and decoded audio length respectively, kept
-  // apart on the server precisely so the V3 comparison can read them
-  // separately, so neither is allowed to stand in for the other here.
+  // Inference wall-clock and decoded audio length respectively are kept
+  // separate on the server so neither can stand in for the other here.
   const transcriptionMs = requireNonNegativeNumber(response.transcription_ms, "transcription_ms");
   const audioDurationS = requireNonNegativeNumber(response.audio_duration_s, "audio_duration_s");
 

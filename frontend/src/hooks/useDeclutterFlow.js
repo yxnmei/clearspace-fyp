@@ -30,8 +30,8 @@ const CONFIRMATION_ERROR = "We couldn't confirm your decisions.";
 const LISTING_GENERATION_ERROR = "We couldn't generate the listing drafts.";
 const LISTING_REGENERATION_ERROR = "We couldn't regenerate that listing draft.";
 
-// Per-flow state + logic pulled into a hook from the start (§4), rather
-// than living inline inside a growing DeclutterPage component. Backend
+// Per-flow state and logic live in a hook rather than inline inside a
+// growing DeclutterPage component. Backend
 // POST /upload, POST /confirm and POST /override are all implemented,
 // see app/api/routes.py, app/services/declutter_service.py and
 // app/services/confirmation_service.py. Their nested responses are
@@ -46,8 +46,8 @@ const LISTING_REGENERATION_ERROR = "We couldn't regenerate that listing draft.";
 // are exercised directly by rendered-hook tests
 // (useDeclutterFlow.test.jsx), not just reviewed by inspection.
 //
-// uploadPath/normaliseUploadResponse (R6, Both, required correction 5):
-// optional, default-compatible configuration so useBothFlow can COMPOSE
+// uploadPath/normaliseUploadResponse configure the hook for Both while
+// remaining optional and default-compatible, so useBothFlow can COMPOSE
 // this hook (path="both" + normaliseBothUploadResponse) rather than
 // copying it, every existing call site (DeclutterPage) calls
 // useDeclutterFlow() with no arguments at all, so the defaults below
@@ -60,11 +60,11 @@ const LISTING_REGENERATION_ERROR = "We couldn't regenerate that listing draft.";
 const EMPTY_FLOW = { runId: null, analysis: null, declutter: null, items: [], context: null, inputImageSha256: null };
 
 // Default listing I/O surface. `listingApi` is a default-compatible
-// injection seam (Stage 3): every existing caller invokes useDeclutterFlow()
+// injection seam: every existing caller invokes useDeclutterFlow()
 // with no arguments and gets exactly this, so nothing about listing
 // behaviour depends on a test double being supplied. useBothFlow passes
 // its own `listingApi` straight through to the composed hook. All four
-// members are the committed Stage 2 functions; a fake replaces the
+// members are the production listing functions; a fake replaces the
 // network round-trip (generateListings/regenerateListing) and may
 // optionally replace the pure normalisers too.
 const DEFAULT_LISTING_API = {
@@ -96,7 +96,7 @@ export function useDeclutterFlow({
   const [correctingItemId, setCorrectingItemId] = useState(null);
   const [correctionError, setCorrectionError] = useState(null);
 
-  // Marketplace listing domain (Stage 3). Its own state, its own
+  // Marketplace listing domain. Its own state, its own
   // concurrency slot (listingGenerationRef + activeListingRef below),
   // fully independent of the upload/correction and confirmation domains
   // -- and, one layer up in useBothFlow, of the Reorganise generate
@@ -540,7 +540,7 @@ export function useDeclutterFlow({
     [eligibleListingIds, listingCache]
   );
 
-  // idle | generating | ready | error, as before. A confirmation whose Sell
+  // idle | generating | ready | error. A confirmation whose Sell
   // items already have cached drafts is "ready" at once, with no request:
   // re-confirming never forces a new batch.
   let listingStatus;
@@ -549,7 +549,7 @@ export function useDeclutterFlow({
   else if (activeListingIds.length > 0) listingStatus = "ready";
   else listingStatus = listingPhase;
 
-  // Back-compatible aggregate view of the active drafts (the shape the
+  // Aggregate view of the active drafts (the shape the
   // listing contract normalisers produce). Provenance is null exactly
   // when there are no active drafts, as the contract's empty shape says.
   const activeServerDrafts = useMemo(
@@ -591,7 +591,7 @@ export function useDeclutterFlow({
     // Generates ONLY what is missing for the current confirmation:
     //   - nothing eligible  -> a ready empty result, no request;
     //   - every eligible item already drafted -> a no-op, no request;
-    //   - nothing drafted yet -> one batch request, as before;
+    //   - nothing drafted yet -> one batch request;
     //   - some drafted, some new -> one single-item request per NEW item
     //     (the single-item endpoint derives eligibility server-side and
     //     needs no prior draft), leaving every existing draft, edit,
@@ -993,7 +993,7 @@ export function useDeclutterFlow({
     };
   });
 
-  // Deterministic full reset (R6, required correction 5): invalidates
+  // Deterministic full reset invalidates
   // ALL concurrency domains (any in-flight upload/correction, any
   // in-flight/completed confirmation, AND -- via invalidateConfirmation
   // chaining to invalidateListing -- any in-flight/completed listing
@@ -1035,7 +1035,7 @@ export function useDeclutterFlow({
     correctingItemId,
     correctionError,
     correctLabel,
-    // Marketplace listing domain (Stage 3)
+    // Marketplace listing domain
     listingStatus,
     listingResult,
     listingDrafts,

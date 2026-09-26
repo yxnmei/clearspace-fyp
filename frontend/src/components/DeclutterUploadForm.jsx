@@ -6,7 +6,7 @@ import { Button } from "./ui/button";
 
 // Presentational + its own small local UI state (selected file, context
 // text, preview URL), none of that is workflow state, so it stays out
-// of useDeclutterFlow (§4: components stay presentational, hooks own
+// of useDeclutterFlow (components stay presentational, hooks own
 // real state). onSubmit is the only thing this component calls out to;
 // it never talks to the API directly.
 //

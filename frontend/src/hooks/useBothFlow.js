@@ -7,8 +7,8 @@ import { useDeclutterFlow } from "./useDeclutterFlow";
 
 const TIDY_PLAN_ERROR = "We couldn't create your tidy plan.";
 
-// Both workflow state machine (R6), COMPOSES useDeclutterFlow rather
-// than copying it (required correction 5): declutter/review/confirm is
+// The Both workflow state machine COMPOSES useDeclutterFlow rather than
+// copying it: declutter/review/confirm is
 // exactly Declutter's own hook, configured to hit path="both" and
 // normaliseBothUploadResponse instead of path="declutter" and
 // normaliseDeclutterUploadResponse. Everything upload/review/correction/
@@ -45,7 +45,7 @@ const TIDY_PLAN_ERROR = "We couldn't create your tidy plan.";
 // invalid item_id, before this wrapper's own invalidateGeneration() ever
 // runs), then invalidates generation as a second, separate step.
 export function useBothFlow({ listingApi } = {}) {
-  // The marketplace listing domain (Stage 3) lives ENTIRELY in the
+  // The marketplace listing domain lives ENTIRELY in the
   // composed useDeclutterFlow -- its state, actions and concurrency slot
   // all flow out through the `...declutter` spread below, unwrapped.
   // useBothFlow only passes the `listingApi` injection seam straight

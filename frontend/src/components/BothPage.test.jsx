@@ -593,7 +593,7 @@ describe("BothPage Confirm choices panel", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Results composition (brief §15): introduction, Tidy up, Marketplace
+// Results composition: introduction, Tidy up, Marketplace
 // listings, global actions; two independent sections, never one feed.
 // ---------------------------------------------------------------------------
 

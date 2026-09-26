@@ -25,7 +25,7 @@ import ListingsView from "./ListingsView";
 // analysis, decisions, confirmation, listing state/actions, concurrency
 // and API activity; this component adds only presentation state, which
 // step is being viewed, and whether the user has acknowledged Review by
-// pressing Continue to Confirm.
+// pressing Continue to Confirm choices.
 //
 // All five views stay mounted (the non-viewed ones `hidden`, so they are
 // out of the accessibility tree and unfocusable) purely so DeclutterUploadForm's

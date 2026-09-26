@@ -8,7 +8,7 @@ import { Button } from "./ui/button";
 // text, preview URL), mirrors DeclutterUploadForm's own established
 // structure, but is a SEPARATE component rather than a shared/prop-
 // branching one: the accepted file types differ (PNG/JPEG only, matching
-// R4's exact supported set, not "image/*"), and the copy differs. This
+// the backend's exact supported set, not "image/*"), and the copy differs. This
 // keeps DeclutterUploadForm free of any Reorganise-specific knowledge,
 // per this project's stated preference for not forcing Declutter
 // components to understand Reorganise state.

@@ -19,7 +19,7 @@ import { cn } from "../lib/cn";
 // alternative, lifting the whole hook into both forms, would duplicate
 // this component's rules in two places.
 //
-// Phase 2 restyled this panel onto the ClearSpace design system; the
+// This panel uses the ClearSpace design system; the
 // concurrency latch, operation token, microphone cleanup and
 // transcript-review flow all still live in useVoiceContext, untouched.
 export default function VoiceContextInput({

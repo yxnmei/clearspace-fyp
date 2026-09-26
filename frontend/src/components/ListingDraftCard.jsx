@@ -37,9 +37,9 @@ import { cn } from "../lib/cn";
 // description, never the condition or any internal field. There is no
 // price anywhere by design.
 //
-// Clipboard discipline is unchanged from the first version: the write
-// happens synchronously inside the click handler, a token plus a mounted
-// flag mean only the newest attempt can set feedback, and a failure
+// The clipboard write starts synchronously inside the click handler. A
+// token plus a mounted flag mean only the newest attempt can set feedback,
+// and a failure
 // shows a fixed generic message, never the browser's exception text.
 
 function defaultClipboardWriter(text) {

@@ -152,8 +152,8 @@ describe("AnalysedRoomPanel", () => {
     expect(screen.getByRole("button", { name: /detection 1: lamp/i })).toBeInTheDocument();
   });
 
-  // getBoxClassName generalisation (R5), Declutter never passes this
-  // prop (every test above renders without it and stays green
+  // Declutter never passes the getBoxClassName prop (every test above
+  // renders without it and stays green
   // unmodified), proving the default preserves the exact original
   // Declutter coloring behaviour. This test proves a CALLER-supplied
   // classifier is actually used when Direct Reorganise (or any future

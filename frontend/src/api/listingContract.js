@@ -1,4 +1,4 @@
-// Pure functions only, unit-tested (§4), no React/DOM/fetch/clipboard or
+// Pure functions only, unit-tested, no React/DOM/fetch/clipboard or
 // hook state here. Same convention as api/confirmationContract.js /
 // declutterContract.js / reorganiseContract.js: this file owns its own
 // small local validation helpers (fail/isPlainObject/requireArray/...)

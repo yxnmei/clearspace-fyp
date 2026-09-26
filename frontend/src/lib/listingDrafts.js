@@ -1,4 +1,4 @@
-// Pure helpers for the marketplace-listing review UI (Stage 4A). No
+// Pure helpers for the marketplace-listing review UI. No
 // React/DOM/fetch/clipboard here, same convention as lib/declutterReview.js
 // and lib/workflowProgress.js: this file only does maths and string
 // mapping so ListingsView / ListingDraftCard stay presentational.

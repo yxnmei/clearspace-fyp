@@ -891,7 +891,7 @@ describe("normaliseGenerateResponse, base64 length/padding strictness", () => {
 });
 
 // ---------------------------------------------------------------------------
-// normaliseConfirmedGenerateResponse (R6, Both)
+// normaliseConfirmedGenerateResponse (Both)
 // ---------------------------------------------------------------------------
 
 function makeAiDecision(overrides = {}) {
