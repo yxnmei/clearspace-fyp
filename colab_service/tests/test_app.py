@@ -577,7 +577,7 @@ def test_notebook_polls_health_instead_of_a_fixed_sleep():
 
 def test_notebook_documents_that_closing_the_tab_is_not_enough_cleanup():
     text = _notebook_rendered_text()
-    assert "NOT sufficient" in text or "not sufficient" in text.lower()
+    assert "may leave the runtime and tunnel active" in text
     assert "Colab: Remove Server" in text
     assert "ngrok.disconnect" in text and "ngrok.kill" in text
 
