@@ -49,13 +49,10 @@ class Settings(BaseSettings):
     # --- resolution policy (see resolution.py) ---
     resolution_pixel_budget: int = 512 * 512
 
-    # --- internal, provisional generation settings (see pipeline.py) ---
-    # Deliberately NOT part of the R3 HTTP contract — never a
-    # schemas.GenerateRequest/GenerateResponse field, never accepted from
-    # or echoed to a caller. Standard SD1.5 starting points, not yet
-    # evidence-backed for THIS pipeline/checkpoint combination — Phase 2
-    # must revise these based on measured output quality and real
-    # generation runtime (see README.md's "Provisional items").
+    # --- internal generation settings (see pipeline.py) ---
+    # These defaults were used in the verified Colab run but are not
+    # established as quality-optimal. They are not part of the HTTP contract:
+    # callers cannot supply them, and responses do not echo them.
     num_inference_steps: int = Field(default=30, ge=1, le=150)
     guidance_scale: float = Field(default=7.5, gt=0.0, le=30.0)
 

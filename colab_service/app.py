@@ -88,8 +88,8 @@ def load_models() -> None:
     confirmed CUDA is available — never at import time, never during
     colab_service/tests/. Sets _state.ready = True only after every
     model has genuinely finished loading; a failure here (e.g. an
-    incompatible dependency version, a Hub identifier that doesn't
-    resolve — see colab_service/README.md's "Provisional items") raises
+    incompatible dependency version or a Hub identifier that doesn't
+    resolve) raises
     and leaves _state.ready False, so the notebook cell fails loudly
     rather than starting a server that would silently never become
     healthy."""

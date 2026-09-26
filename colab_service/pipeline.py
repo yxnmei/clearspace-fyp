@@ -27,14 +27,13 @@ Safety checker: deliberately NOT disabled. `load_pipeline()` never passes
 ships with. If the pipeline itself reports the output as flagged
 (`result.nsfw_content_detected`), run_generation() raises
 UnsafeOutputError and NO image is returned — see that exception's own
-docstring. Only concrete Phase 2 evidence that this is infeasible on a
-T4's memory budget should reopen this decision; it is not reopened
-speculatively here.
+docstring. Only concrete T4 memory evidence that this is infeasible
+should reopen this decision.
 
-num_inference_steps/guidance_scale are internal, provisional generation
-settings (config.py) — NOT part of the R3 HTTP contract (never a
-schemas.GenerateRequest field) — passed straight through to the pipeline
-call, same as denoise_strength/controlnet_conditioning_scale/seed.
+num_inference_steps/guidance_scale are internal generation settings
+(config.py), not request fields. The verified run used these defaults but
+did not establish them as quality-optimal. They are passed straight through
+to the pipeline call, like denoise_strength/controlnet_conditioning_scale/seed.
 
 Output format is always PNG (lossless, and schemas.build_generate_response()
 is written assuming PNG — see that function's own docstring for why).
@@ -96,10 +95,8 @@ def load_pipeline(settings: Any) -> None:
     )
     pipe = pipe.to("cuda")
     # Memory-saving defaults for Colab's typically memory-constrained
-    # GPUs (T4 free tier especially). xformers is deliberately NOT
-    # enabled by default here — real version-compatibility risk against
-    # Colab's pre-installed CUDA/torch stack, try-and-fallback is a Phase
-    # 2 concern, not assumed to work in this first pass.
+    # GPUs (T4 free tier especially). xformers is not attempted because
+    # compatibility with Colab's pre-installed CUDA/torch stack was not tested.
     pipe.enable_attention_slicing()
     # VAE slicing is an extra memory optimisation, not a safety or
     # correctness feature. StableDiffusionControlNetImg2ImgPipeline in
@@ -153,12 +150,11 @@ def run_generation(
     exact v1 regression this service must not repeat). Neither this nor
     the accompanying prompt_sha256 echo by themselves PROVE the pipeline
     genuinely uses the prompt semantically (as opposed to merely
-    accepting and hashing it) — only a real same-image/different-prompt
-    sensitivity test, run in Phase 2, can prove that.
+    accepting and hashing it). A controlled same-image/different-prompt
+    sensitivity test is still required to establish that.
 
-    num_inference_steps/guidance_scale come from `settings` (internal,
-    provisional generation settings — see config.py and module
-    docstring), never from the caller's own request.
+    num_inference_steps/guidance_scale come from internal `settings`, never
+    from the caller's request.
 
     Raises UnsafeOutputError (never returning the image) if the
     pipeline's own safety checker flags the output — see that

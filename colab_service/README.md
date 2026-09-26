@@ -1,4 +1,4 @@
-# ClearSpace Colab image-generation service (R7)
+# ClearSpace Colab image-generation service
 
 **Honest status, stated directly — verified evidence only:** on a real
 Colab T4 GPU, models loaded and both local and public `/health` reported
@@ -9,14 +9,15 @@ permanent fix (`depth.py`, bilinear alignment) passed 205 local,
 model-free tests **and has since been verified end to end through the
 real frontend**: with that permanent function active (no temporary
 monkeypatch), local and public `/health` passed and the browser rendered
-a generated result. The runtime, the R3 HTTP contract, the orchestration
+a generated result. The runtime, the HTTP contract, the orchestration
 and frontend delivery therefore all work.
 
 **What does not work is the output quality.** A bounded qualitative
 pilot found the underlying whole-image SD1.5 + depth-ControlNet
-architecture's results unacceptable — see "Real Phase 2 evidence" below.
-Treat this pipeline as runtime-proven, quality-rejected. See "Provisional
-items requiring Phase 2 verification" for what else remains unconfirmed.
+architecture's results unacceptable — see "Verified runtime and quality
+evidence" below. Treat this pipeline as runtime-proven, quality-rejected:
+the AI Visual Preview is illustrative, not a faithful item-preserving or
+precisely placed reorganisation.
 
 ## Architecture
 
@@ -37,8 +38,8 @@ colab_service/
   resolution.py                 pure resolution policy (Option A — see below)
   depth.py                      MiDaS depth extraction (controlnet_aux)
   pipeline.py                   model loading + the real SD1.5/ControlNet call
-  requirements.txt              Colab-runtime dependencies — provisional, see below
-  tests/                        local, GPU-free tests (this Phase's own verification)
+  requirements.txt              Colab-runtime dependencies
+  tests/                        local, GPU-free service tests
 ```
 
 ### Endpoints
@@ -153,27 +154,25 @@ importable and testable on a plain machine with no Colab runtime at all
 - A Colab account with sufficient GPU quota/availability (free-tier GPU
   availability is genuinely unpredictable — see "Troubleshooting").
 
-## Provisional items requiring Phase 2 verification
+## Verified runtime configuration and remaining limitations
 
-Nothing below has been confirmed against a real Colab GPU runtime yet,
-except where a specific real-run finding is noted:
+The recorded Colab/frontend run verified model loading, health checks,
+generation, and browser delivery. The notes below separate that working
+runtime path from settings or behaviours not established as optimal or
+general by the bounded evidence.
 
 - **Model identifiers** (`config.py`): `stable-diffusion-v1-5/stable-diffusion-v1-5`
   (base), `lllyasviel/sd-controlnet-depth` (ControlNet), `lllyasviel/Annotators`
-  (MiDaS via `controlnet_aux.MidasDetector`). `pipeline.py` reports
-  whichever identifiers it actually loaded, not these defaults blindly —
-  but whether these defaults resolve and load cleanly at all is unverified.
+  (MiDaS via `controlnet_aux.MidasDetector`). These defaults resolved and
+  loaded in the verified Colab run. `pipeline.py` reports the identifiers
+  actually loaded rather than assuming the defaults succeeded.
 - **The diffusers pipeline class** (`StableDiffusionControlNetImg2ImgPipeline`)
-  and its exact constructor/call kwargs, against whatever `diffusers`
-  version Phase 2 actually installs.
-- **`controlnet_aux.MidasDetector`'s output format** genuinely matching
-  what the `sd-controlnet-depth` checkpoint expects — the documented
-  fallback if this proves wrong is `transformers.DPTForDepthEstimation`
-  + `Intel/dpt-hybrid-midas` (more manual normalization work, not
-  implemented here). **Real Phase 2 finding, confirmed on a real Colab
-  GPU run (`bedroom02.jpg`, target generation resolution 584×440):**
-  models loaded and health succeeded, but the original `POST /generate`
-  HTTP attempt returned a real **500** — MidasDetector's own output was
+  and its constructor/call path completed successfully in the verified
+  Colab run with the installed runtime dependencies.
+- **MiDaS depth alignment:** in the initial real Colab run (`bedroom02.jpg`,
+  target generation resolution 584×440), models loaded and health succeeded,
+  but the original `POST /generate` HTTP attempt returned a real **500** —
+  MidasDetector's output was
   704×512, not pixel-aligned with the 584×440 input, and ControlNet
   rejected the mismatch as a tensor-dimension error (width 73 vs 88). The
   permanent fix — `extract_depth_map()` now resizes the depth map to the
@@ -183,18 +182,18 @@ except where a specific real-run finding is noted:
   function active (no monkeypatch): health passed and a generated result
   rendered in the browser.** The compatibility failure is resolved.
   Separately, the underlying architecture's output quality was assessed
-  and found unacceptable — see "Real Phase 2 evidence" below.
+  and found unacceptable — see "Verified runtime and quality evidence" below.
 - **Every dependency version** in `requirements.txt` — deliberately
-  unpinned; Phase 2 must pin real, tested versions once something has
-  actually installed and run successfully.
+  unpinned. The verified Colab run installed a working set, but leaving the
+  file unpinned does not guarantee reproducible resolution in future runtimes.
 - **`xformers`** is not enabled by default (real compatibility risk
-  against Colab's pre-installed CUDA/torch) — a Phase 2 decision, not
-  assumed to work.
+  against Colab's pre-installed CUDA/torch) and was not required by the
+  verified runtime path.
 - **The 512×512-pixel resolution budget** and the memory-saving settings
-  (`enable_attention_slicing`/`enable_vae_slicing`) — tuned against
-  whatever VRAM headroom Phase 2 actually measures, not assumed correct
-  now. `StableDiffusionControlNetImg2ImgPipeline` in the installed
-  `diffusers` 0.40.0 runtime did not expose the pipeline-level
+  (`enable_attention_slicing`/`enable_vae_slicing`) ran successfully in the
+  verified environment, but are not established as optimal for other Colab
+  GPU/runtime combinations. `StableDiffusionControlNetImg2ImgPipeline` in
+  the installed `diffusers` 0.40.0 runtime did not expose the pipeline-level
   `enable_vae_slicing()` method (verified on a real Colab runtime), and
   current `diffusers` exposes VAE slicing on the VAE itself as
   `pipe.vae.enable_slicing()`. `load_pipeline()` therefore prefers
@@ -203,23 +202,21 @@ except where a specific real-run finding is noted:
   normally when neither exists — a compatibility guard, not a version
   pin; attention slicing and the retained safety checker are unchanged.
 - **`num_inference_steps` (30) and `guidance_scale` (7.5)**
-  (`config.py`) — standard SD1.5 starting points, not yet evidence-backed
-  for this specific checkpoint/ControlNet combination. Internal service
-  settings only — never part of the R3 HTTP contract, never accepted
-  from or echoed to a caller. Phase 2 must revise based on measured
-  output quality and real generation runtime.
+  (`config.py`) — internal defaults used in the verified run but not
+  established as quality-optimal. They are never part of the service's HTTP
+  contract and are never accepted from or echoed to a caller.
 - **The base pipeline's own (retained, not disabled) safety checker's
   real behavior** on genuine room-photo generations — whether it ever
   false-flags ordinary content, and the real latency/VRAM cost of
   running it, are both unmeasured. `safety_checker=None` is not used;
-  see pipeline.py's own docstring for why, and only concrete Phase 2 T4
+  see pipeline.py's own docstring for why, and only concrete T4
   memory evidence should reopen that decision.
 - **Generation timing** against the backend's 180s client timeout
-  (`image_gen_request_timeout_s`) — expected to be comfortably
-  sufficient based on typical SD1.5/T4 timings, but not yet measured for
-  real.
+  (`image_gen_request_timeout_s`) — the verified end-to-end run completed
+  within the configured timeout, but that single run does not establish a
+  general latency bound.
 
-## Real Phase 2 evidence (2026-08-19) — evidence boundary, quality pilot, and next steps
+## Verified runtime and quality evidence (2026-08-19)
 
 **Verified evidence only, stated precisely:**
 - Models loaded; both local and public `/health` reported ready.
@@ -230,7 +227,7 @@ except where a specific real-run finding is noted:
 - **The post-fix journey was then verified end to end through the real
   frontend**, with the permanent `extract_depth_map()` active and no
   temporary monkeypatch: local and public `/health` passed and the
-  browser rendered a generated result. The R3 HTTP contract, the
+  browser rendered a generated result. The HTTP contract, the
   orchestration and frontend delivery are therefore confirmed working —
   the compatibility failure is closed.
 
@@ -267,7 +264,7 @@ actual scope — "tidy/declutter in place" versus "physically move
 furniture" — is a real, undecided product question this finding raises,
 not one this document resolves.
 
-### Phase 3a — enabling feasibility experiment (not yet run)
+### Bounded masked-editing feasibility experiment (not yet run)
 
 Before any contract change is designed, a small, bounded experiment must
 directly test, inside Colab, with manually reviewed fixture data:
@@ -285,13 +282,13 @@ strength 1.0 and call it preservation":**
 - **remove** — declutter an item out of its own masked region;
 - **locally tidy** — regenerate content within an item's existing
   footprint;
-- **move** — deliberately **deferred to Phase 3b**; requires target
+- **move** — deliberately **deferred to later relocation work**; requires target
   geometry that does not exist yet.
 
 Two predetermined, different seeds only if repeat testing is judged
 necessary — repeating the same seed is not a robustness test.
 
-**Phase 3a pass criteria (all six, falsifiable):**
+**Pass criteria for the masked-editing experiment (all six, falsifiable):**
 1. Exact zero pixel difference outside the finalized composite mask.
 2. No new architectural openings or unrelated furniture anywhere in the
    output.
@@ -302,12 +299,12 @@ necessary — repeating the same seed is not a robustness test.
 6. At most one predefined retune permitted; no open-ended parameter
    search.
 
-### Phase 3b — full Reorganise (only if Phase 3a passes)
+### Possible full Reorganise follow-up
 
-Investigate target-position planning and relocation/compositing.
-Requires both source AND target geometry — target geometry does not
-exist anywhere in this project's planning output (`ReorganisePlan`/
-`ReorganiseZone`) today, and remains unsolved; not answered here.
+Only if the masked-editing experiment passes, investigate target-position
+planning and relocation/compositing. This requires both source AND target
+geometry — target geometry does not exist anywhere in this project's planning
+output (`ReorganisePlan`/`ReorganiseZone`) today, and remains unsolved.
 
 ### Fallback
 
@@ -325,8 +322,8 @@ A future v2 contract would likely require, **at minimum** (this list is
 not claimed sufficient on its own, and no schema is finalized here):
 `item_id`; effective label; normalized source box; an explicit operation
 (`preserve`/`remove`/`locally_tidy`/`move`); target geometry for `move`,
-once/if Phase 3b makes it available. No v2 schema is designed or
-implemented until Phase 3a's evidence justifies it.
+if later relocation work makes it available. No v2 schema is designed or
+implemented until the masked-editing evidence justifies it.
 
 ## Resolution policy (Option A)
 
@@ -382,11 +379,10 @@ Open the same notebook file through the extension, connect to a GPU
 runtime, and run cells top to bottom — you'll be prompted (masked input)
 for any secret the extension doesn't expose via `userdata`.
 
-### Expected manual procedure (Phase 2)
+### Expected manual procedure
 1. Run all cells; the CUDA check fails fast if no GPU is attached.
-2. Wait for the model-loading cell to finish (real download + GPU load
-   — timing not yet measured for real; expect several minutes on first
-   run for a fresh weights download).
+2. Wait for the model-loading cell to finish; a fresh runtime may take
+   several minutes to download and load the model weights.
 3. The server-start cell starts uvicorn in a background thread, then
    **polls the local `/health` endpoint with a bounded number of short,
    sanitized retries** (never a fixed fire-and-hope wait) until it
@@ -439,10 +435,9 @@ idle-disconnect ending a session mid-test.
 from the repo root) verify the contract, validation, concurrency, and
 error-sanitization logic entirely with fakes — **no GPU, no model, no
 network call, anywhere in that test suite.** They prove the HTTP layer
-and request/response contract are correct. They cannot prove, and do not
-claim to prove: that the configured model identifiers actually load,
-that MiDaS's output is genuinely compatible with the ControlNet
-checkpoint, that a real image comes out the other end, or that the
-`prompt`/`negative_prompt` are genuinely used by the diffusion pipeline
-(as opposed to just hashed-and-echoed correctly) — only real Colab
-inference (Phase 2) can prove those.
+and request/response contract are correct, but do not by themselves prove
+that the configured models load, MiDaS aligns with ControlNet, or a real
+image is returned. Those runtime properties were verified separately in
+the recorded real Colab/frontend run. Neither the local tests nor that
+bounded evidence establish semantic prompt sensitivity, acceptable output
+fidelity, or general model quality.

@@ -658,7 +658,7 @@ def test_config_rejects_out_of_range_guidance_scale(bad_scale):
 
 
 def test_generation_settings_are_not_part_of_the_response_contract():
-    # Internal service settings only -- never an R3 HTTP-contract field.
+    # Internal service settings only, never an HTTP response field.
     from colab_service.schemas import RESPONSE_KEYS
 
     assert "num_inference_steps" not in RESPONSE_KEYS

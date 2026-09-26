@@ -3,14 +3,11 @@
 # no reason for the two to share a pin set). Installed by
 # ClearSpace_Image_Gen.ipynb inside a real Colab GPU session.
 #
-# PROVISIONAL — see colab_service/README.md's "Provisional items
-# requiring Phase 2 verification". No version has been confirmed to
-# actually install cleanly, or to be compatible with Colab's
-# pre-installed CUDA/torch stack, on a real GPU runtime yet. Deliberately
-# left UNPINNED here rather than pinning numbers that have not been
-# verified — pinning a fabricated-looking version would be more
-# misleading than useful. Phase 2 must pin real, tested versions once a
-# real Colab session has installed and run these successfully.
+# The service follows Colab's pre-installed CUDA/torch stack. The verified run
+# used diffusers 0.40.0, but the other resolved versions were not recorded, so
+# there is not enough evidence for a complete reproducible pin set. Keep these
+# entries unpinned until a future incompatibility motivates testing and
+# recording a complete compatible pin set.
 
 fastapi
 uvicorn[standard]
