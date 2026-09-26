@@ -1,18 +1,7 @@
-"""
-Environment-only configuration for the Colab image-generation service.
+"""Environment-only configuration for the Colab service.
 
-Deliberately never imports google.colab anywhere in this file — reading
-Colab Secrets stays confined to the notebook's own cells (see
-ClearSpace_Image_Gen.ipynb), which translate them into plain environment
-variables before this module ever runs. That is what keeps this module
-(and everything that imports it) importable and unit-testable on a plain
-machine with no Colab runtime, no GPU, and no `google.colab` package
-installed at all — required for colab_service/tests/ to run locally.
-
-Single source of truth for anything that varies between a real Colab
-session and a local test run — mirrors backend/app/config.py's own
-"nothing reads os.environ directly, import Settings from here instead"
-convention, applied to this separate service.
+The notebook maps Colab Secrets to environment variables, keeping this module
+independent of Colab APIs and locally testable.
 """
 
 from __future__ import annotations
@@ -40,29 +29,18 @@ class Settings(BaseSettings):
     # documented for sd-controlnet-depth and used by the verified runtime.
     midas_model_id: str = "lllyasviel/Annotators"
 
-    # Identifies THIS implementation (distinct from api_version, which is
-    # the contract/shape version) — echoed in every /health and /generate
-    # response. The development label remains separate from the verified
-    # runtime status and does not claim acceptable output fidelity.
+    # Implementation version, distinct from the HTTP contract version.
     service_version: str = "colab-dev-0.1"
 
     # --- resolution policy (see resolution.py) ---
     resolution_pixel_budget: int = 512 * 512
 
     # --- internal generation settings (see pipeline.py) ---
-    # These defaults were used in the verified Colab run but are not
-    # established as quality-optimal. They are not part of the HTTP contract:
-    # callers cannot supply them, and responses do not echo them.
+    # Verified runtime defaults, not established as quality-optimal.
     num_inference_steps: int = Field(default=30, ge=1, le=150)
     guidance_scale: float = Field(default=7.5, gt=0.0, le=30.0)
 
-    # --- read by the notebook's own ngrok-launch cell, not by app.py's
-    # core request-handling logic. Kept here anyway so every piece of
-    # this service's configuration has exactly one source of truth,
-    # matching backend/app/config.py's own convention of centralizing
-    # ALL settings in one Settings class regardless of which module
-    # consumes which field. Populated from Colab Secrets, via plain
-    # environment variables — see module docstring. ---
+    # --- notebook tunnel settings, populated from environment variables ---
     ngrok_authtoken: str | None = None
     ngrok_domain: str | None = None
 

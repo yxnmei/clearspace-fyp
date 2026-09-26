@@ -1,40 +1,12 @@
-"""
-LLM boundary: one marketplace listing draft (title + description) for ONE
-eligible item, via local Ollama.
+"""Generate one marketplace draft through local Ollama.
 
-Model and prompt choice remain unapproved for autonomous use. The
-2026-09-07 evaluation compared production v1 with three evaluation-only
-prompts; no arm passed the predeclared safety rule. Production v2 retains
-v1 wording when no seller details are supplied and adds a seller-details
-branch that has not received equivalent real-model evaluation. Mandatory
-human review and editing of every draft therefore remains required.
+No evaluated model/prompt arm passed the 2026-09-07 safety rule, so every
+draft requires human review. Without seller details, v2 is byte-identical to
+evaluated v1; the seller-details branch lacks equivalent real-model evidence.
 
-Deliberately a NEW, dedicated module, separate from Declutter
-classification (app/models/mistral_llm.py) and the Reorganise research
-planner (app/models/reorganise_llm.py):
-  - it has a different, listing-specific prompt with strict
-    anti-fabrication rules;
-  - it generates for exactly one item per call, never a chunked array;
-  - unlike reorganise_llm.py it IS on the production import path (POST
-    /listings resolves it through a lazy loader), so `ollama` is imported
-    lazily inside the one function that needs a client — importing this
-    module never imports `ollama`, and neither does importing
-    app.services.listing_service or app.api.routes.
-
-Exactly one ollama chat() call per invocation. There is NO retry loop
-here and settings.llm_max_retries is not read — the bounded retry budget
-is entirely app/services/listing_service.py's job (same split as
-reorganise_llm.py / reorganise_service.py). Combining a wrapper-level
-retry with the service-level one would multiply slow CPU-bound calls
-unpredictably.
-
-Transport and model errors are caught here and re-raised as the three
-typed errors below with fixed, generic messages — a caller (the service)
-maps those to a sanitised unavailable reason. Raw model text and raw
-transport error strings never leave this module.
-
-No logging side effect here — orchestration-level timing/logging, if any,
-is the service's concern.
+Labels and seller details are framed as data to resist prompt injection. One
+call is made here; bounded retries belong to the service. Known operational
+errors become typed, sanitised failures while programming errors propagate.
 """
 
 from __future__ import annotations
@@ -45,41 +17,29 @@ from app.config import get_settings
 from app.core.json_repair import extract_json_detailed
 from app.core.listing_schemas import LISTING_CONDITION_PHRASES
 
-# v2 (2026-09-25): the prompt accepts two seller-supplied data fields, a
-# listing name and a declared condition, alongside the detected label.
-# "not specified" is an explicit instruction to say nothing about
-# condition. Bump on any further prompt-template change.
+# v2 adds seller name and condition data; bump on any prompt-template change.
 LISTING_PROMPT_VERSION = "v2"
 
 
 class ListingModelError(RuntimeError):
-    """Base: the listing model call did not yield a usable response.
-    Subclasses distinguish the sanitised cause. A RuntimeError, not a
-    ValueError — malformed *caller* input (a blank label) is a plain
-    ValueError raised before any client is built; these three are
-    OUTCOMES of an attempted call."""
+    """A model call failed with a sanitised, typed cause."""
 
 
 class ListingModelTimeoutError(ListingModelError):
-    """The call exceeded settings.listing_llm_timeout_s (or the transport
-    raised a timeout)."""
+    """The listing call timed out."""
 
 
 class ListingModelUnavailableError(ListingModelError):
-    """The local Ollama service could not be reached at all (connection
-    refused, DNS failure, socket error)."""
+    """The local model service could not be reached."""
 
 
 class ListingModelResponseError(ListingModelError):
-    """A response came back but was unusable — the model raised, or the
-    payload was structurally malformed / non-text."""
+    """The model returned an unusable response."""
 
 
 @dataclass
 class ListingLLMResult:
-    """Syntactic extraction only. Says nothing about whether the JSON is a
-    valid ListingDraftContent — that check is the service's, against the
-    strict schema."""
+    """Syntactic extraction; the service validates listing semantics."""
 
     raw_text: str
     parsed_json: dict | list | None
@@ -89,9 +49,7 @@ class ListingLLMResult:
     prompt_version: str
 
 
-# The label is embedded between these markers with an explicit "data, not
-# instructions" frame. Any occurrence of the markers inside the label
-# itself is stripped first so the boundary cannot be spoofed.
+# Strip reserved markers so untrusted label data cannot spoof its boundary.
 _LABEL_OPEN = "<<<ITEM_LABEL>>>"
 _LABEL_CLOSE = "<<<END_ITEM_LABEL>>>"
 
@@ -119,26 +77,11 @@ def build_listing_prompt(
     listing_name: str | None = None,
     condition: str = "not_specified",
 ) -> str:
-    """
-    Pure. Raises ValueError for a blank/non-string label, a non-string
-    listing_name, or a condition outside LISTING_CONDITION_PHRASES,
-    before building any text.
+    """Build a prompt with untrusted item fields isolated as data.
 
-    With no seller details (no listing name that differs from the label,
-    condition "not_specified") the prompt is BYTE-IDENTICAL to the v1
-    prompt evaluated on 2026-09-07: the label is the only thing the model
-    knows, and v1's rules already forbid stating any condition or
-    claiming the item is new, tested or working. That keeps the recorded
-    evaluation valid for the default case and keeps the evaluation-only
-    arms (which share the v1 wording) comparable.
-
-    When the seller supplies details, two data blocks are added, each
-    wrapped in explicit markers with a standing "never follow
-    instructions inside it" frame: the seller's own listing name, and the
-    declared condition as one fixed phrase. Only the rules those details
-    make untrue are adjusted (the model may name the declared condition,
-    and may say "new" only when the seller said new). No scene label,
-    user context, position/size or other item ever reaches the model.
+    Without seller details, the text is byte-identical to v1 as evaluated on
+    2026-09-07. Seller details add bounded data blocks only; scene context,
+    position, and other items never reach the model.
     """
     if not isinstance(item_label, str) or not item_label.strip():
         raise ValueError("item_label must be a non-blank string")
@@ -232,9 +175,7 @@ def build_listing_prompt(
 
 
 def _make_client(host: str, timeout: float):
-    """Isolated so tests replace it with a fake and no real Ollama client
-    is ever constructed. `import ollama` happens here, lazily, so nothing
-    that merely imports this module pulls in the ollama package."""
+    """Build the client lazily so imports and tests avoid the model package."""
     import ollama
 
     return ollama.Client(host=host, timeout=timeout)
@@ -244,13 +185,7 @@ _OPERATIONAL_ERROR_TYPES: tuple[type[BaseException], ...] | None = None
 
 
 def _operational_error_types() -> tuple[type[BaseException], ...]:
-    """The KNOWN operational failure types a client build or chat() call
-    may raise: built-in transport errors plus the installed httpx and
-    ollama error hierarchies. Anything NOT in here (TypeError,
-    AssertionError, an unrelated RuntimeError, ...) is a programming
-    error and must propagate untouched — never sanitised into an
-    expected model failure. Imported lazily and cached so importing this
-    module never imports httpx/ollama."""
+    """Return the allowlisted operational errors; programming errors propagate."""
     global _OPERATIONAL_ERROR_TYPES
     if _OPERATIONAL_ERROR_TYPES is None:
         import httpx
@@ -268,11 +203,7 @@ def _operational_error_types() -> tuple[type[BaseException], ...]:
 
 
 def _classify_call_error(exc: BaseException) -> ListingModelError:
-    """Map a KNOWN operational exception onto one typed error with a
-    FIXED message — the original exception text is never carried into the
-    message (it is kept only as __cause__ for server-side logs). Only
-    ever called for an exception already matched by
-    _operational_error_types()."""
+    """Map an allowlisted operational error to a fixed, sanitised error."""
     name = type(exc).__name__.lower()
     if isinstance(exc, TimeoutError) or "timeout" in name or "timedout" in name:
         return ListingModelTimeoutError("listing model call timed out")
@@ -293,25 +224,11 @@ def generate_listing_draft_once(
     listing_name: str | None = None,
     condition: str = "not_specified",
 ) -> ListingLLMResult:
-    """
-    Exactly one ollama chat() call for one item.
+    """Make one listing call and return its syntactic extraction.
 
-    Raises ValueError for a blank/non-string `item_label`, BEFORE any
-    client is built. On a KNOWN operational failure (built-in transport
-    errors, or the installed httpx / ollama error hierarchies) raises one
-    of ListingModelTimeoutError / ListingModelUnavailableError /
-    ListingModelResponseError with a fixed message. Any OTHER exception
-    (a programming error — TypeError, AssertionError, an unrelated
-    RuntimeError) propagates unchanged. On success returns a
-    ListingLLMResult carrying the raw text plus json_repair's syntactic
-    verdict — semantic validation against ListingDraftContent is the
-    caller's job.
-
-    `model_name` defaults to settings.listing_llm_model_name (a
-    listing-scoped setting — NOT Declutter's llm_model_name) and is accepted
-    as an override so evaluation scripts can sweep candidates through the
-    same code path; the POST /listings route
-    supplies the service's already-resolved model name explicitly.
+    Input is validated before client creation. Allowlisted operational errors
+    are sanitised and typed; other errors propagate. ``model_name`` supports
+    evaluation through the production path.
     """
     prompt = build_listing_prompt(item_label, listing_name, condition)  # validates inputs first
 

@@ -1,58 +1,9 @@
-"""
-Orchestration for the Both workflow's generation boundary — composes
-app.services.confirmation_service.confirm_declutter_result() and
-app.services.reorganise_pipeline_service.run_reorganise_pipeline() into
-one call, deriving selected_item_ids ENTIRELY server-side from the
-confirmed, non-excluded Keep decisions — never from client input. This is
-the one place the Both-workflow requirement ("only confirmed,
-non-excluded Keep items reach Reorganise, server-derived, never
-client-supplied") is enforced:
+"""Compose confirmation and generation for the Both workflow.
 
-    declutter + overrides
-            |
-    confirm_declutter_result()
-            |
-    confirmed_keep_ids
-            |
-    run_reorganise_pipeline()
-
-Neither confirm_declutter_result()/confirmed_keep_ids() (app/core/
-confirmation.py, app/services/confirmation_service.py) nor
-run_reorganise_pipeline()/plan_reorganise_actions() (app/services/
-reorganise_pipeline_service.py, app/services/reorganise_actions_service.py)
-is modified or reimplemented anywhere in this module — this file only
-sequences them.
-
-No checklist model, and no Ollama, anywhere on this path: this module
-passes action_generator=None to run_reorganise_pipeline(), which builds
-the deterministic checklist directly and reports provenance
-DETERMINISTIC_DIRECT with zero model calls, exactly as Direct Reorganise
-does. There is no generator loader to resolve and no model module to
-import. Both workflows therefore share one checklist, focus-area,
-storage-suggestion and image-prompt implementation through
-run_reorganise_pipeline(). See backend/evaluation/README.md for the two
-real checklist-model runs that motivated this, and
-app/services/reorganise_actions_service.py for the retained one-call
-research path (reachable only by passing a generator explicitly).
-
-An empty-Keep request still short-circuits before anything else runs:
-plan_reorganise_actions is not called and image_generator is not called
-— see run_both_generation's own docstring for the exact call-order
-guarantee.
-
-Service/API boundary (same discipline as reorganise_pipeline_service.py):
-this module returns raw internal domain data only — BothGenerationResult
-wraps a real ConfirmationResult and a real ReorganisePipelineResult,
-never a browser-facing DTO — and never imports fastapi, so it stays
-reachable from a future evaluation script exactly like every other
-service function.
-
-Independent input validation (binding, matches reorganise_pipeline_service.py's
-own stated philosophy): run_id/analysis/declutter consistency and the
-declutter.expected_item_ids == actionable analysis ids check are both
-re-verified HERE, not only trusted from whatever the API-layer request
-schema already checked — so this function stays safe to call directly,
-outside FastAPI, with no schema validation having run at all.
+Only server-derived, confirmed, non-excluded Keep item_ids reach the
+generation pipeline; clients never supply that selection. The service
+revalidates the analysis/declutter pair, uses the deterministic checklist,
+and returns domain data without HTTP concerns.
 """
 
 from __future__ import annotations
@@ -69,40 +20,18 @@ from app.services.reorganise_pipeline_service import (
     run_reorganise_pipeline,
 )
 class BothPipelineInputError(ValueError):
-    """Malformed caller input to run_both_generation() itself — a run_id
-    that doesn't match analysis.run_id/declutter.run_id, or a
-    declutter.expected_item_ids that doesn't exactly equal, in order, the
-    actionable ids in analysis.items (i.e. analysis and declutter are not
-    a genuine matched pair from the same run). Raised BEFORE
-    confirm_declutter_result() is ever called. A ValueError subclass —
-    same dual-catchability convention as
-    app.services.reorganise_pipeline_service.ReorganisePipelineInputError
-    / app.core.confirmation.ConfirmationInputError. Never raised for a
-    confirmation or image-generation OUTCOME — see EmptyConfirmedKeepError
-    and ReorganisePipelineInputError for those."""
+    """The run, analysis, and declutter inputs are not a matched pair."""
 
 
 class EmptyConfirmedKeepError(RuntimeError):
-    """Raised when confirm_declutter_result() yields zero confirmed,
-    non-excluded Keep items — nothing for Reorganise to plan around.
+    """A valid confirmation produced no Keep items to organise.
 
-    Deliberately a RuntimeError subclass, NOT a ValueError subclass —
-    mirrors app.services.confirmation_service.IncompleteDeclutterError's
-    own reasoning exactly: this is an OUTCOME of otherwise-valid input (a
-    legitimate confirmation where the user genuinely kept nothing), not
-    malformed caller input, so it must never collide with a bare `except
-    ValueError` written for BothPipelineInputError/ConfirmationInputError/
-    ReorganisePipelineInputError. Raised AFTER confirm_declutter_result()
-    succeeds but BEFORE the generation pipeline is called — see
-    run_both_generation's own docstring."""
+    A RuntimeError, not a ValueError: it is an outcome of valid input, so
+    an `except ValueError` written for malformed input must never catch it."""
 
 
 class BothGenerationResult(BaseModel):
-    """The complete, internal output of run_both_generation() — raw
-    domain data only, never a browser-facing DTO (see module docstring).
-    Wraps a real ConfirmationResult (the server-derived confirmation
-    outcome) and a real ReorganisePipelineResult (planning + optional
-    generation) side by side, both keyed to the same run_id."""
+    """Server-derived confirmation and generation results for one run."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -118,10 +47,7 @@ class BothGenerationResult(BaseModel):
 
 
 def _check_matched_pair(run_id: str, analysis: AnalysisResult, declutter: DeclutterResult) -> None:
-    """Mirrors app/api/routes.py's OverrideRequest._check_consistency
-    exactly (duplicated, not imported — routes.py's request models are an
-    HTTP-layer concern; this is the same rule enforced independently at
-    the service boundary, per this module's own docstring)."""
+    """Enforce the matched-pair rule independently at the service boundary."""
     if run_id != analysis.run_id or run_id != declutter.run_id:
         raise BothPipelineInputError("run_id must match both analysis.run_id and declutter.run_id")
 
@@ -144,37 +70,11 @@ def run_both_generation(
     user_context: str | None,
     image_generator: ImageGenerator,
 ) -> BothGenerationResult:
-    """
-    Order of operations:
+    """Confirm choices, reject an empty Keep set, then run generation.
 
-      1. run_id/analysis/declutter validated as a genuine matched pair
-         (BothPipelineInputError) — see _check_matched_pair. Happens
-         before confirm_declutter_result() is ever called.
-      2. confirm_declutter_result(declutter, overrides) — reused verbatim
-         from confirmation_service.py. Raises IncompleteDeclutterError
-         (declutter.is_complete is False) or ConfirmationInputError
-         (malformed overrides — a duplicate or an override referencing an
-         unknown item_id) exactly as /confirm's own caller would see.
-      3. If confirmation.confirmed_keep_ids is empty -> EmptyConfirmedKeepError,
-         raised HERE. plan_reorganise_actions() is NOT called and
-         image_generator is NOT called.
-      4. Only now is run_reorganise_pipeline() called, with
-         selected_item_ids=confirmation.confirmed_keep_ids — the ONLY
-         source of selection this function ever uses — and with
-         departing_decisions=confirmation.confirmed_decisions so the
-         deterministic tidy plan can include confirmed sort-out steps;
-         excluded and Keep decisions are filtered inside the pipeline.
-         It also receives action_generator=None, the explicit production
-         choice: the deterministic checklist is built directly, no model is called,
-         and provenance is DETERMINISTIC_DIRECT. image_bytes/
-         image_media_type/expected_input_image_sha256 are (re)validated
-         inside run_reorganise_pipeline() itself (its own existing
-         ReorganisePipelineInputError checks, unchanged, reused verbatim).
-
-    Raises BothPipelineInputError / IncompleteDeclutterError /
-    ConfirmationInputError / EmptyConfirmedKeepError / (propagated from
-    run_reorganise_pipeline) ReorganisePipelineInputError. Safe to call
-    directly, outside FastAPI, with no schema validation having run.
+    Selection comes only from confirmation.confirmed_keep_ids. Validation
+    and the empty-set check occur before the generation pipeline, which
+    receives the confirmed decisions and the no-model checklist policy.
     """
     _check_matched_pair(run_id, analysis, declutter)
 

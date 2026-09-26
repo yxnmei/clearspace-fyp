@@ -1,32 +1,10 @@
-"""
-Typed transport client for the remote Colab image-generation service —
-the backend-to-Colab HTTP boundary only.
+"""Strict transport client for the remote Colab generation service.
 
-The version-controlled Colab service implements this contract, and the
-backend-to-Colab runtime path has completed a real GPU smoke test. This
-module remains transport-only: it validates every byte crossing the
-boundary but does not establish output fidelity or item preservation.
-
-`image_gen_base_url` being a reserved/static ngrok domain (config.py) is
-intended to avoid needing rediscovery every session — it is a
-configuration choice, not proof any service is listening there.
-
-Two things exist here specifically to avoid v1's dead-tunnel failure mode
-(a raw connection error surfacing mid-demo, from not designing for an
-already-known risk):
-  1. check_health() — a fast, separate, strictly-validated call the
-     frontend can hit proactively through GET /image-gen/health rather
-     than only discovering the tunnel is dead when a user clicks
-     Reorganise.
-  2. generate() always calls check_health() first and raises
-     ImageGenUnavailableError in milliseconds when it fails, instead of
-     hanging until image_gen_request_timeout_s expires or POSTing to a
-     service that can't produce a compatible result anyway.
-
-Never logs image bytes, base64, prompts, or secrets — this module has no
-logging calls at all, and does not use stage_timer (that would write to
-logs/runs.jsonl on every call, which this file's own unit tests, mocked-
-HTTP-only, must never do).
+A static ngrok domain avoids rediscovery but does not prove a service is
+listening. Health is checked before generation; inputs and responses are
+validated, and errors are sanitised without logging images, prompts, or secrets.
+Runtime integration is verified, but fidelity and item preservation are not.
+Echoed hashes establish request correlation only, not authentication.
 """
 
 from __future__ import annotations
@@ -47,19 +25,12 @@ from app.config import get_settings
 from app.core.image_validation import validate_image_bytes
 from app.core.schemas import NonEmptyStr
 
-# Transport contract version — code-level, deliberately NOT configurable
-# through .env: this identifies the SHAPE of the request/response this
-# client speaks, not an environment-specific setting. Bump only alongside
-# an actual contract change, together with the Colab implementation that
-# satisfies it.
+# This identifies the contract shape, not environment configuration.
 IMAGE_GEN_API_VERSION = "v1"
 
 _SUPPORTED_MEDIA_TYPES: dict[str, str] = {"image/png": "PNG", "image/jpeg": "JPEG"}
 
-# Documented small tolerance for comparing a float we sent against the
-# same float echoed back by the remote service — accounts for JSON
-# round-tripping (e.g. through a language/framework that reformats
-# floats), never intended to mask a genuinely different value.
+# Allow only JSON round-trip differences in echoed floats.
 _FLOAT_COMPARISON_TOLERANCE = 1e-6
 
 _HASH_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -68,11 +39,7 @@ _Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 _RUN_ID_ADAPTER: TypeAdapter[str] = TypeAdapter(NonEmptyStr)
 
-# The complete, exact set of top-level keys a /generate response may
-# contain. Policy (deliberately explicit, not silent): an unexpected
-# extra field is REJECTED, not ignored — contract drift between this
-# client and the Colab implementation should be loud, not
-# silently tolerated. See _parse_generation_response.
+# Reject extra fields so backend/Colab contract drift is visible.
 _EXPECTED_RESPONSE_KEYS: frozenset[str] = frozenset(
     {
         "api_version",
@@ -97,18 +64,11 @@ _EXPECTED_RESPONSE_KEYS: frozenset[str] = frozenset(
 
 
 class ImageGenError(RuntimeError):
-    """Base class for every image-generation transport error. Every
-    message here is bounded and sanitized — never a raw remote response
-    body, base64, prompt text, image bytes, ngrok URL with credentials/
-    query data, or a raw traceback. The original exception (when one
-    exists) is preserved via `raise ... from exc` for local debugging,
-    never included in the message text itself."""
+    """Base error with bounded messages that never expose remote bodies or inputs."""
 
 
 class ImageGenUnavailableError(ImageGenError):
-    """The health check failed, or the remote service reported an
-    incompatible API version / missing depth-ControlNet capability —
-    always raised BEFORE any POST is attempted."""
+    """Health or compatibility failed before generation was submitted."""
 
 
 class ImageGenTimeoutError(ImageGenError):
@@ -116,16 +76,11 @@ class ImageGenTimeoutError(ImageGenError):
 
 
 class ImageGenRequestError(ImageGenError):
-    """A POST transport failure other than a timeout (e.g. a connection
-    error) — never used for a timeout specifically, see
-    ImageGenTimeoutError."""
+    """A generation transport failure other than timeout."""
 
 
 class ImageGenServiceError(ImageGenError):
-    """The remote service responded to the POST with a non-2xx status.
-    `status_code` is exposed as a typed attribute for callers that need
-    it, while the message itself stays sanitized (never the raw response
-    body)."""
+    """A non-2xx generation response with status but no raw body."""
 
     def __init__(self, message: str, *, status_code: int) -> None:
         super().__init__(message)
@@ -133,25 +88,14 @@ class ImageGenServiceError(ImageGenError):
 
 
 class ImageGenResponseError(ImageGenError):
-    """The remote service returned a 2xx response that is malformed,
-    internally inconsistent, contract-incompatible, or not depth-
-    conditioned. This is the boundary that validates every field of an
-    untrusted remote payload — see _parse_generation_response."""
+    """A malformed, inconsistent, or incompatible successful response."""
 
 
 # --- result -----------------------------------------------------------------
 
 
 class GenerationResult(BaseModel):
-    """A fully validated, trusted /generate response. Bytes stay internal
-    and raw — base64 conversion for the browser is the API layer's
-    concern, not this transport client's.
-
-    Immutable (frozen) and field/cross-field validated so a contradictory
-    instance cannot be directly constructed where it's practical to catch
-    (bounded numeric ranges, exact hash format, depth_map_used pinned to
-    literal True, and a re-check that image_media_type genuinely matches
-    the decoded image_bytes)."""
+    """A validated generation response; base64 conversion stays at the API layer."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -211,9 +155,7 @@ def _is_finite_number(value: Any) -> bool:
 
 
 def _normalized_base_url(settings: Any) -> str:
-    """Strips exactly the trailing slash a configured base URL might
-    carry, so a request URL never ends up containing `//health` or
-    `//generate`."""
+    """Remove a trailing slash before appending endpoint paths."""
     return settings.image_gen_base_url.rstrip("/")
 
 
@@ -225,14 +167,7 @@ def _validate_run_id(run_id: Any) -> str:
 
 
 def _validate_image(image_bytes: Any, image_media_type: Any) -> None:
-    """Delegates to app.core.image_validation.validate_image_bytes — the
-    same Pillow decode/verify/format-match logic the Reorganise pipeline
-    uses on the resubmitted original image before planning (see that
-    module's own docstring for why it's shared rather than duplicated).
-    ImageValidationError is a ValueError subclass, so this function's own
-    documented contract ("raises ValueError") is unchanged; every caller
-    of generate() that already catches ValueError keeps working exactly
-    as before."""
+    """Apply the shared decode, verification, and media-type checks."""
     validate_image_bytes(image_bytes, image_media_type)
 
 
@@ -261,25 +196,10 @@ def _validate_seed(value: Any) -> None:
 
 
 def check_health() -> bool:
-    """
-    Lightweight GET against the remote service's /health endpoint. Called
-    both by GET /image-gen/health (so the UI can show availability
-    up front) and internally by generate() before committing to a full
-    request. Uses image_gen_health_timeout_s, deliberately short — a slow
-    health check defeats the point of having one.
+    """Return whether the short health check proves contract compatibility.
 
-    Returns False (NEVER raises) for: a timeout, any
-    requests.RequestException, a non-2xx status, invalid or non-object
-    JSON, status != "ok", a wrong api_version, a blank/missing
-    service_version, missing capabilities, or capabilities.depth_controlnet
-    not exactly True. Returns True only for a fully valid, compatible
-    response.
-
-    Status-code check is deliberately `200 <= status_code < 300`, not
-    `resp.ok` — `requests.Response.ok` is True for the WHOLE `< 400`
-    range, including 3xx redirects (e.g. an ngrok/reverse-proxy redirect),
-    which is not a successful health response and must not be treated as
-    one.
+    Use strict 2xx status because the library's convenience property also
+    treats redirects as successful.
     """
     settings = get_settings()
     base_url = _normalized_base_url(settings)
@@ -327,10 +247,7 @@ def _parse_generation_response(
     expected_conditioning_scale: float,
     expected_seed: int,
 ) -> GenerationResult:
-    """Validates a 2xx /generate response against the full contract (see
-    module-level docs) and returns a trusted GenerationResult, or raises
-    ImageGenResponseError — never a raw exception, never the response
-    body in the message."""
+    """Validate a successful response without exposing its raw body."""
     try:
         data = resp.json()
     except ValueError as exc:
@@ -426,10 +343,7 @@ def _parse_generation_response(
     if not isinstance(prompt_sha256, str) or not _HASH_HEX_RE.fullmatch(prompt_sha256):
         raise ImageGenResponseError("Image generation service reported a malformed prompt_sha256.")
     if prompt_sha256 != expected_prompt_sha256:
-        # This proves request correlation ONLY — that the response's hash
-        # matches the hash of what THIS client sent. It does not, and
-        # cannot, prove the remote diffusion pipeline actually used the
-        # prompt when generating the image; see the module contract above.
+        # A matching hash proves correlation, not that generation used the prompt.
         raise ImageGenResponseError("Image generation service's prompt_sha256 does not match the request.")
 
     input_image_sha256 = data["input_image_sha256"]
@@ -460,10 +374,7 @@ def _parse_generation_response(
             generation_ms=float(generation_ms),
         )
     except ValidationError as exc:
-        # Every field above was already individually checked against
-        # untrusted response data — a failure here means the checks above
-        # missed something about that SAME untrusted data, not an
-        # internal caller defect, so it is still an ImageGenResponseError.
+        # Final validation failures still describe the untrusted response.
         raise ImageGenResponseError("Image generation service response failed final validation.") from exc
 
 
@@ -480,29 +391,11 @@ def generate(
     controlnet_conditioning_scale: float | None = None,
     seed: int | None = None,
 ) -> GenerationResult:
-    """
-    Validates every caller input (see the _validate_* helpers) BEFORE any
-    health check or HTTP call — a malformed call never reaches the
-    network at all. Then calls check_health(); a failed/incompatible
-    health check raises ImageGenUnavailableError and no POST is ever
-    made. Only then does this POST to `{base_url}/generate` (JSON body,
-    not multipart), using settings.image_gen_request_timeout_s, and
-    validate the response against the full contract (see
-    _parse_generation_response) before returning a trusted
-    GenerationResult.
+    """Validate inputs, require health, submit once, and validate the result.
 
-    Known pitfall this guards against: a remote service that silently
-    ignores `prompt` and falls back to a hardcoded default (this happened,
-    unnoticed, in v1).
-    This client always sends the CALLER's exact prompt (only outer
-    whitespace trimmed) and never substitutes anything — a real smoke test
-    must separately confirm the remote pipeline's OWN behavior
-    (a same-image/different-prompt sensitivity check), since this
-    client's own correctness can't prove that on its own.
-
-    Never retries the POST automatically — image generation is expensive,
-    and an automatic retry after a client-side timeout could produce
-    duplicate GPU work on a request that may still complete remotely.
+    The exact caller prompt is sent. Same-image/different-prompt sensitivity
+    remains untested and cannot be proved by echoed hashes. The POST is not
+    retried because a timed-out request may still be consuming GPU work.
     """
     settings = get_settings()
 
@@ -556,8 +449,7 @@ def generate(
     except requests.RequestException as exc:
         raise ImageGenRequestError("Image generation request failed.") from exc
 
-    # Strict 2xx, not resp.ok — see check_health()'s own docstring for why
-    # `.ok` (True for the whole < 400 range, including 3xx) is the wrong check.
+    # Reject redirects as well as error statuses.
     if not (200 <= resp.status_code < 300):
         raise ImageGenServiceError(
             "Image generation service returned an error status.", status_code=resp.status_code

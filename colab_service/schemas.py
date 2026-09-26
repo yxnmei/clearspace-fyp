@@ -1,16 +1,7 @@
-"""
-Request/response contract for GET /health and POST /generate — mirrors
-backend/app/models/image_gen_client.py EXACTLY (that module is the
-authoritative source of truth). Deliberately NOT imported from backend/ — colab_service is a separate,
-independently-deployed runtime with zero dependency on the backend
-package; this file independently re-implements the same bounds so a
-contract drift is caught by comparing the two files side by side during
-review, never hidden behind an accidental cross-import between two
-separately-deployed services.
+"""Pure request/response contract mirroring the independently deployed backend.
 
-Pure pydantic + stdlib + Pillow only — no torch/diffusers/controlnet_aux
-import anywhere in this file, so importing it (and running this file's
-own tests) never loads or downloads a model. See colab_service/__init__.py.
+The runtimes do not cross-import; strict duplicated bounds make contract drift
+visible while keeping schema imports free of model libraries.
 """
 
 from __future__ import annotations
@@ -24,18 +15,13 @@ from typing import Literal
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-# Mirrors app.models.image_gen_client.IMAGE_GEN_API_VERSION exactly — kept
-# in sync manually (see module docstring); bump only alongside an actual
-# contract change on BOTH sides together.
+# Bump this with the backend contract version.
 API_VERSION = "v1"
 
 _SUPPORTED_MEDIA_TYPES: dict[str, str] = {"image/png": "PNG", "image/jpeg": "JPEG"}
 _HASH_HEX_PATTERN = r"^[0-9a-f]{64}$"
 
-# The exact 14 keys a /generate success response must contain — mirrors
-# app.models.image_gen_client._EXPECTED_RESPONSE_KEYS exactly. Used both
-# by build_generate_response()'s own construction and directly by tests
-# that assert on the exact key set.
+# Exact success keys mirrored by the backend client.
 RESPONSE_KEYS: tuple[str, ...] = (
     "api_version",
     "service_version",
@@ -55,11 +41,7 @@ RESPONSE_KEYS: tuple[str, ...] = (
 
 
 def _validate_image_bytes(image_bytes: bytes, image_media_type: str) -> None:
-    """Mirrors backend/app/core/image_validation.py's validate_image_bytes
-    exactly — independently reimplemented, not imported (see module
-    docstring). Raises ValueError (never a raw exception) for bytes that
-    don't decode as a genuine image, or whose actual decoded format
-    doesn't match the claimed image_media_type."""
+    """Require genuine image bytes matching the declared media type."""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         actual_format = img.format
@@ -71,14 +53,7 @@ def _validate_image_bytes(image_bytes: bytes, image_media_type: str) -> None:
 
 
 def _check_strict_finite_number(v: object, field_name: str) -> object:
-    """Mirrors app.models.image_gen_client._is_finite_number()'s exact
-    strictness — isinstance(v, (int, float)) AND NOT isinstance(v, bool)
-    AND math.isfinite(v) — run in a mode="before" validator so it
-    intercepts BEFORE pydantic's own lenient coercion ever gets a chance
-    to silently turn a string like "0.35"/"nan"/"inf" or a bool into a
-    float. Rejects: bool, str, NaN, +-inf. Accepts a genuine int or float
-    (an int is a legitimate finite value for a "float" field here,
-    matching the client's own _is_finite_number contract exactly)."""
+    """Reject bool, strings, and non-finite values before coercion."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise ValueError(f"{field_name} must be a real number, not {type(v).__name__}")
     if not math.isfinite(v):
@@ -87,11 +62,7 @@ def _check_strict_finite_number(v: object, field_name: str) -> object:
 
 
 def _check_strict_int(v: object, field_name: str) -> object:
-    """Mirrors app.models.image_gen_client._validate_seed()'s exact
-    strictness — isinstance(v, int) AND NOT isinstance(v, bool) — run in
-    a mode="before" validator so it intercepts before pydantic's own
-    lenient coercion ever gets a chance to silently turn a string
-    ("42"), a float (42.0), or a bool into an int."""
+    """Require a real integer before Pydantic coercion; bool is an int subclass."""
     if isinstance(v, bool) or not isinstance(v, int):
         raise ValueError(f"{field_name} must be an integer, not {type(v).__name__}")
     return v
@@ -113,13 +84,7 @@ def _decode_strict_base64(value: str, field_name: str) -> bytes:
 
 
 def build_health_response(*, service_version: str) -> dict:
-    """The EXACT compatible /health success body
-    app.models.image_gen_client.check_health() requires — see that
-    function's own docstring for the full list of ways any deviation
-    collapses to `available: False` on the client side. Only ever called
-    once the service is genuinely ready (see app.py's health() handler);
-    this function itself has no notion of readiness, it only builds the
-    shape."""
+    """Build the exact compatible health-success shape."""
     if not isinstance(service_version, str) or not service_version.strip():
         raise ValueError("service_version must be a non-blank string")
     return {
@@ -134,14 +99,7 @@ def build_health_response(*, service_version: str) -> dict:
 
 
 class GenerateRequest(BaseModel):
-    """POST /generate's request body — mirrors
-    app.models.image_gen_client.generate()'s outbound body exactly: the
-    real client always sends exactly these 9 fields (api_version, run_id,
-    prompt, negative_prompt, image, image_media_type, denoise_strength,
-    controlnet_conditioning_scale, seed). extra="forbid" — a request
-    carrying anything else is rejected outright, matching the strict,
-    no-silent-extra discipline this whole contract already uses on both
-    the client's own request AND response validation."""
+    """Strict generation request matching the backend client's payload."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -165,12 +123,7 @@ class GenerateRequest(BaseModel):
     @field_validator("prompt")
     @classmethod
     def _check_prompt(cls, v: str) -> str:
-        # Outer-whitespace normalization only, matching
-        # image_gen_client.py's own _validate_prompt_field convention —
-        # internal content is never touched. The client already trims
-        # before sending; trimming again here is idempotent and keeps
-        # this schema safe to use standalone, not dependent on the
-        # client's own behavior.
+        # Normalise outer whitespace only; preserve prompt content.
         trimmed = v.strip()
         if not trimmed:
             raise ValueError("prompt must not be blank")
@@ -199,11 +152,7 @@ class GenerateRequest(BaseModel):
     @field_validator("seed", mode="before")
     @classmethod
     def _check_seed_strict_type(cls, v: object) -> object:
-        # mode="before" is required to actually catch this — Python's
-        # bool is an int subclass, and pydantic's own lenient coercion
-        # would otherwise silently accept a numeric string ("42") or a
-        # whole-number float (42.0) too (same ordering reason as
-        # app/api/routes.py's GeneratedImagePayload).
+        # Validate before coercion because bool is an int subclass.
         return _check_strict_int(v, "seed")
 
     @field_validator("image")
@@ -214,10 +163,7 @@ class GenerateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_image_matches_media_type(self) -> "GenerateRequest":
-        # Genuine content validation (not just base64 syntax) — the
-        # decoded bytes must actually be an image in the claimed format.
-        # Runs after field-level checks, matching this codebase's
-        # existing two-stage (syntax, then content) validation pattern.
+        # Validate decoded content and declared format after syntax checks.
         decoded = base64.b64decode(self.image)
         _validate_image_bytes(decoded, self.image_media_type)
         return self
@@ -227,14 +173,7 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
-    """The exact 14-field /generate success response — mirrors
-    app.models.image_gen_client._EXPECTED_RESPONSE_KEYS /
-    GenerationResult exactly, field for field. extra="forbid" here is a
-    self-check on THIS service's own code (this class is only ever
-    constructed by build_generate_response() below from already-computed,
-    trusted values, never parsed from untrusted external input) — it
-    exists to catch this service accidentally adding, dropping, or
-    renaming a field, not to validate an adversarial caller."""
+    """Exact success response, with extra fields forbidden to catch drift."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -263,9 +202,7 @@ class GenerateResponse(BaseModel):
     @field_validator("run_id", "service_version", "base_model", "controlnet_model")
     @classmethod
     def _check_not_blank(cls, v: str, info: ValidationInfo) -> str:
-        # Field(min_length=1) alone accepts a whitespace-only string
-        # (e.g. " " has length 1) — this closes that gap explicitly,
-        # matching GenerateRequest's own run_id/prompt blank-checks.
+        # min_length alone accepts whitespace-only strings.
         if not v.strip():
             raise ValueError(f"{info.field_name} must not be blank")
         return v
@@ -304,11 +241,7 @@ def build_generate_response(
     input_image_sha256: str,
     generation_ms: float,
 ) -> dict:
-    """Builds and validates the exact 14-field success response as a
-    plain dict, ready for JSONResponse. image_media_type is always
-    "image/png" here — see pipeline.py's own docstring for why PNG is
-    this service's fixed output format (lossless, trivially guarantees
-    the format-match check below always passes for genuine output)."""
+    """Build and validate the fixed PNG success response."""
     response = GenerateResponse(
         api_version=API_VERSION,
         service_version=service_version,

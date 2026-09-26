@@ -1,66 +1,13 @@
-"""
-Orchestration for the Reorganise generation boundary: selection
-validation, image-correlation, the action checklist, the deterministic
-focus areas and storage suggestions, and exactly one remote image-generation
-call, composed into one internal result. This is the pipeline Direct
-Reorganise's /generate route calls, and the SAME pipeline Both calls,
-differing only in how selected_item_ids is derived (client-supplied
-here; server-derived from confirm_declutter_result()/confirmed_keep_ids()
-for Both), never a second implementation.
+"""Shared Direct Reorganise and Both generation pipeline.
 
-What a result contains, and where each part comes from:
-  action_plan         app.services.reorganise_actions_service. In
-                      production the deterministic checklist, zero model
-                      calls (provenance deterministic_direct); the
-                      at-most-one-call model path is research-only.
-                      Truthful provenance either way.
-  tidy_plan           app.core.reorganise_phases: deterministic phases
-                      built from selected items and any confirmed,
-                      non-excluded departing decisions.
-  focus_areas         app.core.reorganise_focus_areas: deterministic,
-                      from the detected `position` descriptors only.
-  storage_suggestions app.core.reorganise_storage: deterministic, from
-                      the selected labels and sizes only, at most three.
-  image_prompt        app.core.reorganise_image_prompt: deterministic,
-                      from the room type, selected items and user
-                      context. The checklist model never writes it.
-  generation          the single image_generator call, or an unavailable
-                      reason. The checklist, focus areas and suggestions
-                      are always present regardless of image_status.
+It validates selection and image correlation, builds deterministic tidy
+outputs, and makes exactly one optional image-generation call. Domain image
+bytes remain internal; base64 conversion belongs to the API layer. The
+generator performs its own health check, so this service never pre-checks it.
 
-Service/API boundary (binding, not a style preference): this module
-returns raw internal domain data only: ReorganisePipelineResult holds a
-real GenerationResult with real image_bytes, never a base64 string,
-never an HTTP-facing DTO, and never imports fastapi. Only app/api/
-routes.py may base64-encode image bytes for the browser or construct a
-GenerateResponse. This keeps run_reorganise_pipeline() reachable from an
-evaluation script exactly like every other services/ function, not only
-from HTTP.
-
-Health-check discipline (binding): this module NEVER injects or calls a
-separate health-check callable. app/models/image_gen_client.generate()
-already performs its own check_health() call internally before POSTing;
-calling health twice per generation would be redundant HTTP work and a
-race. image_generator is called EXACTLY ONCE per run_reorganise_pipeline()
-invocation. GET /image-gen/health (routes.py) uses a completely separate
-injected health-check callable, never shared with this module.
-
-Image validation and hash correlation both happen HERE, before any model
-is called: never delegated to the image-generation client and never only checked by
-the API-layer request schema (whose checks this module deliberately
-duplicates, so this function stays safe to call directly, outside
-FastAPI, with no schema validation having run at all).
-
-Image-correlation hash, honest limitation, stated directly: comparing a
-freshly-recomputed SHA-256 of the resubmitted image against the hash the
-original /upload response reported detects accidental image/analysis
-desynchronisation (a stale tab, the wrong file re-selected, a frontend
-state bug). It is NOT cryptographic authentication: a client controlling
-both the image and the claimed hash can always compute a matching hash
-for altered data. Appropriate as a correlation invariant for this
-project's actual scale (a single local user, no auth/session/database
-anywhere else in this codebase by explicit design), not a substitute for
-real authentication.
+The input SHA-256 detects accidental image/analysis desynchronisation only.
+It is not authentication because a client controlling both values can create
+a matching hash.
 """
 
 from __future__ import annotations
@@ -111,23 +58,11 @@ ImageUnavailableReason = Literal[
 
 
 class ReorganisePipelineInputError(ValueError):
-    """Malformed caller input to the Reorganise generation pipeline:
-    empty/duplicate/unknown selected_item_ids, malformed/duplicate/unknown
-    label_corrections, a run_id that doesn't match analysis.run_id, image
-    bytes that fail
-    app.core.image_validation.validate_image_bytes, or an
-    input_image_sha256 that doesn't match the actually-supplied image
-    bytes. Never raised for a checklist or image-generation OUTCOME;
-    those are represented in the returned ReorganisePipelineResult, never
-    as an exception. A ValueError subclass, same dual-catchability
-    convention as app.core.confirmation.ConfirmationInputError."""
+    """Caller input fails run, selection, correction, image, or hash validation."""
 
 
 class ImageGenerator(Protocol):
-    """Structural shape run_reorganise_pipeline() needs for image
-    generation; matches app.models.image_gen_client.generate()'s real
-    signature exactly. Deliberately NOT a health-check callable, and this
-    Protocol carries no health-check method (see module docstring)."""
+    """Image-generation callable; health checking remains inside the client."""
 
     def __call__(
         self,
@@ -143,27 +78,12 @@ class ImageGenerator(Protocol):
 
 
 class ReorganisePipelineResult(BaseModel):
-    """The complete, internal output of run_reorganise_pipeline(): raw
-    domain data only, never a browser-facing DTO. `generation` (when
-    present) holds real image_bytes; base64 conversion is routes.py's job
-    alone. Safe to construct/consume entirely outside HTTP.
+    """Validated domain output with raw image bytes and ordered item identity.
 
-    `selected_item_ids` is the server-ordered selection this result was
-    built for (for Both, the confirmed Keep set); it is what the identity
-    checks below join against and is not itself echoed by the API.
-
-    Invariants (enforced below, not just documented):
-      - run_id == action_plan.run_id always.
-      - focus_areas: at most MAX_FOCUS_AREAS, every item_id selected, no
-        item_id in two areas, counts non-increasing.
-      - storage_suggestions: at most MAX_STORAGE_SUGGESTIONS, unique
-        names, every related_item_id selected.
-      - image_status == "generated" requires a real `generation` whose
-        run_id matches, and forbids image_unavailable_reason.
-      - image_status == "unavailable" forbids `generation` and requires
-        image_unavailable_reason.
-    The legacy action checklist, phased tidy plan, focus areas and storage
-    suggestions are ALWAYS present regardless of image_status."""
+    Checklist, tidy plan, focus areas, and storage suggestions remain present
+    when image generation is unavailable. Validators enforce run, selection,
+    and image-status consistency.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -242,11 +162,7 @@ def _validate_run_id(run_id: Any) -> str:
 
 
 def _validate_and_order_selection(analysis: AnalysisResult, selected_item_ids: Any) -> list[DetectedItem]:
-    """Rejects an empty selection, a duplicate id, or an id not present in
-    analysis.items; NEVER silently deduplicates or drops anything.
-    Reorders only once every id is confirmed valid, into analysis.items'
-    own deterministic spatial order (never the caller-supplied array
-    order), for reproducible prompts."""
+    """Validate item_ids and return them in deterministic analysis order."""
     if not isinstance(selected_item_ids, list):
         raise ReorganisePipelineInputError(
             f"selected_item_ids must be a list, got {type(selected_item_ids).__name__}"
@@ -309,45 +225,12 @@ def run_reorganise_pipeline(
     departing_decisions: list[ConfirmedDecision] | None = None,
     label_corrections: list[ReorganiseLabelCorrection] | None = None,
 ) -> ReorganisePipelineResult:
-    """
-    `action_generator` is REQUIRED and has no default; every caller must
-    say which checklist path it wants, in writing:
+    """Validate all caller input before building outputs or calling a model.
 
-      None        -> the deterministic checklist is built immediately, no
-                     model is called, no model module is imported,
-                     provenance DETERMINISTIC_DIRECT. This is what BOTH
-                     production routes pass.
-      a generator -> plan_reorganise_actions(): at most ONE checklist-
-                     model call, then the deterministic checklist.
-                     RESEARCH ONLY: both real phi4-mini checklist runs
-                     failed human review (backend/evaluation/README.md),
-                     so no production caller passes one. Used by unit
-                     tests and any future separately approved test.
-
-    Order of operations: every caller-input check below happens BEFORE
-    any model is called, so a malformed request never costs a call:
-
-      1. run_id validated, and checked against analysis.run_id.
-         label_corrections (Direct Reorganise only; Both never passes
-         them) validated and applied to a COPY of the analysis, so every
-         derivation below reads the corrected effective_label.
-      2. selected_item_ids validated (non-empty, unique, all present in
-         analysis.items) and reordered into analysis.items' own order.
-      3. image_bytes validated against image_media_type (genuine Pillow
-         decode, actual format matches the claim).
-      4. expected_input_image_sha256 format-checked, then compared
-         against the ACTUAL recomputed hash of image_bytes.
-
-    Only once all four pass do the deterministic derivations (focus
-    areas, storage suggestions, image prompt) and the checklist run.
-    image_generator is then called EXACTLY ONCE. A typed ImageGenError
-    subclass from that one call is caught and mapped to
-    image_status="unavailable" with a specific reason, everything else
-    preserved. Any OTHER (unexpected) exception from image_generator
-    propagates uncaught.
-
-    Raises ReorganisePipelineInputError for any of the caller-input
-    checks above. Safe to call directly, outside FastAPI.
+    `action_generator=None` is the production deterministic path; an injected
+    generator enables the one-call research path. Typed image-client failures
+    produce an unavailable image while preserving the plan. Unexpected errors
+    propagate, and the image generator is called at most once.
     """
     run_id = _validate_run_id(run_id)
     if run_id != analysis.run_id:

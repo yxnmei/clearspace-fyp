@@ -1,49 +1,10 @@
-"""
-LLM reasoning: Reorganise plan generation via local Ollama.
+"""Research-only local Ollama generator for a whole reorganisation plan.
 
-RESEARCH PATH — NOT ON THE PRODUCTION REQUEST PATH. Since the 2026-08-20
-bounded planner screen (backend/evaluation/README.md) found no candidate
-model able to produce a semantically valid plan for a crowded 28-item
-room, Direct Reorganise and Both both build the deterministic plan
-directly (provenance "deterministic_direct") and never call this module.
-Nothing here is deleted: it remains fully wired for unit tests and for
-evaluation/scripts/compare_reorganise_planning.py, and
-the research planning service still accepts this generator explicitly.
-Every call it does make is bounded by an explicit client timeout and
-num_predict — see generate_reorganise_plan_once().
-
-Model name resolved from config — this module is model-name-agnostic,
-never hardcoding one.
-
-Deliberately a NEW, dedicated module — not added to mistral_llm.py.
-That module's own docstring already flags its filename as an inherited
-historical misnomer, kept as-is only because renaming it was out of
-scope for the task that documented the decision. Reorganise planning is
-also structurally different from Declutter's per-item classification
-(one JSON object describing a whole plan, never chunked across multiple
-calls) — bolting a second, differently-shaped responsibility onto that
-file would compound the naming confusion rather than leave room to fix
-it later.
-
-Exactly one Ollama call per invocation, deliberately: this module has NO
-internal retry loop and does not read settings.llm_max_retries. The one
-bounded recovery attempt is entirely app/services/reorganise_service.py's
-job (its own documented orchestration policy) — combining this module's
-own retry with the service's recovery attempt would multiply slow,
-CPU-bound Ollama calls unpredictably.
-
-This module reports SYNTACTIC extraction only, via the same
-core/json_repair.extract_json_detailed() parser Declutter already uses.
-It has no opinion about whether a plan is semantically complete or valid
-(that's app.core.reorganise_semantic_conversion.parse_and_validate_plan's
-job) and never assigns PlanProvenance (that's the service's job, using
-is_valid_json/was_repaired as inputs among several, not as the final
-verdict).
-
-No stage_timer, no log write anywhere in this module — logging orchestration-
-level attempts (including which one ultimately produced the result) is the
-service's job; a low-level wrapper logging its own single call would double
-up with that once the service exists.
+No candidate produced a semantically valid 28-item plan in the bounded
+2026-08-20 screen, so production Direct Reorganise and Both use deterministic
+planning. Research calls are bounded and make no internal retry; the service
+owns one recovery attempt. This module reports syntax only, while semantic
+validation, provenance, and orchestration logging belong to the service.
 """
 
 from __future__ import annotations
@@ -62,9 +23,7 @@ from app.core.schemas import DetectedItem, NonEmptyStr
 
 REORGANISE_PROMPT_VERSION = "v1"  # bump on any prompt-template change
 
-# Recovery-prompt feedback is bounded on two axes: how many lines get
-# pasted in, and how long each one may be — never an unlimited raw
-# previous response or an unbounded structured-error list.
+# Bound both the number and length of recovery-feedback lines.
 _MAX_FEEDBACK_LINES = 10
 _MAX_FEEDBACK_LINE_LENGTH = 200
 
@@ -86,12 +45,7 @@ _RUN_ID_ADAPTER: TypeAdapter[str] = TypeAdapter(NonEmptyStr)
 
 
 def _validate_run_id(run_id: Any) -> str:
-    """Validates/normalizes run_id through the SAME shared NonEmptyStr
-    type app.core.schemas already defines (strip_whitespace=True,
-    min_length=1) — no second, hand-written run-id rule to drift out of
-    sync with it. Raises ValueError (this module's uniform caller-input
-    exception type, not pydantic's own ValidationError) before any
-    prompt text or Ollama client is built."""
+    """Validate run_id with the shared identity constraint before model work."""
     try:
         return _RUN_ID_ADAPTER.validate_python(run_id)
     except ValidationError as exc:
@@ -110,12 +64,7 @@ def _validate_prompt_inputs(
     user_context: str | None,
     validation_feedback: list[str] | None,
 ) -> None:
-    """Fails fast with a clear ValueError — never AttributeError/TypeError
-    — before any prompt text or Ollama client is built. Mirrors
-    app.core.reorganise_semantic_conversion.build_deterministic_fallback_plan's
-    own caller-input discipline (deliberately re-checked here, not
-    imported, since that function's checks are private to that module and
-    this is a distinct boundary)."""
+    """Validate this model boundary before building a prompt or client."""
     if not isinstance(selected_items, list) or not selected_items:
         raise ValueError("selected_items must be a non-empty list")
     for index, item in enumerate(selected_items):
@@ -145,21 +94,9 @@ def build_reorganise_plan_prompt(
     user_context: str | None,
     validation_feedback: list[str] | None = None,
 ) -> str:
-    """
-    Pure. Raises ValueError on invalid caller input (see
-    _validate_prompt_inputs) before building any text.
+    """Build a bounded plan prompt keyed by stable item_id, never label.
 
-    Identity discipline: every selected item is presented by its stable
-    item_id first, with an explicit instruction that item_id — never
-    label — is what ties a zone assignment back to a real object; two
-    items sharing a label get an explicit "DISTINCT object" callout so
-    the model can't merge them.
-
-    When `validation_feedback` is given (the service's recovery attempt),
-    the previous-response's problems are stated plainly and bounded (see
-    _MAX_FEEDBACK_LINES/_MAX_FEEDBACK_LINE_LENGTH) — never an unlimited
-    raw previous response — with an explicit instruction to regenerate
-    the whole plan, not patch it.
+    Recovery feedback is bounded and requests a complete regeneration.
     """
     _validate_prompt_inputs(selected_items, scene_label, user_context, validation_feedback)
 
@@ -241,40 +178,17 @@ def generate_reorganise_plan_once(
     validation_feedback: list[str] | None = None,
     model_name: str | None = None,
 ) -> ReorganiseLLMResult:
-    """
-    Exactly one ollama.Client.chat() call. `run_id` is validated first
-    (see _validate_run_id — the same shared NonEmptyStr semantics as
-    every other identity in this codebase) purely to fail fast, before
-    any prompt text or Ollama client is built; it is accepted for
-    signature symmetry with mistral_llm.classify_items and for possible
-    future logging by a caller — this function itself never logs (see
-    module docstring) and has no other internal use for it.
+    """Make one bounded research call and return syntactic extraction.
 
-    Raises ValueError for an invalid run_id, or whatever
-    build_reorganise_plan_prompt() raises for other invalid caller input
-    — both BEFORE any Ollama client is constructed — and propagates any
-    exception from the Ollama call itself unmodified — this module has no
-    retry loop and no exception handling around the call;
-    app/services/reorganise_service.py is responsible for catching and
-    classifying a raised exception as a `call_failed` issue.
-
-    Uses the ordinary client.chat() pattern already verified by
-    Declutter (app.models.mistral_llm) — not Ollama's JSON-mode grammar
-    (which Declutter's own comparison already found collapses a
-    requested array into a single object) and not any newer structured-
-    output feature, since neither the installed ollama version nor
-    phi4-mini's behavior with one has been verified against real
-    inference in this repository.
+    Inputs fail before client creation. Call failures propagate for the service
+    to classify. Ordinary chat is used because structured output is unverified.
     """
     run_id = _validate_run_id(run_id)
     prompt = build_reorganise_plan_prompt(selected_items, scene_label, user_context, validation_feedback)
 
     settings = get_settings()
     resolved_model = model_name or settings.llm_model_name
-    # Explicit request timeout: the installed ollama client's own default
-    # is None — no timeout at all — which is how a real planning stage
-    # reached 1440.81s. Reorganise-scoped setting; Declutter's own client
-    # (app/models/mistral_llm.py) is deliberately untouched.
+    # An explicit timeout prevents the verified 1440.81 s unbounded wait.
     client = ollama.Client(host=settings.ollama_host, timeout=settings.reorganise_llm_timeout_s)
 
     response = client.chat(
@@ -282,9 +196,7 @@ def generate_reorganise_plan_once(
         messages=[{"role": "user", "content": prompt}],
         options={
             "temperature": settings.llm_temperature,
-            # Without this the model may generate until the context window
-            # is exhausted, which produces a truncated, unparseable plan
-            # after a very long wait. See config.py for how 1536 was derived.
+            # Bound output to avoid a late, truncated plan.
             "num_predict": settings.reorganise_llm_num_predict,
         },
     )

@@ -1,53 +1,14 @@
-"""
-LLM boundary: ONE prioritised reorganisation checklist for a selection of
-items, via local Ollama.
+"""Research-only local Ollama generator for one prioritised checklist.
 
-RESEARCH PATH — NOT ON THE PRODUCTION REQUEST PATH. Direct Reorganise
-(/generate) and Both (/generate/confirmed) build the deterministic
-checklist directly (provenance "deterministic_direct") and never import,
-resolve or call this module; no route has a loader for it. It is retained
-unchanged as research evidence and stays reachable only by passing
-generate_reorganise_actions_once explicitly to
-app.services.reorganise_actions_service.plan_reorganise_actions(), which
-calls it AT MOST ONCE. `import ollama` / `import httpx` happen lazily
-inside the functions that need them, so importing this module never
-imports ollama.
+Production Direct Reorganise and Both use the deterministic checklist and do
+not load this module. Two phi4-mini runs on the 28-item fixture on 2026-09-17
+were structurally valid but failed human review: reorganise-actions-v1 invented
+shelves from source positions; reorganise-actions-v2 removed positions but
+invented items and storage semantics. The path was not promoted.
 
-NOT VALIDATED, AND NOT PROMOTED. Two authorised real runs, both on the
-28-item bedroom fixture on 2026-09-17, both about 25 s, both structurally
-valid, both rejected on human review (backend/evaluation/README.md):
-"reorganise-actions-v1" turned the detected photo positions in its
-inventory into placement destinations and invented shelves at them.
-"reorganise-actions-v2" (this file's current prompt: no position
-descriptors in the inventory, three short grouping/placement rules)
-removed that defect but invented "books and papers", treated the bin as
-a storage container and gave generic filler. Prompt tuning stopped
-there by decision. The model is the currently configured
-Declutter model (settings.llm_model_name, phi4-mini) because it is the
-one already installed; nothing here names or requires any other model. The bounds are reorganise-actions-scoped
-settings (app/config.py: reorganise_actions_llm_timeout_s /
-reorganise_actions_llm_num_predict), deliberately NOT the 210 s research
-planner timeout: this is one short structured response, not a 28-item
-zone plan.
-
-Deliberately a NEW, dedicated module, separate from the research zone
-planner (app/models/reorganise_llm.py, whose whole-plan prompt is
-unchanged and now research-only) and from Declutter classification and
-listing generation. It has a different, checklist-specific prompt; it
-asks for 3 to 5 ordered actions (1 to 3 for a selection of fewer than
-three items; app.core.reorganise_actions.expected_action_range is the
-single source for both the prompt and the service's acceptance floor),
-never a partition of item_ids, never zones, coordinates, products or an
-image prompt; and it treats every label and the user's context strictly
-as data.
-
-Exactly one ollama chat() call per invocation. NO retry loop here and
-settings.llm_max_retries is not read: the "at most one attempt, then
-fallback" policy is the service's. Transport and model errors are caught
-and re-raised as the typed errors below with FIXED messages; raw model
-text and raw transport error strings never leave this module except
-inside the returned ReorganiseActionsLLMResult.raw_text, which the
-service never surfaces.
+The configured model is called at most once with checklist-specific bounds.
+Inputs are framed as data, and typed errors use fixed messages. Raw output is
+returned only for research validation and is never surfaced by the service.
 """
 
 from __future__ import annotations
@@ -67,14 +28,10 @@ from app.core.reorganise_actions import (
 )
 from app.core.schemas import DetectedItem, NonEmptyStr
 
-# Bump on any prompt-template change. v2 (2026-09-17): positions removed
-# from the inventory lines and three grouping/placement rules added, after
-# the one real v1 run invented shelves at the detected positions.
+# v2 removed positions after the 2026-09-17 v1 run invented shelves there.
 REORGANISE_ACTIONS_PROMPT_VERSION = "reorganise-actions-v2"
 
-# Prompt-size bounds. Labels and context are user-influenced (corrected
-# labels, free text) and unbounded upstream; the prompt never grows past
-# these regardless of input.
+# Bound user-influenced labels and context before prompt construction.
 MAX_INVENTORY_LINES = 40
 MAX_LABEL_CHARS = 60
 MAX_SCENE_LABEL_CHARS = 40
@@ -83,10 +40,7 @@ MAX_USER_CONTEXT_CHARS = 400
 
 
 class ReorganiseActionsModelError(RuntimeError):
-    """Base: the checklist model call did not yield a usable response.
-    Subclasses distinguish the sanitised cause. A RuntimeError, not a
-    ValueError: malformed *caller* input is a plain ValueError raised
-    before any client is built; these are OUTCOMES of an attempted call."""
+    """A checklist call failed with a sanitised, typed cause."""
 
 
 class ReorganiseActionsModelTimeoutError(ReorganiseActionsModelError):
@@ -103,9 +57,7 @@ class ReorganiseActionsModelResponseError(ReorganiseActionsModelError):
 
 @dataclass
 class ReorganiseActionsLLMResult:
-    """Syntactic extraction only. Says nothing about whether the JSON is a
-    valid checklist; that check is the service's, against
-    app.core.reorganise_actions.parse_and_validate_actions."""
+    """Syntactic extraction; the service validates checklist semantics."""
 
     raw_text: str
     parsed_json: dict | list | None
@@ -117,9 +69,7 @@ class ReorganiseActionsLLMResult:
 
 _RUN_ID_ADAPTER: TypeAdapter[str] = TypeAdapter(NonEmptyStr)
 
-# Data blocks are wrapped in these markers with an explicit "data, not
-# instructions" frame. Any occurrence of the markers inside the data is
-# stripped first so the boundary cannot be spoofed.
+# Strip reserved markers so untrusted data cannot spoof its boundary.
 _INVENTORY_OPEN = "<<<INVENTORY>>>"
 _INVENTORY_CLOSE = "<<<END_INVENTORY>>>"
 _CONTEXT_OPEN = "<<<USER_CONTEXT>>>"
@@ -150,9 +100,7 @@ def _validate_prompt_inputs(selected_items: Any, scene_label: Any, user_context:
 
 
 def sanitise_for_prompt(text: str, limit: int) -> str:
-    """Strips the data-block markers, collapses whitespace (so a label or
-    context cannot inject new lines that look like prompt structure) and
-    bounds the length. Pure."""
+    """Strip boundary markers, collapse whitespace, and bound prompt data."""
     cleaned = text
     for marker in _MARKERS:
         cleaned = cleaned.replace(marker, " ")
@@ -163,16 +111,11 @@ def sanitise_for_prompt(text: str, limit: int) -> str:
 
 
 def build_inventory_lines(selected_items: list[DetectedItem]) -> list[str]:
-    """Compact inventory: one line per distinct effective label, with the
-    count and the coarse sizes seen, in first-seen order. Capped at
-    MAX_INVENTORY_LINES lines plus an honest remainder line.
+    """Build a bounded grouped inventory without item ids or positions.
 
-    Detected POSITIONS are deliberately absent (since prompt v2): given
-    "upper-left" next to a label, the model treated it as a destination
-    and invented furniture there. Positions still drive the deterministic
-    focus areas, fallback checklist and image prompt, none of which pass
-    through a model. item_ids are absent too: the model is never asked to
-    name, partition or account for items."""
+    Positions caused invented destinations in the 2026-09-17 run. The model
+    is not asked to partition or account for individual items.
+    """
     groups: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
     for item in selected_items:
         label = sanitise_for_prompt(item.effective_label, MAX_LABEL_CHARS) or "item"
@@ -198,12 +141,7 @@ def build_reorganise_actions_prompt(
     scene_label: str,
     user_context: str | None,
 ) -> str:
-    """
-    Pure. Raises ValueError for malformed caller input before building
-    any text. The room type, the compact inventory and the user's context
-    are the ONLY information given to the model; item_ids, boxes,
-    confidences and the image never are.
-    """
+    """Build a checklist prompt from bounded room, inventory, and context data."""
     _validate_prompt_inputs(selected_items, scene_label, user_context)
 
     room = sanitise_for_prompt(scene_label, MAX_SCENE_LABEL_CHARS) or "room"
@@ -264,8 +202,7 @@ def build_reorganise_actions_prompt(
 
 
 def _make_client(host: str, timeout: float):
-    """Isolated so tests replace it with a fake and no real Ollama client
-    is ever constructed. `import ollama` happens here, lazily."""
+    """Build the optional model client lazily for isolation in tests."""
     import ollama
 
     return ollama.Client(host=host, timeout=timeout)
@@ -275,10 +212,7 @@ _OPERATIONAL_ERROR_TYPES: tuple[type[BaseException], ...] | None = None
 
 
 def _operational_error_types() -> tuple[type[BaseException], ...]:
-    """The KNOWN operational failure types a client build or chat() call
-    may raise. Anything NOT in here is a programming error and must
-    propagate untouched. Imported lazily and cached so importing this
-    module never imports httpx/ollama."""
+    """Return allowlisted operational errors; programming errors propagate."""
     global _OPERATIONAL_ERROR_TYPES
     if _OPERATIONAL_ERROR_TYPES is None:
         import httpx
@@ -296,8 +230,7 @@ def _operational_error_types() -> tuple[type[BaseException], ...]:
 
 
 def _classify_call_error(exc: BaseException) -> ReorganiseActionsModelError:
-    """Map a KNOWN operational exception onto one typed error with a
-    FIXED message; the original text is kept only as __cause__."""
+    """Map an allowlisted failure to a fixed, typed error."""
     name = type(exc).__name__.lower()
     if isinstance(exc, TimeoutError) or "timeout" in name or "timedout" in name:
         return ReorganiseActionsModelTimeoutError("checklist model call timed out")
@@ -319,18 +252,10 @@ def generate_reorganise_actions_once(
     user_context: str | None,
     model_name: str | None = None,
 ) -> ReorganiseActionsLLMResult:
-    """
-    Exactly one ollama chat() call.
+    """Make one research checklist call and return syntactic extraction.
 
-    Raises ValueError for malformed caller input BEFORE any client is
-    built. On a KNOWN operational failure raises one of the typed errors
-    above with a fixed message. Any OTHER exception propagates unchanged.
-    On success returns a ReorganiseActionsLLMResult carrying json_repair's
-    syntactic verdict; semantic validation is the caller's job.
-
-    `model_name` defaults to settings.llm_model_name (the configured
-    Ollama model) and is accepted as an override only so a future
-    evaluation script can sweep candidates through the same path.
+    Input is validated before client creation. Allowlisted operational errors
+    are sanitised; other errors propagate. The model override supports evaluation.
     """
     run_id = _validate_run_id(run_id)
     prompt = build_reorganise_actions_prompt(selected_items, scene_label, user_context)

@@ -1,12 +1,7 @@
-"""
-Object detection: Grounding DINO (chosen after detecting 21 vs 3 objects
-against YOLOv8s on the same test image).
+"""Grounding DINO object detection used by the production pipeline.
 
-YOLOv8s is NOT reimplemented here — that comparison is already evidenced
-and done; don't re-litigate settled comparisons without a specific
-reason. If a genuine reason comes up later, put the YOLOv8s path in
-evaluation/scripts/, not here, so app/models/ stays "the model actually
-used in the shipped pipeline," not a grab-bag of every candidate tried.
+It was selected after detecting 21 objects versus YOLOv8s's 3 on the same
+test image; alternative comparisons belong in evaluation tooling.
 """
 
 from __future__ import annotations
@@ -21,30 +16,19 @@ from PIL import Image
 
 from app.config import get_settings
 
-# Domestic-vocabulary prompt for open-set detection — versioned here so
-# changes to it are visible in diffs/blame, not buried in a service call.
+# Version the open-set domestic vocabulary beside the detector.
 #
 # painting/artwork/jewelry/necklace/guitar/balloon added 2026-08-07 — a
-# fixed vocabulary with no entry for a real object forces Grounding DINO to
-# label it with the nearest available term instead of abstaining, evidenced
-# via evaluation/scripts/visualize_detections.py eyeballing real detections:
+# A missing real object can force the nearest available label rather than
+# abstention. The 2026-08-07 run showed:
 # a wall painting labeled "document", a circular wall decoration labeled
 # "clock", a hanging necklace labeled "cable", and a guitar-in-gig-bag
 # labeled "tool" in the 2026-08-07 run. "balloon" is also a real
 # ground-truth item in evaluation/labels/labels.json with no matching term.
 #
-# Deliberately NOT added: "clothes hanger" for the clothes-on-hangers case
-# — the pre-existing "clothes" term below already covers it, and the
-# hanger itself isn't what a decluttering decision hinges on. Also
-# deliberately NOT added: "musical instrument" alongside "guitar" — tried
-# both together first, but Grounding DINO fragmented the phrase to
-# "musical" instead of grounding to the already-present "guitar" for that
-# same box (see groundingdino.util.utils.get_phrases_from_posmap — phrase
-# construction is a per-token threshold, not phrase-level, so a redundant
-# multi-word near-duplicate can out-compete a clean single-word term
-# rather than reinforce it). "guitar" alone is the only evidenced case;
-# not guessing ahead of the data with a broader catch-all term.
-# Not yet re-verified against real detections.
+# "clothes" already covers hangers. Adding "musical instrument" fragmented
+# the phrase to "musical" because phrase construction thresholds each token;
+# only "guitar" is evidenced. These additions remain unverified as a set.
 DOMESTIC_VOCABULARY_PROMPT = (
     "chair . table . desk . lamp . laptop . monitor . keyboard . mouse . "
     "cable . charger . book . notebook . magazine . document . bottle . cup . "
@@ -63,22 +47,15 @@ class RawDetection:
     confidence: float
 
 
-_model_cache = None  # loaded lazily, cached at module level — the checkpoint
-# is large enough that reloading it per call would dominate latency in both
-# the eval harness (called once per image) and the live API.
+_model_cache = None  # Reloading the checkpoint per call would dominate latency.
 
-# backend/ (this file's grandparent) — computed from this file's own location,
-# not the process working directory. settings.grounding_dino_*_path default to
-# relative strings (e.g. "weights/..."); resolving those against os.getcwd()
-# meant launching uvicorn/pytest from the repo root instead of backend/ caused
-# a real startup 503 (see tests/system/README.md, 2026-08-11).
+# Resolve relative weights from backend/, not the process working directory.
+# The latter caused a verified startup 503 on 2026-08-11.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _resolve_backend_path(configured: str) -> Path:
-    """Resolves a configured model path against `_BACKEND_ROOT`, independent
-    of the process working directory. Absolute paths pass through unchanged
-    (still usable as-is, per an explicit override)."""
+    """Resolve relative model paths from backend/; preserve absolute overrides."""
     path = Path(configured)
     if path.is_absolute():
         return path
@@ -86,10 +63,7 @@ def _resolve_backend_path(configured: str) -> Path:
 
 
 def load_model():
-    """
-    Loads Grounding DINO from weights/ (see config.grounding_dino_*_path).
-    CPU-only (device="cpu") because the local environment has no GPU.
-    """
+    """Load and cache Grounding DINO on CPU."""
     global _model_cache
     if _model_cache is not None:
         return _model_cache
@@ -109,12 +83,7 @@ def load_model():
 
 
 def _load_image_from_bytes(image_bytes: bytes) -> tuple[np.ndarray, torch.Tensor]:
-    """
-    Mirrors groundingdino.util.inference.load_image, but from in-memory bytes
-    rather than a file path — the API layer receives an UploadFile, not a
-    path on disk, and round-tripping through a temp file just to satisfy the
-    upstream helper isn't worth the extra I/O.
-    """
+    """Apply the upstream image transform directly to in-memory bytes."""
     import groundingdino.datasets.transforms as T
 
     transform = T.Compose(
@@ -148,9 +117,7 @@ def detect(image_bytes: bytes, prompt: str = DOMESTIC_VOCABULARY_PROMPT) -> list
         device="cpu",
     )
 
-    # Left normalized to [0, 1] (not scaled to pixel coordinates) — this is
-    # resolution-independent, which is what core/box_descriptors.py needs to
-    # derive a size/position hint, and is what gets stored in eval results.
+    # Normalised boxes keep spatial hints resolution-independent.
     boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes)
 
     return [

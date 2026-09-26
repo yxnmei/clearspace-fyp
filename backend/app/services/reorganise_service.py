@@ -1,61 +1,10 @@
-"""
-Orchestration for the Reorganise planning boundary. Image generation
-belongs to app/services/reorganise_pipeline_service.py; nothing here
-touches images, HTTP, or Colab.
+"""Research-only Reorganise zone planning orchestration.
 
-This file previously held label-based `run_reorganise()`/
-`score_generation_fidelity()` stubs (raising NotImplementedError, keyed
-by `kept_item_labels: list[str]`) — stale, unimplemented, and
-contradicting the corrected item_id-only architecture. Removed here,
-confirmed via `rg -n "run_reorganise|score_generation_fidelity"` to have
-had zero callers anywhere in the repository before deletion.
-
-RESEARCH-ONLY SINCE 2026-09-13. Neither entry point below is on the
-production request path any more: Direct Reorganise and Both now produce
-deterministic tidy plans, action checklists, focus areas, and storage
-suggestions, not a zone plan. This module, its schemas and its prompt are
-retained unchanged
-for evaluation/scripts/compare_reorganise_planning.py and its tests. The
-paragraphs below describe the arrangement as it stood while this module
-still served production and are kept as history.
-
-TWO entry points, and PRODUCTION USED THE FIRST:
-
-  plan_reorganisation_direct() — the former production path. Builds the
-  deterministic plan immediately, calls no planner, imports no ollama,
-  and reports provenance DETERMINISTIC_DIRECT with zero attempts.
-
-  plan_reorganisation() — the LLM state machine, RETAINED FOR RESEARCH
-  and reachable only by passing a planner explicitly. One initial
-  planning attempt; if it doesn't produce a trusted plan (call failure,
-  invalid JSON, or a semantically invalid plan per
-  app.core.reorganise_semantic_conversion.parse_and_validate_plan),
-  exactly one targeted recovery attempt with bounded feedback; if that
-  also fails, the deterministic fallback — never a third planner call.
-  See its own docstring for the full state machine.
-
-Why production stopped calling an LLM here: the 2026-08-20 bounded
-planner screen (backend/evaluation/README.md) found no candidate model
-able to produce a semantically valid plan for a crowded 28-item room, so
-the two attempts before the fallback bought latency and nothing else.
-Nothing about the LLM path is deleted — it stays exercised by unit tests
-and by evaluation/scripts/compare_reorganise_planning.py.
-
-Dependency injection, not a direct import of app.models.reorganise_llm:
-llm_planner is typed as a Protocol (ReorganisePlanner, below), matching
-app.services.declutter_service's own SceneClassifier/ObjectDetector/
-LLMClassifier pattern exactly. This module never imports
-app.models.reorganise_llm or ollama at all — the real
-generate_reorganise_plan_once() already satisfies this Protocol
-structurally, so the former production wiring passed it in directly with zero
-adapter code, and this module's own tests stay free of ollama's
-dependency surface entirely.
-
-No stage_timer here, deliberately — stage_timer (app/logging_utils.py)
-writes to logs/runs.jsonl on every call, which this module's unit tests (fake-
-planner-backed, no real request) must never do. StageTiming is built
-directly from time.perf_counter() and returned in-memory only; a future
-caller decides whether and how to log it.
+Production uses deterministic tidy plans elsewhere. The retained planner
+makes at most two bounded attempts before a deterministic fallback; the
+2026-08-20 screen found no candidate with a valid crowded-room plan.
+Planner injection keeps this boundary independently testable, and timing is
+returned in memory without log side effects.
 """
 
 from __future__ import annotations
@@ -87,10 +36,7 @@ _RUN_ID_ADAPTER: TypeAdapter[str] = TypeAdapter(NonEmptyStr)
 
 
 def _validate_run_id(run_id: Any) -> str:
-    """Validates/normalizes run_id through the SAME shared NonEmptyStr
-    type app.core.schemas already defines — no second, hand-written
-    run-id rule to drift out of sync with it. Raises ValueError before
-    the injected planner is ever called (see plan_reorganisation)."""
+    """Validate run_id through the shared NonEmptyStr contract."""
     try:
         return _RUN_ID_ADAPTER.validate_python(run_id)
     except ValidationError as exc:
@@ -98,8 +44,7 @@ def _validate_run_id(run_id: Any) -> str:
 
 
 def _bounded(text: str, limit: int = _MAX_ISSUE_DETAIL_LENGTH) -> str:
-    """Returned length never exceeds `limit`, including the suffix —
-    same fixed convention as reorganise_semantic_conversion._bounded."""
+    """Bound text to `limit`, including the truncation suffix."""
     if len(text) <= limit:
         return text
     keep = max(0, limit - len(_TRUNCATION_SUFFIX))
@@ -107,9 +52,7 @@ def _bounded(text: str, limit: int = _MAX_ISSUE_DETAIL_LENGTH) -> str:
 
 
 class ReorganiseLLMResultLike(Protocol):
-    """Structural shape of app.models.reorganise_llm.ReorganiseLLMResult
-    — the exact fields this module reads, without importing that
-    dataclass (and therefore never importing ollama) at runtime."""
+    """Structural result contract for an injected research planner."""
 
     raw_text: str
     parsed_json: dict | list | None
@@ -120,10 +63,7 @@ class ReorganiseLLMResultLike(Protocol):
 
 
 class ReorganisePlanner(Protocol):
-    """Structural shape plan_reorganisation() needs from a planning call
-    — matches app.models.reorganise_llm.generate_reorganise_plan_once's
-    real signature exactly. Real generate_reorganise_plan_once satisfies
-    this with zero adapter code."""
+    """Callable contract for one research planning attempt."""
 
     def __call__(
         self,
@@ -141,12 +81,7 @@ PlanningIssueKind = Literal["call_failed", "invalid_json", "semantic_invalid"]
 
 
 class PlanningIssue(BaseModel):
-    """One structured, bounded reason a single attempt didn't produce a
-    trusted plan directly. `conversion_errors` (the structured
-    PlanConversionError list) is populated only for semantic_invalid —
-    call_failed/invalid_json have no structured conversion errors to
-    report, and are rejected if given any (enforced below, not merely
-    documented)."""
+    """A bounded reason one planning attempt was not trusted."""
 
     attempt: PlanningIssueAttempt
     kind: PlanningIssueKind
@@ -163,40 +98,10 @@ class PlanningIssue(BaseModel):
 
 
 class ReorganisePlanningResult(BaseModel):
-    """The output of plan_reorganisation() — always carries a real,
-    trusted ReorganisePlan (even in the DETERMINISTIC_FALLBACK case;
-    there is no "no plan at all" outcome from this function), plus the
-    authoritative provenance and every issue encountered along the way.
+    """A trusted plan with provenance, timing, and attempt issues.
 
-    Invariants (enforced below, not just documented — a caller cannot
-    directly construct a contradictory result):
-      - Exactly one stage timing, with stage == "reorganise_plan" —
-        always, regardless of provenance. This result represents exactly
-        this one planning boundary; a future caller may wrap it with
-        broader generation timings without mutating what this field means.
-      - model_name/prompt_version are either both present (non-blank) or
-        both None — never one without the other, and never fabricated:
-        they always come from a wrapper result (never from raw plan JSON,
-        which carries no such fields at all per ReorganisePlan's own
-        extra="forbid" schema).
-      - RAW_VALID / MECHANICALLY_REPAIRED: exactly one attempt, zero
-        issues, non-blank model_name/prompt_version. Mechanical repair is
-        represented entirely by provenance — it is not itself a "planning
-        issue".
-      - RECOVERY_USED: exactly two attempts, exactly ONE issue, and that
-        issue belongs to the initial attempt (a successful recovery
-        cannot simultaneously carry a recovery-attempt issue); non-blank
-        model_name/prompt_version.
-      - DETERMINISTIC_FALLBACK: exactly two attempts, exactly TWO issues,
-        ordered [initial, recovery] (exactly one per attempt). Metadata
-        may be None only when BOTH issues are `call_failed` (neither call
-        ever returned a wrapper result to source metadata from);
-        otherwise both fields must be present.
-      - DETERMINISTIC_DIRECT: ZERO attempts, ZERO issues, and metadata
-        BOTH None. No planner was called, so there is no attempt to
-        count, no failure to report, and no model/prompt identity to
-        name — asserting any of those would be fabricating evidence of
-        an LLM call that never happened.
+    Validators keep attempt counts, issues, and model metadata consistent
+    with direct, generated, recovered, or fallback provenance.
     """
 
     run_id: NonEmptyStr
@@ -286,10 +191,7 @@ def _validate_planning_inputs(
     scene_label: str,
     user_context: str | None,
 ) -> None:
-    """Fails fast on malformed caller input, before ANY planner call is
-    made — deliberately checked here too (not only relied upon inside
-    build_deterministic_fallback_plan, which only runs at the fallback
-    step) so a bad caller input never costs even one real LLM call."""
+    """Reject malformed caller input before any planning attempt."""
     if not isinstance(selected_items, list) or not selected_items:
         raise ValueError("selected_items must be a non-empty list")
     for index, item in enumerate(selected_items):
@@ -318,29 +220,10 @@ def plan_reorganisation_direct(
     scene_label: str,
     user_context: str | None,
 ) -> ReorganisePlanningResult:
-    """
-    The PRODUCTION planning path: build the deterministic plan directly,
-    with no planner argument, no Ollama call, and no ollama import.
+    """Build a deterministic plan with zero attempts and truthful provenance.
 
-    Why this exists rather than calling plan_reorganisation() and letting
-    it fall back: the fallback path reports provenance
-    DETERMINISTIC_FALLBACK, attempts=2 and two `issues` describing two
-    planner attempts that failed. Reaching the same plan without ever
-    calling a planner and then reporting that would be fabricating
-    evidence. This function reports DETERMINISTIC_DIRECT / attempts=0 /
-    no issues / no model metadata instead — the truthful record of what
-    actually happened.
-
-    The policy behind it: the 2026-08-20 bounded planner screen found no
-    candidate model able to produce a semantically valid plan for the
-    crowded 28-item fixture (see backend/evaluation/README.md), so
-    spending two planner calls before falling back bought nothing but
-    latency. plan_reorganisation() below is retained unchanged and stays
-    reachable for research by passing a planner explicitly.
-
-    Same caller-input validation as plan_reorganisation(), deliberately
-    duplicated rather than skipped — this is a public entry point, and a
-    malformed selection must fail the same way on both paths.
+    This public entry point applies the same input validation as the research
+    path and never reports fallback failures for calls that did not occur.
     """
     run_id = _validate_run_id(run_id)
     _validate_planning_inputs(selected_items, scene_label, user_context)
@@ -369,20 +252,10 @@ def plan_reorganisation(
     user_context: str | None,
     llm_planner: ReorganisePlanner,
 ) -> ReorganisePlanningResult:
-    """
-    Raises ValueError for an invalid run_id (validated/normalized through
-    the same shared NonEmptyStr semantics as every other identity in this
-    codebase — see _validate_run_id) or for other malformed caller input
-    (see _validate_planning_inputs) — both BEFORE `llm_planner` is ever
-    called. The normalized run_id is used consistently for every
-    `llm_planner(...)` call and the returned result.
+    """Make up to two research attempts, then return a deterministic fallback.
 
-    Exception handling is deliberately narrow: only `llm_planner(...)`
-    itself is wrapped in try/except. Everything downstream of a
-    successful call (parse_and_validate_plan, PlanningIssue/
-    ReorganisePlanningResult construction) is NOT — an unexpected
-    internal exception there is a genuine programming defect and must
-    propagate loudly, never be mislabeled as "the LLM's fault".
+    Caller input is validated first. Only planner-call failures are converted
+    into issues; unexpected conversion or construction defects propagate.
     """
     run_id = _validate_run_id(run_id)
     _validate_planning_inputs(selected_items, scene_label, user_context)
@@ -480,12 +353,8 @@ def plan_reorganisation(
         else:
             conversion = parse_and_validate_plan(recovery_result.parsed_json, selected_item_ids)
             if conversion.is_valid:
-                # Provenance is always RECOVERY_USED on a successful
-                # recovery, even if this response itself needed mechanical
-                # repair — the notable fact is that a second attempt was
-                # required at all, not the flavor of that second attempt's
-                # own syntactic cleanliness. The initial issue is preserved
-                # in `issues` for transparency, not discarded.
+                # Recovery provenance records that a second attempt was needed;
+                # the initial issue remains visible.
                 return ReorganisePlanningResult(
                     run_id=run_id,
                     plan=conversion.plan,

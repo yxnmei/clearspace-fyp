@@ -1,12 +1,7 @@
-"""
-Scene classification: CLIP zero-shot (chosen after 97.6% confidence on the
-test image; the planned Places365 comparison is not
-yet done — see evaluation/scripts/compare_scene_classifiers.py).
+"""Zero-shot CLIP scene classification on CPU.
 
-Prompting constraint, fixed from day one here rather than discovered later: CLIP
-zero-shot accuracy improves with templated prompts. Feed the template
-below, never a bare label — this was identified but never implemented
-in the v1 build.
+The default was selected after 97.6% confidence on the test image. Templated
+text follows CLIP's reference zero-shot approach and should not become bare labels.
 """
 
 from __future__ import annotations
@@ -17,9 +12,7 @@ from PIL import Image
 
 from app.config import get_settings
 
-# Template, not bare labels — "a photo of a {}" is CLIP's own reference
-# template family from Radford et al. (2021); a bare label measurably
-# underperforms it in zero-shot settings.
+# Use CLIP's reference prompt family; bare labels underperform in zero-shot use.
 PROMPT_TEMPLATE = "a photo of a {}"
 
 ROOM_TYPE_CANDIDATES = [
@@ -35,24 +28,16 @@ ROOM_TYPE_CANDIDATES = [
     "hallway",
 ]
 
-_model_cache = None  # (model, preprocess) tuple, loaded lazily and cached at
-# module level — same reasoning as grounding_dino.load_model: reloading the
-# checkpoint per call would dominate latency in both the eval harness and
-# the live API.
+_model_cache = None  # Reloading the checkpoint per call would dominate latency.
 
 
 def load_model():
-    """
-    Loads CLIP on CPU because the local environment has no GPU. The
-    `clip` package has no PyPI release — installed via
-    `pip install git+https://github.com/openai/CLIP.git`, see README.
-    """
+    """Load and cache CLIP on CPU."""
     global _model_cache
     if _model_cache is not None:
         return _model_cache
 
-    import clip  # deferred import — mirrors grounding_dino's pattern so a
-    # missing optional dependency only breaks the code path that needs it
+    import clip  # Keep the optional dependency off unrelated paths.
 
     settings = get_settings()
     model, preprocess = clip.load(settings.clip_model_name, device="cpu")
@@ -62,16 +47,7 @@ def load_model():
 
 
 def classify_scene(image_bytes: bytes, candidates: list[str] = ROOM_TYPE_CANDIDATES) -> dict:
-    """
-    Returns {"label": str, "confidence": float, "all_scores": dict[str, float]}.
-    All scores are returned, not just the top-1 — needed for the
-    per-stage evaluation (confidence distribution, not just pass/fail).
-
-    Zero-shot: no room-type-specific training, just cosine similarity
-    between the image embedding and each candidate's *templated* text
-    embedding (never a bare label, see PROMPT_TEMPLATE above),
-    softmax-normalized across candidates into a probability distribution.
-    """
+    """Classify a scene against templated candidates and return all scores."""
     import clip
     import torch
 
@@ -87,9 +63,7 @@ def classify_scene(image_bytes: bytes, candidates: list[str] = ROOM_TYPE_CANDIDA
         text_features = model.encode_text(text_input)
         image_features /= image_features.norm(dim=-1, keepdim=True)
         text_features /= text_features.norm(dim=-1, keepdim=True)
-        # CLIP's own reference scaling (logit_scale, learned at pretraining
-        # time) before softmax — matches the official zero-shot recipe
-        # rather than an arbitrary temperature.
+        # Use CLIP's learned reference scaling rather than an arbitrary temperature.
         logits = (model.logit_scale.exp() * image_features @ text_features.T).squeeze(0)
         probs = logits.softmax(dim=-1)
 

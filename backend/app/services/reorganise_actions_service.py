@@ -1,49 +1,9 @@
-"""
-Orchestration for the Reorganise ACTION CHECKLIST: at most ONE model call,
-then the deterministic fallback.
+"""Build a Reorganise checklist directly or through one research model call.
 
-PRODUCTION USES THE NO-MODEL PATH (generator=None, DETERMINISTIC_DIRECT).
-Both real phi4-mini checklist runs (prompts reorganise-actions-v1 and -v2,
-2026-09-17) passed this module's structural validation and failed human
-review: v1 invented shelves at the detected photo positions, v2 invented
-"books and papers" and treated the bin as a container. Structural
-validity is not quality, so Direct Reorganise and Both no longer pass a
-generator. The one-call path below is retained, tested research code,
-reachable only by passing a generator explicitly. See
-backend/evaluation/README.md.
-
-Policy, in full:
-
-  generator given  -> call it exactly once. If the call raises, the
-                      response is not valid JSON, or the JSON is not a
-                      valid checklist (app.core.reorganise_actions.
-                      parse_and_validate_actions, including too few
-                      actions for the selection size: fewer than 3 for
-                      three or more items, fewer than 1 otherwise), build
-                      the deterministic checklist immediately. There is NO second call and no
-                      recovery prompt: the earlier two-attempt zone planner
-                      spent roughly 90 s producing nothing usable in manual
-                      testing, and a checklist is cheap to build without a
-                      model.
-  generator None   -> the explicit no-model path: build the deterministic
-                      checklist directly and say so (attempts 0, no
-                      issues, no model metadata). For callers that must
-                      never reach a model (tests, offline tooling).
-
-Provenance is always the truthful record of what happened:
-  LLM_GENERATED          one attempt, trusted model output, no issue.
-  DETERMINISTIC_FALLBACK one attempt, exactly one concise issue, fallback.
-  DETERMINISTIC_DIRECT   zero attempts, no issue, no model named.
-
-Dependency injection, not a direct import of the model module: the
-generator is typed as a Protocol, so this module never imports
-app.models.reorganise_actions_llm or ollama and its tests stay free of
-that dependency surface. Exception handling is deliberately narrow: only
-the generator call itself is wrapped; anything downstream of a successful
-call is a programming defect if it raises, and stays loud.
-
-No stage_timer here (it writes logs/runs.jsonl); duration is measured
-in-memory and returned.
+Production uses the deterministic no-model path. Two structurally valid
+2026-09-17 model runs failed human review, so the injected one-call path is
+research-only and falls back immediately on any expected failure. Provenance
+records whether output was generated, fell back, or was built directly.
 """
 
 from __future__ import annotations
@@ -98,9 +58,7 @@ ActionPlanIssueKind = Literal["call_failed", "invalid_json", "invalid_actions"]
 
 
 class ActionPlanIssue(BaseModel):
-    """The one concise reason the single attempt was not trusted. `detail`
-    is bounded and never carries raw model text; for a raised exception
-    it carries the exception class name only."""
+    """A bounded reason the research attempt was not trusted."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -109,9 +67,7 @@ class ActionPlanIssue(BaseModel):
 
 
 class ReorganiseActionsLLMResultLike(Protocol):
-    """Structural shape of app.models.reorganise_actions_llm.
-    ReorganiseActionsLLMResult: the fields this module reads, without
-    importing that module."""
+    """Structural result contract for the injected checklist generator."""
 
     raw_text: str
     parsed_json: dict | list | None
@@ -122,8 +78,7 @@ class ReorganiseActionsLLMResultLike(Protocol):
 
 
 class ReorganiseActionGenerator(Protocol):
-    """Structural shape plan_reorganise_actions() needs from a checklist
-    call; matches generate_reorganise_actions_once's real signature."""
+    """Callable contract for one research checklist attempt."""
 
     def __call__(
         self,
@@ -136,11 +91,7 @@ class ReorganiseActionGenerator(Protocol):
 
 
 class ReorganiseActionPlan(BaseModel):
-    """The checklist plus its truthful provenance. Always carries between
-    MIN_ACTIONS and MAX_ACTIONS real actions; there is no "no checklist"
-    outcome. Invariants are enforced below, so a contradictory record
-    (a model named with zero attempts, a fallback without an issue) can
-    never be constructed."""
+    """A bounded checklist with provenance consistent with its attempts."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -221,10 +172,7 @@ def plan_reorganise_actions(
     user_context: str | None,
     generator: ReorganiseActionGenerator | None,
 ) -> ReorganiseActionPlan:
-    """
-    Raises ValueError for malformed caller input BEFORE the generator is
-    ever called. See the module docstring for the one-call policy.
-    """
+    """Validate inputs, then build directly or make one research attempt."""
     run_id = _validate_run_id(run_id)
     _validate_inputs(selected_items, scene_label, user_context)
 
@@ -262,9 +210,7 @@ def plan_reorganise_actions(
         if not result.is_valid_json:
             issue = ActionPlanIssue(kind="invalid_json", detail="checklist model did not return syntactically valid JSON")
         else:
-            # The floor is selection-dependent: 3 for three or more items,
-            # 1 below that. Too few actions is an invalid_actions issue and
-            # goes to the fallback like any other rejection; no second call.
+            # The action floor depends on selection size; rejection never retries.
             min_actions, _ = expected_action_range(len(selected_items))
             conversion = parse_and_validate_actions(result.parsed_json, min_actions=min_actions)
             if conversion.is_valid:

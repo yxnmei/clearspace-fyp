@@ -1,46 +1,9 @@
-"""
-Model loading (once, at real Colab notebook startup — see app.py's own
-load_models()) and the actual SD1.5 img2img + ControlNet-depth generation
-call. This is the ONE place a real GPU pipeline is ever invoked in this
-service.
+"""Lazy-loaded SD1.5 img2img and ControlNet-depth generation.
 
-Every heavy import (torch, diffusers) is deferred to inside
-load_pipeline()/run_generation() — NEVER at module import time. This is
-what makes `import colab_service.pipeline` safe during local, GPU-free
-tests: it never loads or downloads anything just by being imported (see
-colab_service/tests/test_app.py's subprocess-based import check).
-colab_service/tests/test_pipeline.py verifies this module's own
-forwarding/safety logic against FAKE torch/diffusers modules injected
-into sys.modules — never a real import, never a real model call.
-app.py's own tests never call run_generation() for real either — they
-monkeypatch colab_service.app's own reference to this function with a
-fake before every test.
-
-The configured model identifiers and diffusers pipeline class have loaded
-successfully in the verified Colab environment. This module still reports
-whatever it ACTUALLY loaded
-(_loaded_base_model_id/_loaded_controlnet_model_id), never a hardcoded
-assumption that loading with the configured identifiers succeeded.
-
-Safety checker: deliberately NOT disabled. `load_pipeline()` never passes
-`safety_checker=None` — it keeps whichever safety checker the base model
-ships with. If the pipeline itself reports the output as flagged
-(`result.nsfw_content_detected`), run_generation() raises
-UnsafeOutputError and NO image is returned — see that exception's own
-docstring. Only concrete T4 memory evidence that this is infeasible
-should reopen this decision.
-
-num_inference_steps/guidance_scale are internal generation settings
-(config.py), not request fields. The verified run used these defaults but
-did not establish them as quality-optimal. They are passed straight through
-to the pipeline call, like denoise_strength/controlnet_conditioning_scale/seed.
-
-Output format is always PNG (lossless, and schemas.build_generate_response()
-is written assuming PNG — see that function's own docstring for why).
-generation_ms measures depth extraction PLUS the pipeline call together
-— the whole server-side compute after request validation, so it records
-the honest end-to-end generation time,
-not just the diffusion step count's own internal timing.
+Heavy dependencies load only on explicit startup. Loaded model identifiers are
+reported from runtime state. The base safety checker remains enabled; flagged
+output is never returned. Prompt sensitivity is still untested. Output is PNG,
+and generation timing includes depth extraction plus diffusion.
 """
 
 from __future__ import annotations
@@ -57,29 +20,11 @@ _loaded_controlnet_model_id: str | None = None
 
 
 class UnsafeOutputError(RuntimeError):
-    """Raised when the diffusion pipeline's own safety checker flags the
-    generated output as unsafe. Never carries the prompt, the image, or
-    any other generated content in its message — app.py maps this to a
-    sanitized error response, same discipline as every other failure
-    path in this service (see app.py's own module docstring)."""
+    """Safety-check failure that carries no prompt or generated content."""
 
 
 def load_pipeline(settings: Any) -> None:
-    """Loads the SD1.5 + ControlNet-depth pipeline ONCE (module-level
-    cache, mirrors backend/app/models/grounding_dino.py's own
-    convention) and moves it to CUDA. Real, heavy, network-fetching
-    model load, called only by the notebook launcher after CUDA is
-    confirmed available (see module docstring for why importing this
-    module never triggers it on its own). Idempotent: a second call is
-    a no-op if a pipeline is already loaded.
-
-    Deliberately does NOT pass safety_checker=None — see module
-    docstring's "Safety checker" section.
-
-    The pipeline class, constructor arguments, and configured model IDs
-    have loaded successfully on a real Colab GPU. Actual loaded IDs are
-    recorded rather than inferred from configuration alone.
-    """
+    """Load the verified CUDA pipeline once while retaining its safety checker."""
     global _pipeline, _loaded_base_model_id, _loaded_controlnet_model_id
     if _pipeline is not None:
         return
@@ -94,21 +39,10 @@ def load_pipeline(settings: Any) -> None:
         torch_dtype=torch.float16,
     )
     pipe = pipe.to("cuda")
-    # Memory-saving defaults for Colab's typically memory-constrained
-    # GPUs (T4 free tier especially). xformers is not attempted because
-    # compatibility with Colab's pre-installed CUDA/torch stack was not tested.
+    # Use memory-saving defaults; xformers compatibility remains untested.
     pipe.enable_attention_slicing()
-    # VAE slicing is an extra memory optimisation, not a safety or
-    # correctness feature. StableDiffusionControlNetImg2ImgPipeline in
-    # the installed diffusers 0.40.0 runtime did not expose the
-    # pipeline-level enable_vae_slicing() method (verified on a real
-    # Colab runtime); current diffusers exposes VAE slicing on the VAE
-    # itself, as pipe.vae.enable_slicing(). Prefer that current
-    # VAE-level API, fall back to the legacy pipeline-level method when
-    # only it is present, and continue normally when neither exists (VAE
-    # slicing is optional). Whichever method is selected is invoked
-    # directly, with no surrounding try/except, so a genuine failure
-    # inside it is never swallowed.
+    # diffusers 0.40.0 lacked the pipeline-level VAE method in the verified
+    # runtime. Prefer the VAE API, support the legacy API, and do not hide errors.
     vae_enable_slicing = getattr(getattr(pipe, "vae", None), "enable_slicing", None)
     legacy_enable_vae_slicing = getattr(pipe, "enable_vae_slicing", None)
     if callable(vae_enable_slicing):
@@ -138,32 +72,11 @@ def run_generation(
     seed: int,
     settings: Any,
 ) -> GenerationOutput:
-    """Runs depth extraction + the SD1.5 img2img/ControlNet-depth call
-    and returns the encoded PNG output plus timing/identity metadata.
+    """Generate a depth-conditioned PNG from a pre-sized RGB image.
 
-    `image` must already be RGB and already resized (Image.Resampling.LANCZOS
-    — see app.py's own generate() handler) to the target generation
-    resolution (resolution.compute_target_resolution()) — see
-    depth.extract_depth_map()'s own docstring for why that ordering
-    matters. `prompt`/`negative_prompt` are passed through to the
-    pipeline EXACTLY as received — never replaced, never defaulted (the
-    exact v1 regression this service must not repeat). Neither this nor
-    the accompanying prompt_sha256 echo by themselves PROVE the pipeline
-    genuinely uses the prompt semantically (as opposed to merely
-    accepting and hashing it). A controlled same-image/different-prompt
-    sensitivity test is still required to establish that.
-
-    num_inference_steps/guidance_scale come from internal `settings`, never
-    from the caller's request.
-
-    Raises UnsafeOutputError (never returning the image) if the
-    pipeline's own safety checker flags the output — see that
-    exception's own docstring.
-
-    Raises RuntimeError if called before load_pipeline() has genuinely
-    loaded a pipeline — a programming-error guard, not a request-input
-    validation (that already happened in schemas.py before this
-    function is ever reached).
+    Prompts are forwarded exactly, but hashes do not prove semantic use;
+    same-image/different-prompt sensitivity remains untested. Internal quality
+    settings are not caller-controlled, and flagged output is never returned.
     """
     if _pipeline is None:
         raise RuntimeError("run_generation() called before load_pipeline() — no pipeline is loaded")
@@ -187,10 +100,7 @@ def run_generation(
         generator=generator,
     )
 
-    # The base pipeline's own safety checker (never disabled — see
-    # load_pipeline()) reports this per-image; check it BEFORE ever
-    # touching result.images for encoding, so a flagged output is never
-    # even read into bytes, let alone returned.
+    # Check the retained safety result before reading image bytes.
     nsfw_flags = getattr(result, "nsfw_content_detected", None)
     if nsfw_flags and nsfw_flags[0]:
         raise UnsafeOutputError("generated output was flagged by the pipeline's safety checker")

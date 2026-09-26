@@ -1,26 +1,7 @@
-"""
-Deterministic, pure, GPU-independent resolution policy — Option A (see
-colab_service/README.md's "Resolution policy (Option A)" section for
-why Option A was chosen over Option B, "aspect-preserving resize with
-padding").
+"""Pure target-resolution policy without cropping or orientation changes.
 
-Never claims exact aspect-ratio preservation, and never claims zero
-stretching. Rounding a scaled size to a multiple of 8 (a hard SD/VAE
-requirement) necessarily introduces a small, real deviation from the
-original ratio — and resizing the original image to (width, height),
-which differ from the original ratio by exactly `ratio_deviation`,
-means the horizontal and vertical scale factors applied are not quite
-equal. That IS a small, real, non-uniform geometric rescale (a genuine
-stretch/squash along one axis relative to the other), not merely an
-abstract number — this module computes and reports the deviation
-honestly rather than describing the resize as distortion-free. What it
-never does: crop content (no candidate discards any part of the image),
-or flip the image into a different orientation than it started in
-(landscape stays landscape, portrait stays portrait, square stays
-square).
-
-No GPU, model, torch, or PIL import anywhere in this file — pure
-arithmetic only, safe to import and unit-test on any machine.
+Multiple-of-eight rounding can introduce a small non-uniform rescale, reported
+as ``ratio_deviation`` rather than described as distortion-free.
 """
 
 from __future__ import annotations
@@ -30,12 +11,7 @@ from typing import NamedTuple
 
 
 class TargetResolution(NamedTuple):
-    """width/height: positive multiples of `multiple`, same orientation
-    as the input (landscape stays landscape, portrait stays portrait,
-    square stays square). ratio_deviation: the fractional deviation from
-    the original aspect ratio, |target_ratio - orig_ratio| / orig_ratio,
-    always >= 0 and reported honestly — never fabricated as exactly 0
-    unless it genuinely is."""
+    """Target dimensions and fractional aspect-ratio deviation."""
 
     width: int
     height: int
@@ -53,26 +29,10 @@ def _ceil_to_multiple(value: float, multiple: int) -> int:
 def compute_target_resolution(
     orig_w: int, orig_h: int, pixel_budget: int, multiple: int = 8
 ) -> TargetResolution:
-    """
-    Computes the target generation resolution for an image of size
-    (orig_w, orig_h): the multiple-of-`multiple` (width, height) pair
-    that keeps total pixel count near `pixel_budget` (SD1.5's own
-    ~512x512 training-resolution sweet spot by default — see config.py's
-    resolution_pixel_budget) while minimizing deviation from the
-    original aspect ratio. Deterministic and pure — the same inputs
-    always produce the same output; no randomness, no I/O, no GPU/model
-    dependency of any kind.
+    """Choose nearby aligned dimensions with minimal ratio deviation.
 
-    Method: compute the ideal scaled size for the pixel budget, then
-    search the (at most 4) candidate multiple-of-`multiple` pairs
-    immediately below/above that ideal size for width and height, and
-    pick whichever candidate pair's ratio is closest to the original.
-    Never crops or flips orientation (see module docstring); DOES apply
-    a small, real, non-uniform rescale whenever ratio_deviation is > 0
-    (see tests/test_resolution.py's own orientation checks for the
-    behavior this guarantees).
-
-    Raises ValueError for non-positive orig_w/orig_h/pixel_budget/multiple.
+    The pure search considers the four floor/ceiling pairs around the ideal
+    pixel-budget scale and rejects non-positive inputs.
     """
     if orig_w <= 0 or orig_h <= 0:
         raise ValueError(f"orig_w and orig_h must be positive: {orig_w!r}, {orig_h!r}")

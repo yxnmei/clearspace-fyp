@@ -1,59 +1,9 @@
-"""
-Orchestration for the Declutter path: takes an already-committed
-AnalysisResult (see app/services/analysis_service.py) and an injected LLM
-classifier, and produces a DeclutterResult — one validated AiDecision per
-expected actionable item, plus everything needed to audit how each one
-got there.
+"""Shared Declutter orchestration for API and evaluation callers.
 
-This module is the shared implementation called by both app/api/routes.py
-(HTTP) and evaluation/scripts/batch_eval.py (batch eval,
-no HTTP layer). Evaluation scripts call the same service function rather
-than duplicating this logic inside a
-route handler or an eval script directly.
-
-Dependency injection, not a direct import of app.models.mistral_llm:
-llm_classifier is typed as a Protocol (LLMClassifier, below) returning
-another Protocol (LLMResultLike, below) — matching
-app.services.analysis_service's SceneClassifier/ObjectDetector pattern.
-This module does not import app.models.mistral_llm (and therefore never
-imports ollama) at all: real app.models.mistral_llm.classify_items and
-its real LLMResult already satisfy these Protocols structurally (same
-call signature, same fields), so production wiring passes them in
-directly with zero adapter code, and both this module's own import and
-every test stay free of ollama/mistral_llm's heavier dependency surface.
-
-Failure policy (stated before implementation, same discipline as
-analysis_service.py):
-  - llm_classifier raising on the MAIN bulk call -> DeclutterReasoningError,
-    fatal, no partial DeclutterResult. This is the "total outage" case —
-    the classifier itself is unusable, not a problem with one item.
-  - llm_classifier raising during a targeted single-item recovery call ->
-    caught locally, recorded as a RecoveryFailure, that one item ends
-    STILL_INVALID; the rest of the batch proceeds. Not promoted to
-    DeclutterReasoningError: recovery only ever runs after the main call
-    already succeeded, so one recovery call failing is evidence about
-    that one item, not about the service being down.
-  - A response item with a bad identity (missing/duplicate/malformed
-    item_number), an invalid decision enum value, or a blank reason ->
-    not silently dropped and not guessed at; exactly one bounded targeted
-    recovery call is attempted for that expected item, per the same
-    per-item recovery mechanism above. Still invalid after that -> the
-    item is STILL_INVALID and absent from ai_decisions, but always
-    present in expected_item_ids/item_validity/unresolved_item_ids — a
-    caller can never mistake "we don't have a decision for this item"
-    for "this item doesn't exist."
-  - A resolved decision whose LLM-wrapper provenance is missing or
-    unrecognised is deliberately NOT trusted as raw-valid (see
-    ProvenanceWarning below) — it's routed through the same one targeted
-    recovery attempt as a genuinely-unresolved item, per explicit project
-    decision: successful JSON parsing is necessary but not sufficient for
-    ItemValidity.RAW_VALID.
-
-No NMS/actionability heuristic implemented here: item_role filtering uses
-whatever app/services/analysis_service.py already assigned (currently
-always "actionable", by default — see DetectedItem.item_role_source) —
-this module adds no new heuristic and does not implement the deliberately
-deferred `not_applicable` decision value.
+An injected classifier produces decisions for actionable items. A failed main
+call is fatal; malformed or untrusted per-item output receives one bounded
+recovery attempt, and unresolved item_ids remain explicit rather than being
+dropped. Wrapper provenance is evidence, not authoritative validity.
 """
 
 from __future__ import annotations
@@ -78,12 +28,7 @@ from app.core.semantic_conversion import SemanticConversionError, convert_mapped
 
 
 class LLMResultLike(Protocol):
-    """Structural shape of an LLM classification result — the exact
-    fields this module reads from app.models.mistral_llm.LLMResult,
-    without importing that dataclass (and therefore never importing
-    ollama) at runtime. Real LLMResult satisfies this structurally with
-    zero adapter code; a fake test double only needs these six
-    attributes, nothing else."""
+    """Structural classifier-result contract used by this service."""
 
     parsed_json: dict | list | None
     item_provenance: dict[int, ItemValidity]
@@ -94,11 +39,7 @@ class LLMResultLike(Protocol):
 
 
 class LLMClassifier(Protocol):
-    """Structural shape run_declutter() needs from an LLM classification
-    call — matches app.models.mistral_llm.classify_items's real signature
-    exactly, without importing that module's heavier dependency surface
-    (ollama) into anything that only needs the Protocol for typing. Real
-    classify_items satisfies this with zero adapter code."""
+    """Callable contract for Declutter classification."""
 
     def __call__(
         self,
@@ -111,20 +52,11 @@ class LLMClassifier(Protocol):
 
 
 class DeclutterReasoningError(RuntimeError):
-    """The injected llm_classifier raised on the main bulk classification
-    call. Fatal — see module docstring's failure policy. Distinguishable
-    by type from any per-item RecoveryFailure recorded inside a
-    (structurally complete, non-exceptional) DeclutterResult."""
+    """The main bulk classification call failed."""
 
 
 class ProvenanceWarning(BaseModel):
-    """One item that mapped and validated cleanly on the main pass, but
-    whose LLM-wrapper provenance (LLMResult.item_provenance) was missing
-    or not one of the three trusted values (raw_valid/mechanically_repaired
-    /recovery_used) — so it was NOT trusted as-is and was instead routed
-    through the same one targeted recovery attempt as a genuinely
-    unresolved item. Recorded so this conservative choice is visible,
-    not silent."""
+    """An item whose wrapper provenance was insufficient to trust directly."""
 
     item_id: ItemId
     item_number: int
@@ -132,12 +64,7 @@ class ProvenanceWarning(BaseModel):
 
 
 class RecoveryFailure(BaseModel):
-    """One targeted service-level recovery call that did not produce a
-    usable decision. Visible in DeclutterResult rather than silently
-    swallowed — see module docstring's failure policy. `detail` is a
-    short, safe description (exception type name + message, or a mapping/
-    semantic-validation summary) — never a raw traceback or other
-    server-internal payload; kept bounded in length defensively."""
+    """A bounded, sanitised record of an unsuccessful item recovery."""
 
     item_id: ItemId
     stage: Literal["call", "mapping", "semantic"]
@@ -146,46 +73,12 @@ class RecoveryFailure(BaseModel):
 
 
 class DeclutterResult(BaseModel):
-    """The output of run_declutter() for one AnalysisResult.
+    """Validated decisions and diagnostics for every expected item_id.
 
-    expected_item_ids: every actionable item this call was responsible
-    for deciding, in AnalysisResult's own deterministic order — the
-    contract surface a caller checks completeness against.
-
-    ai_decisions: exactly one AiDecision per item_id that ended up
-    RAW_VALID / MECHANICALLY_REPAIRED / RECOVERY_USED, in
-    expected_item_ids order (never recovery-call order) — never more than
-    one per item_id, by construction (see run_declutter).
-
-    unresolved_item_ids: the subset of expected_item_ids with no valid
-    decision after the one allowed recovery attempt (STILL_INVALID).
-
-    item_validity: every expected item_id's final ItemValidity —
-    authoritative, assigned only after identity mapping, duplicate/
-    unexpected checks, decision-enum validation, and non-empty-reason
-    validation (see module docstring); never a bare pass-through of the
-    LLM wrapper's own provenance hint.
-
-    mapping_warnings / semantic_errors: aggregated from the main pass AND
-    every targeted recovery call — nothing is dropped just because it
-    happened during recovery rather than the main call.
-
-    recovery_failures: visible detail for every targeted recovery call
-    that did not resolve its item (see RecoveryFailure).
-
-    is_complete: every expected item has exactly one valid decision.
-    is_strictly_valid: is_complete AND every expected item's ItemValidity
-    is RAW_VALID (never MECHANICALLY_REPAIRED or RECOVERY_USED) AND the
-    whole run produced zero warnings/errors/failures of any kind (no
-    mapping warnings, no semantic errors, no recovery failures, no
-    provenance warnings). A result can be complete-after-recovery, or
-    complete-after-repair, without being strictly valid — MECHANICALLY_
-    REPAIRED and RECOVERY_USED both mean the model's raw output needed
-    help, which is exactly what "strictly valid" is meant to rule out;
-    that distinction matters for evaluation (a model that needed rescuing
-    on every item is not equivalent to one that needed no help at all).
-    An empty expected_item_ids (no actionable items at all) is vacuously
-    both complete and strictly valid."""
+    Decisions preserve expected-item order. Missing decisions remain explicit
+    in unresolved_item_ids and item_validity. Strict validity additionally
+    requires raw-valid output with no warnings, repairs, or recovery failures.
+    """
 
     run_id: NonEmptyStr
     expected_item_ids: list[ItemId]
@@ -277,19 +170,7 @@ class DeclutterResult(BaseModel):
 
 
 def _to_llm_item(item: DetectedItem) -> dict:
-    """effective_label/confidence/position_hint — the exact shape
-    classify_items()/build_classification_prompt() expect. position_hint
-    reuses box_descriptors.describe_box()'s own "<relative_size>,
-    <position>" joining convention, so a caller of classify_items()
-    directly (e.g. the eval scripts) and this path render identically.
-
-    effective_label, not clean_label: for the overwhelming majority of
-    items (no user correction applied) these are identical, since
-    effective_label falls back to clean_label — this is a no-op change
-    for every existing caller/scenario. It only differs once
-    DetectedItem.corrected_label has been set (POST /override —
-    reclassify_item, below), which is exactly the case that must reach
-    the LLM instead of the detector's original (user-rejected) label."""
+    """Build classifier input from the reviewed effective label and box."""
     return {
         "label": item.effective_label,
         "confidence": item.confidence,
@@ -305,18 +186,7 @@ def _targeted_recovery(
     llm_classifier: LLMClassifier,
     model_name: str | None,
 ) -> tuple[AiDecision | None, list[MappingWarning], list[SemanticConversionError], RecoveryFailure | None]:
-    """One bounded, single-item targeted recovery call for one expected
-    item. Never called more than once per item by run_declutter (no
-    recursion, no second attempt) — classify_items()'s own internal
-    retry-on-invalid-JSON loop still applies inside this one call, that's
-    existing bounded robustness in the injected classifier, not a second
-    recovery layer.
-
-    Sends only this one DetectedItem, so classify_items() will number it
-    item_number=1 locally, regardless of its original position in the
-    full image — remapped explicitly back to item.item_id via a
-    single-entry {1: item.item_id} table, never assumed.
-    """
+    """Attempt one-item recovery and map its local number back to item_id."""
     try:
         result = llm_classifier(
             run_id=run_id,
@@ -356,18 +226,10 @@ def run_declutter(
     llm_classifier: LLMClassifier,
     model_name: str | None = None,
 ) -> DeclutterResult:
-    """
-    Full Declutter classification pass for one already-committed
-    AnalysisResult. model_name is passed straight through to every
-    llm_classifier call (main pass and every targeted recovery) —
-    production leaves it None (resolves to config.llm_model_name /
-    phi4-mini inside classify_items); evaluation scripts can pin a
-    specific candidate while still calling this exact same function —
-    one implementation rather than two that could drift.
+    """Classify actionable items, with at most one targeted recovery each.
 
-    Zero actionable items -> llm_classifier is never called at all; a
-    trivially complete, empty DeclutterResult is returned directly (see
-    the early-return below).
+    ``model_name`` also supports evaluation through the production path.
+    With no actionable items, the classifier is not called.
     """
     t0 = time.perf_counter()
 
@@ -435,12 +297,7 @@ def run_declutter(
             if hint in trusted_hints:
                 trusted_validity = hint
             else:
-                # Successful mapping + semantic validation is necessary
-                # but NOT sufficient for RAW_VALID — an untrusted/missing
-                # provenance hint means the wrapper never vouched for
-                # this item_number at all; treated conservatively as
-                # unresolved, never silently upgraded. See module
-                # docstring's failure policy.
+                # Mapping and semantic validity do not replace trusted provenance.
                 provenance_warnings.append(
                     ProvenanceWarning(
                         item_id=item_id,
@@ -500,15 +357,7 @@ def run_declutter(
 
 
 class ReclassifyItemResult(BaseModel):
-    """The output of reclassify_item() — a full, freshly-validated
-    (analysis, declutter) pair with exactly one item corrected/
-    reclassified, everything else byte-identical to the inputs. Returned
-    as whole objects, not a patch/delta, so the caller (app/api/routes.py)
-    never has to hand-assemble a pydantic-validated nested object itself
-    — both AnalysisResult's and DeclutterResult's own model_validators
-    re-run on construction here, exactly as they would for any other
-    caller, so an assembly mistake in this function raises immediately
-    rather than silently producing an inconsistent object."""
+    """A revalidated analysis/declutter pair after one label correction."""
 
     analysis: AnalysisResult
     declutter: DeclutterResult
@@ -523,55 +372,16 @@ def reclassify_item(
     llm_classifier: LLMClassifier,
     model_name: str | None = None,
 ) -> ReclassifyItemResult:
-    """
-    Re-runs LLM reasoning for exactly one item after a user label
-    correction (POST /override — see DetectedItem.corrected_label).
-    Touches nothing else: no other item's decision changes, item_id/box/
-    every other DetectedItem field for the corrected item are copied
-    verbatim, Grounding DINO is never called.
+    """Reclassify one corrected label while preserving item identity and box.
 
-    Caller contract (enforced by app/api/routes.py's OverrideRequest, not
-    re-validated here): item_id names a real item in analysis.items that
-    is also in declutter.expected_item_ids (i.e. actionable — resolved OR
-    already-unresolved items are both valid targets, contextual items are
-    not); corrected_label is already a validated non-empty string.
-
-    Deliberately NOT built on top of _targeted_recovery() as-is: that
-    helper (used by run_declutter()'s own service-level recovery path)
-    is always followed by the caller hardcoding ItemValidity.
-    RECOVERY_USED on success — appropriate there ("the main bulk pass
-    already failed this item, a fallback rescued it"), but wrong here: a
-    fresh, standalone, user-requested reclassification must truthfully
-    report whatever classify_items() itself observed for this one call
-    (RAW_VALID / MECHANICALLY_REPAIRED / RECOVERY_USED / STILL_INVALID),
-    so validity reflects this one call. The actual identity and content
-    validation — map_item_numbers(), convert_mapped_items_to_ai_decisions()
-    — IS reused directly, unchanged; only the validity-assignment step
-    differs from _targeted_recovery's.
-
-    Diagnostic honesty: this call always numbers its one item
-    item_number=1 locally (classify_items()'s own convention for a
-    single-item call), regardless of that item's original position in
-    the full-image run. That number is never appended to
-    declutter.mapping_warnings/semantic_errors — both are item_number-
-    keyed with no item_id field, so a bare "item_number: 1" entry there
-    would misleadingly resemble a warning about the run's actual first
-    item. Only the two structures that already carry item_id
-    (RecoveryFailure, ProvenanceWarning) record anything from this call,
-    and any pre-existing entry for this exact item_id — from the
-    original bulk run OR an earlier correction attempt — is removed
-    first, consistent with "correcting a label invalidates prior AI
-    reasoning for that item." mapping_warnings/semantic_errors are left
-    completely untouched (neither scrubbed nor appended to): they are a
-    historical audit trail of the original run, not authoritative state.
+    Other items remain unchanged. The standalone call keeps its own validity
+    rather than being labelled as recovery. Its local item number is excluded
+    from the original run's number-keyed diagnostics.
     """
     try:
         item_index = next(i for i, it in enumerate(analysis.items) if it.item_id == item_id)
     except StopIteration:
-        # Unreachable given OverrideRequest's own validation (item_id is
-        # derived from analysis.items in the first place) — an explicit,
-        # clearly-labelled internal-invariant failure if it ever isn't,
-        # rather than a bare, confusing StopIteration surfacing as a 500.
+        # Override validation normally makes this an internal invariant.
         raise AssertionError(f"internal invariant violated: item_id {item_id!r} not found in analysis.items") from None
 
     original_item = analysis.items[item_index]
@@ -631,11 +441,7 @@ def reclassify_item(
                     decision = candidate
                     validity = hint
                 else:
-                    # Successful mapping + semantic validation is
-                    # necessary but NOT sufficient — same conservative
-                    # rule run_declutter()'s main pass applies (see this
-                    # module's docstring). Not trusted; decision/validity
-                    # stay at their STILL_INVALID defaults above.
+                    # Mapping and semantic validity do not replace trusted provenance.
                     provenance_warning = ProvenanceWarning(
                         item_id=item_id,
                         item_number=1,
