@@ -2,14 +2,13 @@
 Pure core domain schemas for the Reorganise plan — content only.
 
 Deliberately excludes: PlanProvenance as a field (assigned later, by
-app/services/reorganise_service.py — not yet implemented, R2 — never by
-this module or by raw LLM output); model name/prompt version (service-
-level identity, not plan content); bytes/base64/HTTP-transport fields
-(those belong to app/api/schemas.py once route integration exists, R4).
+app/services/reorganise_service.py, never by this module or by raw LLM
+output); model name/prompt version (service-level identity, not plan
+content); bytes/base64/HTTP-transport fields (owned by the API layer).
 This keeps the dependency direction intact: app/core must never import
 app/services (DeclutterResult lives in app/services/declutter_service.py,
 so anything that needs it — DirectReorganisePayload/BothReorganisePayload
-— cannot live here either; that is R4's concern, not this module's).
+— cannot live here either).
 
 Reuses ItemId/NonEmptyStr from app.core.schemas rather than redefining
 them — one shared identity vocabulary, not a second one drifting

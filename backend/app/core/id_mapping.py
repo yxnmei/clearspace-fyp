@@ -3,8 +3,8 @@ Pure logic: map an LLM response's item_number values onto this run's
 item_id values, and flag every way that mapping can fail — missing,
 duplicated, malformed, or unexpected item numbers — rather than silently
 dropping, misattributing, or arbitrarily picking-a-winner for an item. No
-model calls here; see app/models/mistral_llm.py (not yet updated) for
-where a real LLM response reaches this function.
+model calls here; app/models/mistral_llm.py passes parsed responses into
+this function.
 
 Deliberately decision-content-agnostic: this stage only resolves identity
 (item_number -> item_id). Whether the returned `decision` string is one of

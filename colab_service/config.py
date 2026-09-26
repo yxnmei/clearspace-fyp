@@ -31,22 +31,19 @@ class Settings(BaseSettings):
     port: int = 8001
 
     # --- model identifiers ---
-    # PROVISIONAL — see colab_service/README.md's "Provisional items
-    # requiring Phase 2 verification". These are the identifiers R7's
-    # audit specified; pipeline.py must report whatever it ACTUALLY loads
-    # (see that module's own docstring), never a hardcoded assumption
-    # that loading succeeded with these exact values.
+    # These configured identifiers loaded successfully in the verified Colab
+    # environment. pipeline.py still reports the identifiers it actually loads
+    # rather than assuming configuration and runtime agree.
     base_model_id: str = "stable-diffusion-v1-5/stable-diffusion-v1-5"
     controlnet_model_id: str = "lllyasviel/sd-controlnet-depth"
-    # controlnet_aux.MidasDetector's own weights repo — the standard
-    # preprocessor the sd-controlnet-depth checkpoint was documented
-    # against (see depth.py's own docstring). Also provisional.
+    # controlnet_aux.MidasDetector's weights repo — the standard preprocessor
+    # documented for sd-controlnet-depth and used by the verified runtime.
     midas_model_id: str = "lllyasviel/Annotators"
 
     # Identifies THIS implementation (distinct from api_version, which is
     # the contract/shape version) — echoed in every /health and /generate
-    # response. "colab-dev-0.1" until a real generation has ever
-    # succeeded (see README.md's honest status section).
+    # response. The development label remains separate from the verified
+    # runtime status and does not claim acceptable output fidelity.
     service_version: str = "colab-dev-0.1"
 
     # --- resolution policy (see resolution.py) ---

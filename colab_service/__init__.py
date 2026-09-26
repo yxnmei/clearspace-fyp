@@ -17,8 +17,8 @@ never at module import time). This is what makes colab_service/tests/
 runnable on a plain local machine, no GPU, no Colab, no network.
 
 See colab_service/README.md for architecture, setup (Colab Web and the
-VS Code Colab extension), and the current Phase (this is Phase 1 —
-contract-compatible service + local tests only; no real inference has
-ever been run against this code — see README.md's own honest status
-section).
+VS Code Colab extension), configuration, evaluation findings, and
+troubleshooting. Real Colab inference and end-to-end frontend integration
+have been verified; the current whole-image preview remains illustrative
+because its fidelity is not acceptable.
 """

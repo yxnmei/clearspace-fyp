@@ -1,10 +1,9 @@
 """
 Structured JSON-lines run logging with per-stage timing.
 
-This exists before any model-calling code is written, on purpose (§3 step 1).
-Both the API layer and the evaluation harness (§3 step 3) import `stage_timer`
-from here so a single log format backs live requests and batch eval runs —
-no separate ad-hoc print()-based timing to reconcile later.
+Model boundaries and evaluation tools use `stage_timer` from here so a
+single log format backs live model calls and batch evaluation runs — no
+separate ad-hoc print()-based timing to reconcile later.
 
 Each call to a model or service stage should be wrapped like:
 
@@ -17,10 +16,9 @@ which appends one JSON line to logs/runs.jsonl:
     {"run_id": "...", "stage": "grounding_dino_detect", "duration_ms": 812.4,
      "ok": true, "meta": {"n_objects": 21}, "ts": "2026-07-30T20:47:00Z"}
 
-`meta` is free-form per stage — detection stages log object counts,
-LLM stages log JSON-validity + token counts, image-gen logs fidelity score
-once §3 step 7 is implemented. Keeping it free-form here avoids having to
-touch this file every time a new stage wants to record something new.
+`meta` is free-form per stage — callers record relevant values such as
+object counts, JSON validity, or token counts without changing this shared
+logging module for every new metric.
 """
 
 from __future__ import annotations

@@ -2,9 +2,8 @@
 Orchestration for the human-confirmation boundary: takes an already-
 validated, complete DeclutterResult plus zero or more user
 DecisionOverrides, and produces the authoritative ConfirmationResult —
-including the confirmed Keep-item IDs the future Both/Reorganise path
-consumes (PROJECT_SPEC's Both-workflow requirement: only confirmed,
-non-excluded Keep items reach it).
+including the confirmed Keep-item IDs consumed by the Both generation
+path. Only confirmed, non-excluded Keep items reach Reorganise.
 
 Wraps app.core.confirmation.confirm_decisions()/confirmed_keep_ids()
 directly — no merge/filter logic is duplicated here or in the API route

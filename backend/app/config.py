@@ -102,14 +102,13 @@ class Settings(BaseSettings):
     # runaway generation.
     reorganise_actions_llm_num_predict: int = 640
 
-    # --- marketplace listing drafts (V1 generation bounds) ---
+    # --- marketplace listing drafts (production prompt generation bounds) ---
     # Scoped to app/models/listing_llm.py's single per-item chat() call
     # and app/services/listing_service.py's per-item retry budget, and
     # nothing else. Deliberately NOT shared with Declutter classification
-    # or the Reorganise research planner: listing generation is a
-    # distinct, still-provisional boundary whose model and prompt choice
-    # stay unverified until a dedicated listing evaluation exists, so its
-    # bounds must be tunable without touching either of those.
+    # or the Reorganise research planner: listing generation is a distinct
+    # boundary whose evaluation found no approved model/prompt winner, so
+    # its bounds remain tunable without touching either of those.
     #
     # 60s: a per-call ceiling for one short "title + description for one
     # item" response. The installed ollama client's own default request
@@ -124,14 +123,11 @@ class Settings(BaseSettings):
     # most E * listing_llm_max_attempts model calls, all sequential; a
     # request with zero eligible items makes none. Bounded to 1..5.
     listing_llm_max_attempts: int = 3
-    # PROVISIONAL. The default deliberately mirrors Declutter's
-    # llm_model_name / llm_temperature purely for local convenience while
-    # listing generation has no evaluation — it is NOT evidence that the
-    # Declutter classification model or a 0.2 temperature is right for
-    # writing a marketplace listing. A listing evaluation must set these;
-    # until then they are their own knobs so tuning one never disturbs
-    # Declutter. Model name: a non-blank string. Temperature: a real,
-    # finite number in [0.0, 2.0].
+    # The default mirrors Declutter's llm_model_name / llm_temperature for
+    # local convenience, not because the listing evaluation approved this
+    # combination. These remain separate knobs so listing tuning never
+    # disturbs Declutter. Model name: a non-blank string. Temperature: a
+    # real, finite number in [0.0, 2.0].
     listing_llm_model_name: str = "phi4-mini"
     listing_llm_temperature: float = 0.2
 
@@ -177,10 +173,9 @@ class Settings(BaseSettings):
     image_gen_health_timeout_s: float = 3.0
     image_gen_request_timeout_s: float = 180.0
     image_gen_denoise_strength: float = 0.35
-    # Provisional, standard baseline — NOT an evidence-backed optimum.
-    # R7's real Colab testing must verify or revise this once a real
-    # checkpoint/pipeline exists to test it against (see
-    # app/models/image_gen_client.py's module docstring).
+    # Standard baseline, not an evidence-backed optimum. Real Colab testing
+    # verified runtime compatibility, but not acceptable output fidelity;
+    # revise this only against measured quality evidence.
     image_gen_controlnet_conditioning_scale: float = 1.0
     # Fixed default seed so a default/demo/evaluation generation is
     # reproducible run to run — not a claim about output quality.

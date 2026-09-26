@@ -4,13 +4,15 @@ request, call one function in app/services, shape the response. No model
 loading, no prompt construction, no orchestration logic — that all lives
 in services/ so it's reachable from evaluation scripts too (§4).
 
-Endpoints mirror the v1 design (§3 step 6), kept because it worked:
+Endpoints mirror the current workflows:
   POST /upload           -> scene classification + detection + (declutter) LLM classification
   POST /confirm           -> deterministic user decision confirmation + confirmed Keep-item handoff
   POST /override     -> re-run LLM reasoning for one item after user edits its label
-  POST /transcribe    -> Whisper transcript for user review before it affects context
+  POST /transcribe    -> speech-to-text transcript for user review before it affects context
   POST /generate        -> deterministic action checklist (no LLM call) + focus areas + storage suggestions + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
   POST /generate/confirmed -> server-derived Keep-item selection + the same checklist/areas/suggestions/R3 generation (Both, R6)
+  POST /listings       -> server-derived Sell-item eligibility + marketplace listing drafts
+  POST /listings/{item_id}/regenerate -> regenerate one eligible listing draft
   GET  /image-gen/health -> §5: surfaced proactively in the UI, not just on failure
 
 /upload's declutter path is the first real vertical slice: it composes
@@ -71,9 +73,8 @@ full declutter+overrides -> confirm_declutter_result() -> confirmed_keep_ids
 exclusion), keyed by item_id, entirely deterministically — it never calls
 an LLM. /override is a *label correction* ("this is a storage box, not a
 book"), which may justify re-running the LLM's reasoning for that one
-item — see app/core/schemas.py's DecisionOverride docstring for the full
-distinction. /override remains unimplemented in this task; only /confirm
-is real.
+item. See app/core/schemas.py's DecisionOverride docstring for the full
+distinction.
 
 Lazy model loading: importing this module (or app.main, which imports
 it) must never import torch/CLIP/Grounding DINO/ollama or their concrete

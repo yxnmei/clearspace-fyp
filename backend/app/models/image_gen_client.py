@@ -2,17 +2,10 @@
 Typed transport client for the remote Colab image-generation service —
 the backend-to-Colab HTTP boundary only.
 
-Honest status, stated plainly: **no Colab service exists in this
-repository yet.** This module does not talk to anything real — it
-defines the strict, versioned request/response CONTRACT that R7's
-version-controlled Colab implementation must satisfy, and validates every
-byte crossing that boundary against it. Whether MiDaS depth estimation +
-ControlNet-depth + Stable Diffusion img2img actually works, on this
-contract, on real GPU hardware, is unproven until R7's real smoke test —
-see PROJECT_SPEC.md/DEVLOG.md's R3 design note. Nothing here should be
-read as evidence that image generation works; R3 is mocked-contract
-verification only, exercised entirely against monkeypatched
-`requests.get`/`requests.post`, never a real socket.
+The version-controlled Colab service implements this contract, and the
+backend-to-Colab runtime path has completed a real GPU smoke test. This
+module remains transport-only: it validates every byte crossing the
+boundary but does not establish output fidelity or item preservation.
 
 `image_gen_base_url` being a reserved/static ngrok domain (config.py) is
 intended to avoid needing rediscovery every session — it is a

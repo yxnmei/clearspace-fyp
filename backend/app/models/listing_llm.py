@@ -2,19 +2,12 @@
 LLM boundary: one marketplace listing draft (title + description) for ONE
 eligible item, via local Ollama.
 
-PROVISIONAL. Model and prompt choice for listing generation have now been
-evaluated, but no candidate was validated or approved for promotion. The
-first real listing evaluation ran on 2026-09-07 (a
-prompt-first matrix: production "v1" vs three evaluation-only prompts
-eval-a1 / eval-a2 / eval-a3, all on phi4-mini at temperature 0.2; full
-write-up in backend/evaluation/README.md). No prompt arm satisfied the
-predeclared hard safety rule: every arm, this module's "v1" included,
-either reproduced an injected brand / price / contact string or made
-unsupported factual claims about the item. No winner was promoted, so
-"v1" below and the app.config listing_llm_* defaults are unchanged and
-still provisional, and mandatory human review / editing of every draft
-remains required. The prompt version must be bumped and the choice
-revisited once a prompt clears that safety bar.
+Model and prompt choice remain unapproved for autonomous use. The
+2026-09-07 evaluation compared production v1 with three evaluation-only
+prompts; no arm passed the predeclared safety rule. Production v2 retains
+v1 wording when no seller details are supplied and adds a seller-details
+branch that has not received equivalent real-model evaluation. Mandatory
+human review and editing of every draft therefore remains required.
 
 Deliberately a NEW, dedicated module, separate from Declutter
 classification (app/models/mistral_llm.py) and the Reorganise research
@@ -315,9 +308,9 @@ def generate_listing_draft_once(
     caller's job.
 
     `model_name` defaults to settings.listing_llm_model_name (a
-    listing-scoped, provisional setting — NOT Declutter's llm_model_name)
-    and is accepted as an override only so a future evaluation script can
-    sweep candidates through the same code path; the POST /listings route
+    listing-scoped setting — NOT Declutter's llm_model_name) and is accepted
+    as an override so evaluation scripts can sweep candidates through the
+    same code path; the POST /listings route
     supplies the service's already-resolved model name explicitly.
     """
     prompt = build_listing_prompt(item_label, listing_name, condition)  # validates inputs first

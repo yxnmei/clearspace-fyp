@@ -230,9 +230,9 @@ export function deriveDeclutterWizard(input = {}) {
   // nothing to generate, so Listings counts as complete without ever
   // calling generateListingDrafts, matching ListingsView's own truthful
   // empty state (no button, no request). Otherwise Listings is complete
-  // only once a batch has actually finished (listingStatus === "ready");
-  // local edits/discards never affect this, they never change
-  // listingStatus.
+  // whenever listingStatus is "ready", whether the current drafts came
+  // from a completed batch or the run-scoped cache. Local edits/discards
+  // never affect this status.
   const listingsComplete = listingsUnlocked && (eligibleSellCount === 0 || listingStatus === "ready");
 
   const completedStepIds = [];

@@ -14,6 +14,9 @@ What a result contains, and where each part comes from:
                       calls (provenance deterministic_direct); the
                       at-most-one-call model path is research-only.
                       Truthful provenance either way.
+  tidy_plan           app.core.reorganise_phases: deterministic phases
+                      built from selected items and any confirmed,
+                      non-excluded departing decisions.
   focus_areas         app.core.reorganise_focus_areas: deterministic,
                       from the detected `position` descriptors only.
   storage_suggestions app.core.reorganise_storage: deterministic, from

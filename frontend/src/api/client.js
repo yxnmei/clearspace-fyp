@@ -180,16 +180,15 @@ export async function generateConfirmedReorganisation({
 // POST /listings (marketplace listing draft generation, Stage 2 frontend),
 // JSON body, matching app/api/routes.py's ListingRequest exactly
 // (extra="forbid" there, so an unrecognised field is a 422, never
-// silently ignored). Sends ONLY run_id + the whole round-tripped
-// analysis + the whole round-tripped declutter + serialised overrides,
-// same round-trip-whole discipline as confirmDecisions()/overrideItem():
-// the backend derives the eligible Sell set and the authoritative
+// silently ignored). Sends run_id, the whole round-tripped analysis and
+// declutter, serialised overrides, and seller-supplied listing_details.
+// The backend still derives the eligible Sell set and authoritative
 // confirmation server-side from (declutter, overrides).
 //
 // Deliberately has NO eligibleItemIds/sellItemIds parameter at all, and
-// never sends a confirmation, effective labels, generated draft text,
-// image data, user context, or model configuration, so there is no way
-// to accidentally send one.
+// never sends a confirmation, generated draft text, image data, user
+// context, or model configuration, so there is no way to accidentally
+// make any of those authoritative.
 // `listingDetails` is the seller-supplied name / condition per item_id
 // ({ item_id, listing_name, condition }[]), sent as an explicit structured
 // field. Eligibility stays server-derived: details for a non-Sell item are
@@ -204,7 +203,7 @@ export function generateListings({ runId, analysis, declutter, overrides = [], l
 
 // POST /listings/{item_id}/regenerate (true single-item regeneration).
 // The body is EXACTLY the same shape generateListings() sends (run_id +
-// whole analysis + whole declutter + overrides); the one item to
+// whole analysis + whole declutter + overrides + listing_details); the one item to
 // regenerate is identified ONLY by the path segment, encodeURIComponent-
 // encoded, and item_id is never repeated in the body.
 //

@@ -16,10 +16,9 @@ app.py's own tests never call run_generation() for real either — they
 monkeypatch colab_service.app's own reference to this function with a
 fake before every test.
 
-Model identifiers (config.base_model_id / controlnet_model_id) and the
-diffusers pipeline class name below are PROVISIONAL — see
-colab_service/README.md's "Provisional items requiring Phase 2
-verification". This module reports whatever it ACTUALLY loaded
+The configured model identifiers and diffusers pipeline class have loaded
+successfully in the verified Colab environment. This module still reports
+whatever it ACTUALLY loaded
 (_loaded_base_model_id/_loaded_controlnet_model_id), never a hardcoded
 assumption that loading with the configured identifiers succeeded.
 
@@ -78,12 +77,9 @@ def load_pipeline(settings: Any) -> None:
     Deliberately does NOT pass safety_checker=None — see module
     docstring's "Safety checker" section.
 
-    PROVISIONAL (see module docstring): the exact diffusers pipeline
-    class, its constructor kwargs, and whether settings.base_model_id /
-    settings.controlnet_model_id genuinely resolve on the real
-    HuggingFace Hub all need Phase 2 confirmation on a real Colab GPU
-    runtime — this function is written against the diffusers API as
-    currently understood, not yet proven to work.
+    The pipeline class, constructor arguments, and configured model IDs
+    have loaded successfully on a real Colab GPU. Actual loaded IDs are
+    recorded rather than inferred from configuration alone.
     """
     global _pipeline, _loaded_base_model_id, _loaded_controlnet_model_id
     if _pipeline is not None:

@@ -471,10 +471,9 @@ export function useDeclutterFlow({
     // elsewhere invalidates this via invalidateConfirmation() (which
     // bumps this same ref), but never via flowGenerationRef.
     const generation = ++confirmationGenerationRef.current;
-    // Starting a fresh confirmation invalidates any prior listing result:
-    // the drafts it produced were keyed to the OLD confirmation. This is
-    // the one invalidation not chained off invalidateConfirmation()
-    // (which confirm() does not call).
+    // Starting a fresh confirmation invalidates any in-flight listing
+    // request and resets transient listing state. The current run's cache
+    // is retained and filtered against the new confirmation on success.
     invalidateListing();
     const runId = flow.runId;
     const declutterSnapshot = flow.declutter;

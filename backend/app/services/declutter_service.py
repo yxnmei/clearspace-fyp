@@ -6,7 +6,7 @@ expected actionable item, plus everything needed to audit how each one
 got there.
 
 This module is the shared implementation called by both app/api/routes.py
-(HTTP, not yet wired) and evaluation/scripts/batch_eval.py (batch eval,
+(HTTP) and evaluation/scripts/batch_eval.py (batch eval,
 no HTTP layer) — see PROJECT_SPEC.md §4's "evaluation scripts call the
 same services/ functions" principle. Never duplicate this logic inside a
 route handler or an eval script directly.

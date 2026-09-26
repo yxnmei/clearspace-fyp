@@ -93,7 +93,7 @@ class EmptyConfirmedKeepError(RuntimeError):
     malformed caller input, so it must never collide with a bare `except
     ValueError` written for BothPipelineInputError/ConfirmationInputError/
     ReorganisePipelineInputError. Raised AFTER confirm_declutter_result()
-    succeeds but BEFORE the planner loader is ever called — see
+    succeeds but BEFORE the generation pipeline is called — see
     run_both_generation's own docstring."""
 
 
@@ -161,8 +161,11 @@ def run_both_generation(
       4. Only now is run_reorganise_pipeline() called, with
          selected_item_ids=confirmation.confirmed_keep_ids — the ONLY
          source of selection this function ever uses — and with
-         action_generator=None, the explicit production choice: the
-         deterministic checklist is built directly, no model is called,
+         departing_decisions=confirmation.confirmed_decisions so the
+         deterministic tidy plan can include confirmed sort-out steps;
+         excluded and Keep decisions are filtered inside the pipeline.
+         It also receives action_generator=None, the explicit production
+         choice: the deterministic checklist is built directly, no model is called,
          and provenance is DETERMINISTIC_DIRECT. image_bytes/
          image_media_type/expected_input_image_sha256 are (re)validated
          inside run_reorganise_pipeline() itself (its own existing

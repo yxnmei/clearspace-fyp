@@ -104,7 +104,7 @@ class ListingEligibilityInputError(ValueError):
     raised for malformed override input). It is not a subclass of either,
     so `except IncompleteDeclutterError` and `except ConfirmationInputError`
     can never accidentally swallow an analysis/Declutter/run mismatch, and
-    a future route can map this one to its own status code independently.
+    the listing routes can map this mismatch to their own 422 response.
     It IS a ValueError subclass, matching this codebase's
     BothPipelineInputError / ReorganisePipelineInputError convention, so a
     caller that only wants "some malformed input" can still catch

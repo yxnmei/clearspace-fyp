@@ -18,11 +18,9 @@ fresh run_id, not a resumed session — no server-side session store
 exists, by design, so nothing needs cross-run uniqueness). RunContext
 carries run_id; DetectedItem itself does not repeat it.
 
-Not yet true, and not claimed as true here: no API route is implemented
-(app/api/routes.py's handlers are all NotImplementedError). The future
-workflow response contract — once built — MUST include RunContext/run_id
-once per response; that is a requirement on that not-yet-designed
-contract, not a description of current behaviour.
+API responses and their nested workflow results carry matching run_id
+values so their shared run identity can be validated. DetectedItem does
+not repeat run_id; it is identified within the enclosing run by item_id.
 
 Decision override vs. label correction (kept deliberately separate, per
 project decision): a DecisionOverride ("AI said Keep, user chose Donate")
@@ -31,13 +29,9 @@ label correction ("this is a storage box, not a book") is a different
 user action, handled by the existing /override route, and may justify
 re-running the LLM — that route is out of scope for this module.
 
-Deliberately NOT included yet (this session's task boundary): Reorganise
-placement/zone schemas and image-generation request/result schemas —
-their actual shape depends on service contracts (including the still-
-unconfirmed Colab depth-map question) that haven't been designed yet.
-Adding them now would be guessing ahead of that design, not a shared base
-anything here actually needs. StageTiming *is* included, below — it's
-what AnalysisResult (app/services/analysis_service.py) actually needs now.
+Workflow-specific planning and image-generation schemas live in their
+own core, service, and transport modules. This module retains the shared
+identity, analysis, decision, override, confirmation, and timing types.
 """
 
 from __future__ import annotations
@@ -110,14 +104,12 @@ class Decision(str, Enum):
 class DetectedItem(BaseModel):
     """One stable, user-facing detected instance.
 
-    item_id: assigned once, after label cleanup, box validation, and
-    dedup/NMS — a raw detection merged away during dedup never receives a
-    user-facing item_id (see analyse_image, not yet implemented). Unique
-    within one run_id, never derived from label text.
+    item_id: assigned once, after label cleanup and box validation. Every
+    surviving detection receives a user-facing item_id. Unique within one
+    run_id, never derived from label text.
 
-    Assignment order (documented now, implemented when analyse_image() is
-    built — this schema doesn't assign IDs itself): top-to-bottom then
-    left-to-right, sorted by (box.y1, box.x1), ties broken by
+    Assignment order in analyse_image() is top-to-bottom then left-to-right,
+    sorted by (box.y1, box.x1), with ties broken by
     source_detection_index. Chosen over raw, undocumented detector output
     order because it's deterministic, reproducible from the box data
     alone, and gives a predictable, explainable presentation order in the
@@ -133,22 +125,13 @@ class DetectedItem(BaseModel):
     Keeping both means a bad clean_label can be traced back to exactly
     what the detector said, without re-running detection.
 
-    position / relative_size: two separate fields, not one combined
-    string — app/core/box_descriptors.py (a pre-existing file under
-    separate, active revision this session deliberately does not edit)
-    currently only exposes a single combined describe_box() -> "large,
-    upper-left" string via two *private* helpers (_size_label,
-    _position_label). These fields are typed as plain non-empty trimmed
-    strings, not a Literal enum of box_descriptors' current value set,
-    specifically because that file's exact vocabulary is still in flux
-    and not owned by this module — hardcoding it here would go stale the
-    moment that file changes. Wiring real values into these fields (and
-    possibly exposing size/position separately from box_descriptors, a
-    small addition to that file's public API) is deferred to the
-    analyse_image() task, not resolved here.
+    position / relative_size: separate values produced by
+    app/core/box_descriptors.describe_box_parts(). They remain plain
+    non-empty strings rather than duplicating that module's vocabulary as
+    a Literal enum here.
 
-    source_detection_index: the raw detector's pre-dedup output index —
-    kept only for traceability/debugging (e.g. tying a duplicate-detection
+    source_detection_index: the raw detector's output index — kept only
+    for traceability/debugging (e.g. tying a duplicate-detection
     complaint back to the exact Grounding DINO output), never used as or
     substituted for identity.
 
@@ -298,9 +281,8 @@ class ConfirmedDecision(BaseModel):
 class ItemValidity(str, Enum):
     """LLM output validity states — kept distinct per item, never averaged
     into one pass/fail boolean. Assignment logic lives in the LLM wrapper
-    (app/models/mistral_llm.py, not yet updated — deferred to the task
-    that wires it); this enum is the shared vocabulary it and its callers
-    will use."""
+    (app/models/mistral_llm.py); this enum is the shared vocabulary used
+    by the wrapper and its callers."""
 
     RAW_VALID = "raw_valid"
     MECHANICALLY_REPAIRED = "mechanically_repaired"

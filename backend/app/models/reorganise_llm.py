@@ -8,8 +8,8 @@ room, Direct Reorganise and Both both build the deterministic plan
 directly (provenance "deterministic_direct") and never call this module.
 Nothing here is deleted: it remains fully wired for unit tests and for
 evaluation/scripts/compare_reorganise_planning.py, and
-run_reorganise_pipeline() still accepts a planner explicitly. Every call
-it does make is now bounded by an explicit client timeout and
+the research planning service still accepts this generator explicitly.
+Every call it does make is bounded by an explicit client timeout and
 num_predict — see generate_reorganise_plan_once().
 
 Model name resolved from config — this module is model-name-agnostic,

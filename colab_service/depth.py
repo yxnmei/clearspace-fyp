@@ -1,14 +1,12 @@
 """
 MiDaS depth extraction — via controlnet_aux.MidasDetector, the standard
 preprocessor the sd-controlnet-depth checkpoint (config.controlnet_model_id)
-was documented/trained against. PROVISIONAL — see colab_service/README.md's
-"Provisional items requiring Phase 2 verification": this needs confirming
-on a real Colab GPU runtime, not assumed correct from this docstring
-alone. If controlnet_aux proves incompatible with whatever diffusers/
-torch versions Colab's runtime resolves to, the documented fallback is
+was documented/trained against and has run successfully in the verified
+Colab environment. If controlnet_aux becomes incompatible with a future
+diffusers/torch combination, the documented fallback is
 transformers.DPTForDepthEstimation + Intel/dpt-hybrid-midas (more manual
 normalization, more room for a depth-format mismatch bug — not
-implemented here, deliberately deferred unless Phase 2 shows it's needed).
+implemented because the current integration does not need it).
 
 Every heavy import (controlnet_aux, and transitively torch) is deferred
 to inside load_depth_detector() — NEVER at module import time. This is
@@ -46,9 +44,8 @@ def extract_depth_map(image: Any, *, model_id: str) -> Any:
     """Runs MiDaS on `image` (a PIL.Image.Image) and returns the depth
     map as a PIL.Image.Image, in the format controlnet_aux's own
     MidasDetector already produces (a 3-channel grayscale-visualized
-    depth image — the format the sd-controlnet-depth checkpoint expects
-    directly, no extra normalization needed if this assumption holds;
-    PROVISIONAL, see module docstring).
+    depth image accepted directly by the configured ControlNet pipeline;
+    no extra normalization is applied).
 
     `image` must already be RGB and already resized to the target
     generation resolution (resolution.compute_target_resolution()).

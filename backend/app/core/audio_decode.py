@@ -17,8 +17,8 @@ file is involved on either path.
 This module imports no model library. PyAV and numpy are imported LAZILY
 inside the decode call, so importing this module — or app.api.routes —
 pulls in neither. PyAV is imported directly and never through
-faster_whisper.audio: faster-whisper lives in requirements-eval.txt and
-must not become runtime infrastructure.
+faster_whisper.audio, keeping decoding independent of either supported
+speech-to-text backend.
 
 Error messages are fixed, bounded strings. No decoder text, no file
 path, and no fragment of the payload ever reaches a message a caller

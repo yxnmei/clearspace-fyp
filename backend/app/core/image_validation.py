@@ -10,8 +10,8 @@ Used by:
     outbound image before it is ever sent to the remote service
     (_validate_image delegates here).
   - app/services/reorganise_pipeline_service.py (R4) — validates the
-    resubmitted original image before the (potentially slow) Phi-4-mini
-    planning call, so malformed image data never reaches the planner.
+    resubmitted original image before deterministic plan construction and
+    remote image generation, so malformed image data reaches neither.
 
 One implementation, not two that drift, per PROJECT_SPEC.md §4 — the
 same discipline already applied to ItemId/NonEmptyStr in

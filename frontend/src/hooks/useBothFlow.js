@@ -49,11 +49,9 @@ export function useBothFlow({ listingApi } = {}) {
   // useBothFlow only passes the `listingApi` injection seam straight
   // through (when omitted, useDeclutterFlow uses its own default), and
   // adds nothing: listing operations must NOT touch Reorganise state,
-  // and the wrappers below that DO invalidate Reorganise
-  // (setDecisionOverride/setItemExcluded/clearDecisionOverride/
-  // correctLabel/confirm/submit/reset) already invalidate listing too,
-  // because the composed hook's own versions of those chain through
-  // invalidateConfirmation -> invalidateListing.
+  // while the composed hook invalidates listing state internally when
+  // confirmation meaning changes. The wrappers below separately
+  // invalidate Reorganise generation state.
   const declutter = useDeclutterFlow({
     uploadPath: "both",
     normaliseUploadResponse: normaliseBothUploadResponse,

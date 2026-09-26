@@ -9,11 +9,10 @@ NOT require a temporary file: whisper.transcribe's `audio` parameter
 accepts str | ndarray | Tensor, and whisper.load_audio (the path-and-
 ffmpeg entry point) is never called here.
 
-Production defaults to openai-whisper — the only backend declared in
-requirements.txt. faster-whisper stays reachable through its explicit
-model name for the V3 comparison; it lives in requirements-eval.txt, so
-this module treats a missing import as an ordinary unavailable-backend
-condition rather than a crash.
+Production defaults to faster-whisper for measured loading latency, not
+accuracy; openai-whisper remains supported. Both backends are declared in
+requirements.txt, and a missing import is reported as an unavailable
+backend rather than an unbounded internal error.
 
 Importing this module pulls in NO model library: whisper, faster_whisper,
 torch, ctranslate2 and numpy are all imported lazily inside the loader.
@@ -183,8 +182,8 @@ def _load_model_cached(
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
-            # Expected in a runtime-only install: faster-whisper is
-            # declared in requirements-eval.txt, not requirements.txt.
+            # Keep a missing runtime backend behind the bounded service
+            # error used for either implementation.
             raise TranscriberUnavailableError("speech-to-text backend is not installed") from exc
         try:
             return WhisperModel(

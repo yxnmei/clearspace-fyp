@@ -9,8 +9,7 @@ enforces the decision enum, requires a non-empty reason, and requires a
 real item_id, by construction: it delegates to AiDecision's own field
 types (Decision, NonEmptyStr) rather than re-implementing the same checks
 a second time. Failures are collected and returned structured, not raised
-per-item and not silently dropped — so a future caller (the LLM wrapper,
-app/models/mistral_llm.py, not yet updated) doesn't have to remember to
+per-item and not silently dropped, so the LLM wrapper does not have to
 instantiate AiDecision correctly by hand for every item.
 """
 
