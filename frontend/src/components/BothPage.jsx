@@ -25,9 +25,8 @@ import { Button } from "./ui/button";
 const NEXT_STEP_NOTE =
   "On the Results screen, Tidy up and Marketplace listings are separate actions. Neither starts automatically, and you can run either first.";
 
-// Both uses the same mounted-but-hidden wizard pattern as Declutter. The
-// hook remains the sole owner of workflow, listing and generation state;
-// this component only controls which unlocked screen the user is viewing.
+// Mounted-but-hidden views preserve presentation state; the hook owns
+// workflow, listing and generation state.
 export default function BothPage() {
   const flow = useBothFlow();
   const health = useImageGenHealth();
@@ -88,9 +87,7 @@ export default function BothPage() {
     setViewedStep(wizard.continueTargetId);
   }, [wizard.canContinue, wizard.continueTargetId]);
 
-  // Same as DeclutterPage: Edit links on Confirm and Results navigate to
-  // Decide items with a decision filter applied; nothing here changes a
-  // decision, and the review section owns the filter afterwards.
+  // Edit links request a review filter without changing decisions.
   const [filterRequest, setFilterRequest] = useState(null);
   const handleEditCategory = useCallback(
     (filterId) => {
@@ -106,10 +103,7 @@ export default function BothPage() {
     setViewedStep("upload");
   }, [flow.reset]);
 
-  // The Analyse view's own heading exists only while the request is
-  // running or has failed; a successful analysis is headed by the
-  // summary's "What we found" instead (the tracker already announces
-  // completion), so the page never shows the same state twice.
+  // On success the summary supplies the only heading.
   const analyseHeading = flow.status === "error" ? "Analysis unsuccessful" : "Analysing your space";
   const showAnalyseHeading = !(flow.status === "ready" && hasAnalysis);
 
@@ -143,8 +137,6 @@ export default function BothPage() {
               <h2 className="text-title font-semibold tracking-tight text-foreground">{analyseHeading}</h2>
             )}
 
-            {/* One hierarchy per state: the heading above says which
-                state this is, so each panel is a single calm line. */}
             {flow.status === "uploading" && (
               <p
                 role="status"
@@ -168,10 +160,6 @@ export default function BothPage() {
               </p>
             )}
 
-            {/* Success renders no heading or banner of its own: the tracker's
-                live status line already says "Analysis complete." and names
-                the next action, and the summary below supplies the screen's
-                single visible h2. */}
             {hasAnalysis && <DeclutterAnalysisSummary analysis={flow.analysis} declutter={flow.declutter} />}
 
             <WizardNav
@@ -199,8 +187,6 @@ export default function BothPage() {
                 enableBackToTop
                 filterRequest={filterRequest}
               />
-              {/* Same shared bar as the Declutter wizard: the only Back /
-                  Continue pair on this screen, guard unchanged. */}
               <DecisionActionBar
                 totalCount={decideItemCount}
                 counts={counts}
@@ -224,8 +210,6 @@ export default function BothPage() {
         <div hidden={viewed !== "confirm"}>
           {hasAnalysis && (
             <div className="space-y-6">
-              {/* The same single panel as the Declutter wizard, with Both's
-                  own next-step note. */}
               <DeclutterConfirmationPanel
                 counts={counts}
                 changedCount={changedCount}
@@ -258,10 +242,6 @@ export default function BothPage() {
         <div hidden={viewed !== "reorganise"}>
           {hasAnalysis && hasConfirmation && (
             <div className="space-y-8">
-              {/* The compact Declutter overview first: counts, the item
-                  chips collapsed behind one control, Edit decisions back to
-                  Decide items. Tidy up and Marketplace listings, the two
-                  result actions, follow it unchanged. */}
               <DeclutterResultsSummary
                 confirmation={flow.confirmation}
                 reviewItems={flow.reviewItems}
@@ -270,20 +250,8 @@ export default function BothPage() {
                 intro="Your decisions are confirmed. Tidy up uses the items you kept; listings use the items you chose to sell."
               />
 
-              {/* Results composition: two visually and
-                  semantically distinct result sections, Tidy up (confirmed
-                  Keep items) then Marketplace listings (confirmed Sell
-                  items), then the global actions. No introduction: the
-                  stepper's status line already says both are available in
-                  either order. The two sections are independent: each owns
-                  its own button, busy state and error, nothing here derives
-                  a shared one, and neither starts on its own. */}
+              {/* Tidy up and listings are independent actions. */}
               {flow.generateResult ? (
-                /* The generated result IS the Tidy up section: its own
-                   heading, checklist, visual preview (including its own
-                   "unavailable" state, so no separate health banner is
-                   shown beside it) and storage ideas. No onStartOver: the
-                   single global Start over lives after both sections. */
                 <ReorganiseResult
                   heading="Tidy up"
                   generateResult={flow.generateResult}
@@ -309,12 +277,7 @@ export default function BothPage() {
                         preview from the {flow.confirmation.confirmedKeepIds.length} item
                         {flow.confirmation.confirmedKeepIds.length === 1 ? "" : "s"} you confirmed as Keep.
                       </p>
-                      {/* The image-service notice belongs to Tidy up only (it
-                          is the visual preview that needs the service), so it
-                          sits here, inside this section, and is the ONE
-                          notice: the banner renders nothing when the service
-                          is available, and it never disables Create tidy
-                          plan, the checklist completes without the preview. */}
+                      {/* Image service health affects only the optional preview. */}
                       <div className="mt-3 empty:hidden">
                         <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
                       </div>
@@ -371,10 +334,7 @@ export default function BothPage() {
                 missingListingItemIds={flow.missingListingItemIds}
               />
 
-              {/* Global actions, after BOTH result sections: the one Start
-                  over for the whole Both workflow (the same full reset as
-                  before; ReorganiseResult no longer carries one here), then
-                  the wizard's Back as the final control. */}
+              {/* One reset covers the whole combined workflow. */}
               <div aria-label="Results actions" role="group" className="border-t border-border pt-6">
                 <Button
                   type="button"

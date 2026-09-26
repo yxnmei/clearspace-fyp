@@ -1,20 +1,8 @@
 import { HandHeart, PackageCheck, Tag, Trash2 } from "lucide-react";
 import { cn } from "../lib/cn";
 
-// The four Declutter decisions as ONE segmented control. Native radio
-// semantics are kept intact: each option is a real <input type="radio">
-// in a per-item group (name derived from item_id), so browser/jsdom
-// keyboard behaviour (Tab to the checked member, arrow keys between
-// members) needs no re-implementation. The input is visually hidden and
-// the visible segment beside it is styled through the `peer` classes,
-// so the focus ring and disabled state follow the input's real state.
-//
-// Every option shows an icon, its text label and its decision colour
-// token; colour is never the only cue. Class strings are written out in
-// full so Tailwind's scanner keeps them.
-//
-// DECISION_OPTIONS is shared with the decision summary bar so the icon +
-// colour per decision exists exactly once.
+// Native per-item radios preserve keyboard semantics. Icons and labels keep
+// colour from being the only cue; literal classes remain visible to Tailwind.
 export const DECISION_OPTIONS = [
   {
     value: "keep",

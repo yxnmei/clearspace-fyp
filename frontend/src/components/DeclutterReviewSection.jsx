@@ -13,23 +13,8 @@ import {
 } from "../lib/declutterReview";
 import { cn } from "../lib/cn";
 
-// The Declutter review content: the human-control header, a decision
-// filter row, ONE sticky analysed-room image, the compact actionable
-// rows, and the unresolved / contextual lists. It renders no
-// confirmation counts, no Confirm button and no confirmed summary, those
-// belong to the Confirm choices view of the page that composes this
-// (DeclutterPage or BothPage, both via DeclutterConfirmationPanel).
-//
-// activeItemId / showAllBoxes / itemRefs / decisionFilter are local
-// presentational state for linking the overlay boxes to the rows and for
-// narrowing the visible list. None of them is workflow state, and none
-// of them changes a decision, correction or exclusion. The three-way
-// partition comes from lib/declutterReview so nothing here or in the
-// pages re-implements it.
-//
-// enableBackToTop mounts the floating Back to Top control plus its
-// sentinels. DeclutterPage and BothPage both pass it on their Decide
-// items views; a composition that omits it gets no floating control.
+// Shared review workspace. Overlay linkage and filtering are local presentation
+// state; confirmation belongs to the composing page.
 export default function DeclutterReviewSection({
   reviewItems,
   imageUrl,
@@ -39,10 +24,7 @@ export default function DeclutterReviewSection({
   correctingItemId = null,
   correctionError = null,
   enableBackToTop = false,
-  // { id, nonce }: a one-shot request from the page to apply a decision
-  // filter (from the Confirm screen's per-category Edit links). Applied
-  // whenever the object changes; the chips remain the user's own control
-  // afterwards.
+  // One-shot external filter request; chips remain user-controlled afterwards.
   filterRequest = null,
 }) {
   const correctionDisabled = correctingItemId !== null;
@@ -51,10 +33,8 @@ export default function DeclutterReviewSection({
   }
 
   const [activeItemId, setActiveItemId] = useState(null);
-  // Defaults to true so the analysed image shows its detection boxes as
-  // soon as results appear. Activating one item quietens the rest.
+  // Show boxes initially; an active item quietens the others.
   const [showAllBoxes, setShowAllBoxes] = useState(true);
-  // Default "all"; filters by an item's current review_decision.
   const [decisionFilter, setDecisionFilter] = useState("all");
   useEffect(() => {
     if (!filterRequest) return;
@@ -77,9 +57,7 @@ export default function DeclutterReviewSection({
   }
 
   function deactivateItem(itemId) {
-    // Guards against a blur/mouseleave on item A clobbering item B's
-    // freshly-set active state when focus/hover moves directly between
-    // rows in the same tick.
+    // Do not let item A's exit clear newly active item B.
     setActiveItemId((current) => (current === itemId ? null : current));
   }
 
@@ -101,16 +79,13 @@ export default function DeclutterReviewSection({
     [resolvedItems, decisionFilter]
   );
 
-  // Unresolved items are always shown (they block confirmation and must
-  // never be hidden by a filter); contextual items carry no decision and
-  // stay in their own section. Only the resolved list is narrowed.
+  // Filters narrow resolved items only; unresolved blockers stay visible.
   const overlayItems = useMemo(
     () => [...visibleResolvedItems, ...unresolvedItems, ...contextualItems],
     [visibleResolvedItems, unresolvedItems, contextualItems]
   );
 
-  // If the active selection is no longer visible after a filter change,
-  // drop it so no row-less overlay box stays highlighted.
+  // Drop highlights whose row became filtered out.
   useEffect(() => {
     if (activeItemId == null) return;
     const stillVisible = overlayItems.some((item) => item.item_id === activeItemId);
@@ -239,9 +214,7 @@ export default function DeclutterReviewSection({
       {enableBackToTop && (
         <>
           <span ref={bottomSentinelRef} aria-hidden="true" className="block h-px w-full" />
-          {/* Lifted clear of the sticky DecisionActionBar the pages render
-              directly below this section (taller when its controls stack
-              on mobile), so the two never share the bottom-right corner. */}
+          {/* Clear the sticky action bar, including its taller mobile layout. */}
           <BackToTopButton
             scrollTargetRef={workspaceRef}
             topSentinelRef={topSentinelRef}

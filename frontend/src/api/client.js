@@ -1,11 +1,12 @@
-// Every network call in the app lives here, with no fetch() calls
-// scattered inline inside components or hooks. hooks/ import from
-// this file; they never call fetch directly.
+// Nested analysis and decision inputs are round-tripped whole so the backend
+// can revalidate them. Eligibility always remains server-derived.
 
 import { fileToBase64 } from "../utils/fileEncoding";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
+// The message is fixed and display-safe. status/detail are routing data only;
+// raw response bodies never become displayed messages.
 export class ApiError extends Error {
   constructor(status, detail = null) {
     super("The service could not complete the request. Please try again.");
@@ -25,7 +26,7 @@ async function request(path, options = {}) {
         detail = payload.detail;
       }
     } catch {
-      // A proxy may return HTML or plain text. Never copy it into the error.
+      // Proxies may return HTML or text. Raw bodies never enter UI messages.
     }
     throw new ApiError(res.status, detail);
   }
@@ -36,8 +37,6 @@ export function getBackendHealth() {
   return request("/health");
 }
 
-// Surfaced proactively in the UI (useImageGenHealth hook), not just
-// wrapped in a try/catch around the real generate() call.
 export function getImageGenHealth() {
   return request("/image-gen/health");
 }
@@ -50,14 +49,7 @@ export function uploadImage({ file, path, context }) {
   return request("/upload", { method: "POST", body: form });
 }
 
-// Decision confirmation (Keep/Sell/Donate/Discard overrides + exclusion)
-// JSON body, distinct from overrideItem() below, which is the
-// *label-correction* endpoint (/override, implemented on the backend,
-// see app/api/routes.py's OverrideRequest/OverrideResponse). Never send
-// `declutter` reshaped/stripped: it's the exact validated nested object
-// POST /upload returned, round-tripped whole so the backend can
-// revalidate it (provenance/warnings/validity/timings included) rather
-// than trusting anything the client claims about it.
+// Decision confirmation is distinct from label correction below.
 export function confirmDecisions({ runId, declutter, overrides = [] }) {
   return request("/confirm", {
     method: "POST",
@@ -66,16 +58,7 @@ export function confirmDecisions({ runId, declutter, overrides = [] }) {
   });
 }
 
-// Label correction (re-run LLM reasoning for exactly one item after the
-// user rejects its detected label), JSON body, like confirmDecisions,
-// not the multipart shape this function used before /override was
-// implemented. `analysis`/`declutter` are round-tripped whole, same
-// reasoning as confirmDecisions above: the backend revalidates them
-// (including that they're a genuine matched pair from the same run)
-// rather than trusting anything the client claims. Distinct from
-// setDecisionOverride()/confirmDecisions(), this never touches a
-// Keep/Sell/Donate/Discard decision directly, only a label, which may
-// change what decision the LLM produces as a side effect.
+// Label correction reruns reasoning for one item without directly setting its decision.
 export function overrideItem({ runId, analysis, declutter, itemId, correctedLabel, userContext = null }) {
   return request("/override", {
     method: "POST",
@@ -97,27 +80,8 @@ export function transcribeAudio({ audioBlob }) {
   return request("/transcribe", { method: "POST", body: form });
 }
 
-// POST /generate (Direct Reorganise), JSON body, matching
-// app/api/routes.py's GenerateRequest exactly (extra="forbid" there, an
-// unrecognised field, including any tuning parameter, is a 422, never
-// silently ignored). `analysis` is the exact validated AnalysisResult
-// object POST /upload (path="reorganise") returned, round-tripped whole,
-// same discipline as confirmDecisions()/overrideItem() above.
-//
-// `labelCorrections` is the user's Select items label corrections, an
-// array of { item_id, corrected_label }, sent as its own
-// `label_corrections` field. The analysis itself is never edited to
-// carry a correction (the backend rejects an analysis that does).
-//
-// Deliberately NEVER sends denoise_strength/controlnet_conditioning_scale
-// /seed; Direct Reorganise always uses the backend's configured defaults.
-// These are provisional generation-tuning values, not an ordinary user decision
-// (see app/services/reorganise_pipeline_service.py's own docstring).
-//
-// file.type is sent verbatim as image_media_type, validated here first
-// (PNG/JPEG only, matching the backend's supported set) so an
-// unsupported file type fails fast, client-side, with a clear message,
-// rather than as a generic sanitized 422 from the network.
+// Label corrections stay separate from the unchanged analysis. Generation
+// tuning remains backend-configured. Validate the media type before upload.
 export async function generateReorganisation({
   runId,
   analysis,
@@ -149,20 +113,8 @@ export async function generateReorganisation({
   });
 }
 
-// POST /generate/confirmed (Both), matching app/api/routes.py's
-// ConfirmedGenerateRequest exactly (extra="forbid" there too). Carries
-// the INPUTS to confirmation (declutter + overrides), never confirmation
-// OUTPUT: selection is derived entirely server-side from
-// confirm_declutter_result() -> confirmed_keep_ids, this function
-// deliberately has NO selectedItemIds/confirmedKeepIds parameter at all,
-// so there is no way to accidentally send one. `declutter`/`overrides`
-// are the exact same objects useBothFlow's composed useDeclutterFlow
-// already holds, round-tripped whole, same discipline as every other
-// object-carrying request in this file.
-//
-// Deliberately NEVER sends selected_item_ids, confirmed_keep_ids, or any
-// generation-tuning field (denoise_strength/controlnet_conditioning_scale
-// /seed), same reasoning as generateReorganisation() above.
+// confirmed_keep_ids is derived server-side. This function deliberately has
+// no selectedItemIds or confirmedKeepIds parameter and sends no tuning fields.
 export async function generateConfirmedReorganisation({
   runId,
   analysis,
@@ -194,22 +146,9 @@ export async function generateConfirmedReorganisation({
   });
 }
 
-// POST /listings (marketplace listing draft generation),
-// JSON body, matching app/api/routes.py's ListingRequest exactly
-// (extra="forbid" there, so an unrecognised field is a 422, never
-// silently ignored). Sends run_id, the whole round-tripped analysis and
-// declutter, serialised overrides, and seller-supplied listing_details.
-// The backend still derives the eligible Sell set and authoritative
-// confirmation server-side from (declutter, overrides).
-//
-// Deliberately has NO eligibleItemIds/sellItemIds parameter at all, and
-// never sends a confirmation, generated draft text, image data, user
-// context, or model configuration, so there is no way to accidentally
-// make any of those authoritative.
-// `listingDetails` is the seller-supplied name / condition per item_id
-// ({ item_id, listing_name, condition }[]), sent as an explicit structured
-// field. Eligibility stays server-derived: details for a non-Sell item are
-// ignored there, never honoured.
+// Eligible Sell ids and confirmation are derived server-side. This function
+// deliberately has no eligibleItemIds or sellItemIds parameter. Seller details
+// are metadata keyed by item_id and cannot make an item eligible.
 export function generateListings({ runId, analysis, declutter, overrides = [], listingDetails = [] }) {
   return request("/listings", {
     method: "POST",
@@ -218,16 +157,8 @@ export function generateListings({ runId, analysis, declutter, overrides = [], l
   });
 }
 
-// POST /listings/{item_id}/regenerate (true single-item regeneration).
-// The body is EXACTLY the same shape generateListings() sends (run_id +
-// whole analysis + whole declutter + overrides + listing_details); the one item to
-// regenerate is identified ONLY by the path segment, encodeURIComponent-
-// encoded, and item_id is never repeated in the body.
-//
-// itemId is validated as a non-blank string here, before fetch, so a
-// missing/blank id fails fast client-side rather than as a sanitized
-// network error. Eligibility is NOT checked here, the backend is
-// authoritative and rejects a non-eligible target itself.
+// The encoded path alone selects the item. The backend remains authoritative
+// for eligibility; local validation only rejects a blank id before fetch.
 export async function regenerateListing({ runId, analysis, declutter, overrides = [], itemId, listingDetails = [] }) {
   if (typeof itemId !== "string" || itemId.trim() === "") {
     throw new Error(`regenerateListing: itemId must be a non-blank string, got ${JSON.stringify(itemId)}`);

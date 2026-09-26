@@ -1,18 +1,8 @@
 import { LISTING_CONDITIONS, LISTING_NAME_MAX } from "../lib/listingDrafts";
 import { cn } from "../lib/cn";
 
-// The two seller-supplied listing details for ONE item: a listing name
-// (pre-filled from the reviewed label) and a declared condition (defaults
-// to "Not specified"). Shared by the pre-generation list in ListingsView
-// and by every ListingDraftCard, so the same controls and labels appear
-// before the first draft and beside a generated one.
-//
-// Listing metadata only. onChange forwards { listing_name } or
-// { condition } for this item_id to the hook's setListingDetails; nothing
-// here touches the detected label, the decision, the confirmation or any
-// draft text. Condition is never inferred from the image: the person
-// picks it, or it stays "Not specified" and the model is told to say
-// nothing about it. There is no price field by design.
+// Shared item_id-keyed seller metadata fields. Condition is declared by the
+// seller or left unspecified, never inferred from the image.
 export default function ListingDetailsFields({
   itemId,
   itemLabel,
@@ -26,12 +16,7 @@ export default function ListingDetailsFields({
   const conditionId = `listing-condition-${itemId}`;
   const nameLength = (details?.listing_name ?? "").length;
 
-  // Both columns use the SAME header row and the SAME control height, so on
-  // desktop the two labels share a top line and the input and select line
-  // up. The row has explicit line heights (the 11px counter would otherwise
-  // inherit the taller body line box and push its column down) and a fixed
-  // minimum height, whether or not it holds a counter. Below sm the grid is
-  // one column, so the fields still stack.
+  // Fixed header/control heights align the two desktop columns.
   const headerClass = "flex min-h-5 items-end justify-between gap-2";
   const labelClass = "text-xs font-medium leading-4 text-foreground";
   const controlClass =

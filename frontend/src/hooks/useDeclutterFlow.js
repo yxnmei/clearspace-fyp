@@ -30,43 +30,11 @@ const CONFIRMATION_ERROR = "We couldn't confirm your decisions.";
 const LISTING_GENERATION_ERROR = "We couldn't generate the listing drafts.";
 const LISTING_REGENERATION_ERROR = "We couldn't regenerate that listing draft.";
 
-// Per-flow state and logic live in a hook rather than inline inside a
-// growing DeclutterPage component. Backend
-// POST /upload, POST /confirm and POST /override are all implemented,
-// see app/api/routes.py, app/services/declutter_service.py and
-// app/services/confirmation_service.py. Their nested responses are
-// passed through normaliseDeclutterUploadResponse()/
-// normaliseOverrideResponse()/normaliseConfirmationResponse()
-// (api/declutterContract.js, api/confirmationContract.js), which join by
-// item_id and throw on a malformed contract rather than silently
-// returning empty output.
-//
-// React Testing Library is installed in this project, the two
-// concurrency guards below (flowGenerationRef/confirmationGenerationRef)
-// are exercised directly by rendered-hook tests
-// (useDeclutterFlow.test.jsx), not just reviewed by inspection.
-//
-// uploadPath/normaliseUploadResponse configure the hook for Both while
-// remaining optional and default-compatible, so useBothFlow can COMPOSE
-// this hook (path="both" + normaliseBothUploadResponse) rather than
-// copying it, every existing call site (DeclutterPage) calls
-// useDeclutterFlow() with no arguments at all, so the defaults below
-// reproduce today's exact behavior byte-for-byte; nothing about
-// submit()/confirm()/correctLabel()/the two concurrency domains changes
-// for Declutter. inputImageSha256 is exposed on the returned object for
-// the same reason, normaliseBothUploadResponse's extra field flows
-// through `flow` and out of the hook untouched; normaliseDeclutterUploadResponse
-// never sets it, so it's simply null for ordinary Declutter use.
+// Both composes this hook with a different upload path and normaliser.
+// Responses are strictly normalised and joined only by item_id.
 const EMPTY_FLOW = { runId: null, analysis: null, declutter: null, items: [], context: null, inputImageSha256: null };
 
-// Default listing I/O surface. `listingApi` is a default-compatible
-// injection seam: every existing caller invokes useDeclutterFlow()
-// with no arguments and gets exactly this, so nothing about listing
-// behaviour depends on a test double being supplied. useBothFlow passes
-// its own `listingApi` straight through to the composed hook. All four
-// members are the production listing functions; a fake replaces the
-// network round-trip (generateListings/regenerateListing) and may
-// optionally replace the pure normalisers too.
+// Injectable as one surface so tests can replace listing I/O and validation.
 const DEFAULT_LISTING_API = {
   generateListings,
   regenerateListing,
@@ -79,52 +47,22 @@ export function useDeclutterFlow({
   normaliseUploadResponse = normaliseDeclutterUploadResponse,
   listingApi = DEFAULT_LISTING_API,
 } = {}) {
-  const [status, setStatus] = useState("idle"); // idle | uploading | ready | error
+  const [status, setStatus] = useState("idle");
   const [flow, setFlow] = useState(EMPTY_FLOW);
   const [error, setError] = useState(null);
 
   const [overridesById, setOverridesById] = useState({});
   const [confirmation, setConfirmation] = useState(null);
-  const [confirmationStatus, setConfirmationStatus] = useState("idle"); // idle | confirming | confirmed | error
+  const [confirmationStatus, setConfirmationStatus] = useState("idle");
   const [confirmationError, setConfirmationError] = useState(null);
 
-  // Label-correction state (POST /override), correctingItemId is the
-  // single item_id currently in flight, or null. correctionError is
-  // { itemId, message } (which item's last attempt failed) or null, so
-  // the UI can show a failure next to the right card without it bleeding
-  // onto every other item.
+  // Correction state is item-scoped so errors stay with the matching card.
   const [correctingItemId, setCorrectingItemId] = useState(null);
   const [correctionError, setCorrectionError] = useState(null);
 
-  // Marketplace listing domain. Its own state, its own
-  // concurrency slot (listingGenerationRef + activeListingRef below),
-  // fully independent of the upload/correction and confirmation domains
-  // -- and, one layer up in useBothFlow, of the Reorganise generate
-  // slot. Nothing in this domain ever writes flow.*, overridesById,
-  // confirmation, or any Reorganise state.
-  //
-  //   listingStatus:        idle | generating | ready | error
-  //   listingResult:        the normalised batch result (or the
-  //                         contract's empty shape for zero eligible
-  //                         Sell items), or null
-  //   listingError:         batch-generation failure message, or null
-  //   regeneratingItemId:   the one item_id whose single regen is in
-  //                         flight, or null
-  //   regenerationError:    { itemId, message } for the item whose last
-  //                         regen failed, or null (never bleeds onto
-  //                         another card)
-  //   listingEditsById:     { [item_id]: { title, description } } -- the
-  //                         user's local edits, stored VERBATIM (never
-  //                         trimmed/coerced), keyed strictly by item_id
-  //   discardedListingIds:  { [item_id]: true } -- local presentation
-  //                         state only; not backend eligibility
-  // listingPhase: the explicit batch/empty-result phase (idle | generating
-  // | ready | error); the exported listingStatus is DERIVED from it and
-  // the current confirmation below. listingCache: run-scoped drafts,
-  // { [item_id]: { draft, generatedWith } }, kept across confirmation
-  // changes so re-confirming never forces a new batch; cleared only by a
-  // new upload or reset. listingProvenance: the run's model / prompt /
-  // attempt budget, which every later single-item response must match.
+  // Listing state is independent of upload, confirmation and Both's
+  // Reorganise state. The item_id-keyed cache survives reconfirmation and
+  // is cleared only for a new upload or reset.
   const [listingPhase, setListingPhase] = useState("idle");
   const [listingCache, setListingCache] = useState({});
   const [listingProvenance, setListingProvenance] = useState(null);
@@ -133,77 +71,25 @@ export function useDeclutterFlow({
   const [regenerationError, setRegenerationError] = useState(null);
   const [listingEditsById, setListingEditsById] = useState({});
   const [discardedListingIds, setDiscardedListingIds] = useState({});
-  // Seller-supplied listing details per item_id ({ listing_name?, condition? },
-  // explicit values only; defaults are resolved at read time from the
-  // reviewed label) and, per drafted item, the details its current draft
-  // was generated with. Details are listing metadata, not decisions: they
-  // survive a confirmation invalidation and are cleared only by reset().
-  // generated_with is cleared with the drafts it describes.
+  // Seller details are item_id-keyed metadata, not decisions. They survive
+  // confirmation invalidation; defaults are resolved from the reviewed label.
   const [listingDetailsById, setListingDetailsById] = useState({});
 
-  // Two SEPARATE concurrency domains, not one shared counter, this used
-  // to be a single flowGenerationRef covering upload/correctLabel/confirm
-  // AND every decision/exclusion edit, which had a real stuck-state bug:
-  // starting a label correction, then editing a decision (setDecisionOverride
-  // /setItemExcluded/clearDecisionOverride) while it was still in flight,
-  // bumped the SAME ref the correction was checking, so the correction's
-  // own (perfectly valid, not actually superseded) response was discarded
-  // as "stale", leaving correctingItemId stuck non-null forever. Decision
-  // edits must invalidate a *confirmation*, but they have nothing to do
-  // with whether an in-flight *correction*'s flow-replacing response is
-  // still current.
-  //
-  // flowGenerationRef: protects writes to flow.analysis/declutter/items,
-  // bumped only by submit() and performCorrection() (the two operations
-  // that actually replace those fields). A response is only applied if
-  // this ref still holds the exact value claimed before that call's own
-  // await.
-  //
-  // confirmationGenerationRef: protects confirmation/confirmationStatus/
-  // confirmationError, bumped by submit(), performCorrection() (starting
-  // a correction invalidates any confirmed result, see below), every
-  // decision/exclusion edit, AND confirm() itself for its own generation
-  // claim. A stale confirm() response is only discarded by THIS ref, never
-  // by flowGenerationRef, so an unrelated correction elsewhere can't make
-  // a confirm() call spuriously stale, and vice versa.
-  //
-  // submit() bumps BOTH, a new upload invalidates a previous upload/
-  // correction's pending flow write AND any confirmation. performCorrection()
-  // also bumps both, a correction beginning invalidates an older
-  // correction (or is blocked/superseded per the same-item/different-item
-  // rule below) AND invalidates confirmation, since the AI reasoning
-  // behind any confirmed result is about to change. Decision/exclusion
-  // edits bump ONLY confirmationGenerationRef.
-  //
-  // correctLabel() allows re-entry for the SAME item_id while a
-  // correction for that exact item is still in flight (the second call
-  // supersedes the first, via flowGenerationRef), but is blocked
-  // outright (a silent no-op, no request even sent) if a DIFFERENT item
-  // is currently being corrected. Two full-replacement /override
-  // responses for two different items racing each other could otherwise
-  // let whichever happens to resolve first be silently overwritten by
-  // the other's now-stale (pre-correction) snapshot, even though both
-  // corrections were individually valid, serializing cross-item
-  // corrections avoids that without needing per-item generation tracking.
+  // Separate counters protect flow replacements and confirmations.
+  // submit and correction bump both; decision edits bump only confirmation.
+  // Both success and rejection paths must match the captured counter.
+  // Same-item correction re-entry supersedes the older call; a different
+  // item is blocked because each response replaces the complete snapshot.
   const flowGenerationRef = useRef(0);
   const confirmationGenerationRef = useRef(0);
 
-  // Listing concurrency domain: a monotonic counter ("is this listing
-  // response still current") plus an ownership token ("is a batch OR a
-  // single regen currently in flight"). Deliberately NOT any of the refs
-  // above, and (in useBothFlow) NOT that hook's generate slot. A duplicate
-  // batch/regen dispatch while the slot is owned is a state-neutral no-op;
-  // any invalidation releases the slot immediately rather than waiting
-  // for a stale request to settle, and the bumped counter guarantees a
-  // late stale success OR rejection can never repopulate listing state.
+  // Listing uses its own staleness counter and active-owner token. One batch
+  // or regeneration owns the slot; invalidation releases it immediately,
+  // while the counter blocks both late success and late rejection writes.
   const listingGenerationRef = useRef(0);
   const activeListingRef = useRef(null);
 
-  // A confirmation change: any in-flight listing request is orphaned (the
-  // bumped counter makes its late success or rejection write nothing) and
-  // the transient phase/error state is reset, but the run's cached drafts,
-  // edits, discards and seller details are KEPT, so re-confirming shows
-  // them again for every item that is still a confirmed Sell item.
+  // Reconfirmation keeps cached drafts, edits, discards and seller details.
   const invalidateListing = useCallback(() => {
     listingGenerationRef.current += 1;
     activeListingRef.current = null;
@@ -213,8 +99,7 @@ export function useDeclutterFlow({
     setRegenerationError(null);
   }, []);
 
-  // A different photo (new upload) or Start over: everything listing-related
-  // for the old run goes, including the cache, edits, discards and names.
+  // A new photo or reset clears all run-scoped listing data.
   const clearListingCache = useCallback(() => {
     invalidateListing();
     setListingCache({});
@@ -229,26 +114,20 @@ export function useDeclutterFlow({
     setConfirmation(null);
     setConfirmationStatus("idle");
     setConfirmationError(null);
-    // A dropped/changed confirmation makes any listing result stale --
-    // every caller that changes what a confirmation MEANT (submit,
-    // setDecisionOverride, setItemExcluded, clearDecisionOverride, a
-    // correction that actually starts, reset) routes through here, so
-    // listing invalidation is chained off it once. confirm() bumps
-    // confirmationGenerationRef directly and calls invalidateListing()
-    // itself.
+    // Anything that changes confirmation meaning also invalidates listings.
     invalidateListing();
   }, [invalidateListing]);
 
   const submit = useCallback(
     async ({ file, context }) => {
-      flowGenerationRef.current += 1; // invalidates a previous upload/in-flight correction's flow write
+      flowGenerationRef.current += 1;
       const generation = flowGenerationRef.current;
-      invalidateConfirmation(); // separate ref, invalidates any outstanding confirm()
-      clearListingCache(); // a new photo is a new run: no draft, name or edit carries over
+      invalidateConfirmation();
+      clearListingCache();
 
       setStatus("uploading");
       setError(null);
-      setFlow(EMPTY_FLOW); // clear the previous result before a new upload starts
+      setFlow(EMPTY_FLOW);
       setOverridesById({});
       setCorrectingItemId(null);
       setCorrectionError(null);
@@ -258,13 +137,13 @@ export function useDeclutterFlow({
         const normalised = normaliseUploadResponse(response);
 
         if (flowGenerationRef.current !== generation) {
-          return; // superseded by a newer submit()/correctLabel(), discard silently
+          return;
         }
         setFlow({ ...normalised, context });
         setStatus("ready");
       } catch (err) {
         if (flowGenerationRef.current !== generation) {
-          return; // same staleness guard on the failure path
+          return;
         }
         setError(ANALYSIS_ERROR);
         setStatus("error");
@@ -273,10 +152,7 @@ export function useDeclutterFlow({
     [invalidateConfirmation, clearListingCache, uploadPath, normaliseUploadResponse]
   );
 
-  // An item is reviewable (decision override eligible) only if it's a
-  // real *resolved* expected item, never a contextual detection (not in
-  // expected_item_ids) and never an unresolved one (still_invalid, no
-  // AiDecision to override yet).
+  // Only resolved expected items can receive decision overrides.
   const isReviewableItemId = useCallback(
     (itemId) => {
       const expectedItemIds = flow.declutter?.expected_item_ids ?? [];
@@ -286,26 +162,20 @@ export function useDeclutterFlow({
     [flow.declutter]
   );
 
-  // A label CORRECTION, unlike a decision override, is available for
-  // BOTH resolved and unresolved expected items, correcting an
-  // unresolved item's label is exactly how it might become resolved.
-  // Never contextual (not in expected_item_ids), never an unknown id.
+  // Label correction also accepts unresolved expected items, never contextual ones.
   const isCorrectableItemId = useCallback(
     (itemId) => (flow.declutter?.expected_item_ids ?? []).includes(itemId),
     [flow.declutter]
   );
 
   const setDecisionOverride = useCallback(
-    // userReason defaults to undefined here too (not null), see
-    // api/confirmationContract.js's setDecisionOverride for the full
-    // omitted-vs-null-vs-blank semantics; omitting it entirely preserves
-    // whatever reason text the user already entered for this item.
+    // undefined preserves the item's existing reason; null clears it.
     (itemId, decision, userReason = undefined) => {
       if (!isReviewableItemId(itemId)) {
         throw new Error(`setDecisionOverride: ${JSON.stringify(itemId)} is not a resolved expected item`);
       }
       setOverridesById((prev) => setDecisionOverrideEntry(prev, itemId, decision, userReason));
-      invalidateConfirmation(); // confirmationGenerationRef only, never touches an in-flight correction
+      invalidateConfirmation();
     },
     [isReviewableItemId, invalidateConfirmation]
   );
@@ -332,45 +202,29 @@ export function useDeclutterFlow({
     [isReviewableItemId, invalidateConfirmation]
   );
 
-  // display_label is the ONE user-facing name per item_id shown on Decide
-  // items, Confirm choices and Results: the name the person gave the item
-  // on its listing, else the reasoning label (corrected or detected).
-  // Setting it never calls /override, never reruns reasoning and never
-  // changes a decision or the confirmation. effective_label stays the
-  // label AI reasoning used; clean_label stays the detector's label.
+  // item_id is the only identity. clean_label is detector output,
+  // effective_label is used for reasoning, and display_label is the
+  // listing name or effective label shown to the user.
   const reviewItems = buildReviewItems(flow.items, overridesById).map((item) => {
     const name = listingDetailsById[item.item_id]?.listing_name;
     const trimmed = typeof name === "string" ? name.trim() : "";
     return { ...item, display_label: trimmed !== "" ? trimmed : item.effective_label ?? item.clean_label };
   });
 
-  // Split into a synchronous validating wrapper (correctLabel) and an
-  // async worker (performCorrection): an `async` function's body never
-  // throws synchronously, even a throw before the first `await` becomes
-  // a rejected promise, so a plain `async (itemId, label) => {...}`
-  // here would silently turn setDecisionOverride's established
-  // "invalid itemId throws synchronously" contract into an unhandled
-  // rejection instead. Keeping the validation in a non-async function
-  // preserves that contract (and keeps it testable the same way:
-  // `expect(() => correctLabel(...)).toThrow()`), while still returning
-  // the awaitable promise callers need for the real (async) work.
+  // A non-async wrapper preserves synchronous validation errors.
   const performCorrection = useCallback(
     async (itemId, trimmedLabel) => {
-      // A DIFFERENT item is already being corrected, blocked as a
-      // silent no-op (no request sent, no state change), not a thrown
-      // error: this is a transient precondition a fast double-click or a
-      // disabled-button race can trigger, not caller misuse. Re-entry
-      // for the SAME item is allowed (see module-level comment above).
+      // Same-item re-entry supersedes; a different in-flight item blocks.
       if (correctingItemId !== null && correctingItemId !== itemId) {
         return null;
       }
       if (!flow.analysis || !flow.declutter) {
-        return null; // nothing to correct yet
+        return null;
       }
 
-      flowGenerationRef.current += 1; // this call's own claim, invalidates an older in-flight correction/upload write
+      flowGenerationRef.current += 1;
       const generation = flowGenerationRef.current;
-      invalidateConfirmation(); // separate ref, a correction invalidates any confirmed result / in-flight confirm()
+      invalidateConfirmation();
       const runId = flow.runId;
       const analysisSnapshot = flow.analysis;
       const declutterSnapshot = flow.declutter;
@@ -391,7 +245,7 @@ export function useDeclutterFlow({
         const normalised = normaliseOverrideResponse(response);
 
         if (flowGenerationRef.current !== generation) {
-          return null; // superseded by a newer submit()/correctLabel(), discard silently (never by a decision edit or confirm())
+          return null;
         }
         setFlow((prev) => ({ ...prev, analysis: normalised.analysis, declutter: normalised.declutter, items: normalised.items }));
         setListingDetailsById((prev) => {
@@ -404,13 +258,9 @@ export function useDeclutterFlow({
         return normalised;
       } catch (err) {
         if (flowGenerationRef.current !== generation) {
-          return null; // same staleness guard on the failure path
+          return null;
         }
-        // flow.analysis/declutter/items and the user's overridesById are
-        // deliberately left untouched here, a failed correction must
-        // never erase review work already done, and the user's typed
-        // correction text stays in the UI's own local input state (this
-        // hook never held it).
+        // A failed correction preserves analysis and review work.
         setCorrectingItemId(null);
         setCorrectionError({ itemId, message: LABEL_CORRECTION_ERROR });
         return null;
@@ -420,11 +270,7 @@ export function useDeclutterFlow({
   );
 
   const correctLabel = useCallback(
-    // Caller-input validation, thrown synchronously, matching
-    // setDecisionOverride's convention for "this itemId is not a
-    // legitimate target at all" (a programming error, not a transient
-    // precondition like "another item is already being corrected",
-    // which performCorrection above handles as a silent no-op instead).
+    // Invalid targets throw synchronously; transient contention is a no-op.
     (itemId, correctedLabel) => {
       if (!isCorrectableItemId(itemId)) {
         throw new Error(`correctLabel: ${JSON.stringify(itemId)} is not an expected item`);
@@ -439,22 +285,8 @@ export function useDeclutterFlow({
   );
 
   const confirm = useCallback(async () => {
-    // Returns the normalized ConfirmationResult on success, or null on
-    // any failure/no-op/staleness, never rethrows. Callers that need to
-    // react to failure should read confirmationStatus/confirmationError;
-    // a stale response makes NO state changes at all (not even setting
-    // an error), since by definition something newer has already
-    // superseded it.
-    //
-    // Blocked-by-in-flight-correction is a deliberately STATE-NEUTRAL
-    // no-op, not an error: the UI already disables the Confirm button
-    // while correctingItemId is set (isConfirmBlocked in
-    // lib/declutterReview, applied by DeclutterPage and BothPage), so reaching
-    // this branch at all means either a direct/programmatic call or a
-    // brief disabled-button race, setting a real confirmationError here
-    // would otherwise leave a stale "correction in progress" message
-    // visible after the correction has long since finished, since
-    // nothing else would ever clear it.
+    // Returns the normalised result or null. Correction contention and stale
+    // responses are state-neutral; callers read status/error for failures.
     if (correctingItemId !== null) {
       return null;
     }
@@ -469,17 +301,9 @@ export function useDeclutterFlow({
       return null;
     }
 
-    // Claim a unique generation for this call, and capture the exact
-    // runId/DeclutterResult this request will use and validate against,
-    // before awaiting, so a later edit or a newer confirm() call can
-    // never retroactively change what THIS request is judged by.
-    // confirmationGenerationRef only, a correction or a decision edit
-    // elsewhere invalidates this via invalidateConfirmation() (which
-    // bumps this same ref), but never via flowGenerationRef.
+    // Snapshot the request and guard it with the confirmation counter.
     const generation = ++confirmationGenerationRef.current;
-    // Starting a fresh confirmation invalidates any in-flight listing
-    // request and resets transient listing state. The current run's cache
-    // is retained and filtered against the new confirmation on success.
+    // Reconfirmation invalidates listing requests but retains the cache.
     invalidateListing();
     const runId = flow.runId;
     const declutterSnapshot = flow.declutter;
@@ -493,40 +317,28 @@ export function useDeclutterFlow({
       const normalised = normaliseConfirmationResponse(response, declutterSnapshot);
 
       if (confirmationGenerationRef.current !== generation) {
-        return null; // superseded by a newer edit/correction/confirm(), discard silently
+        return null;
       }
       setConfirmation(normalised);
       setConfirmationStatus("confirmed");
       return normalised;
     } catch (err) {
       if (confirmationGenerationRef.current !== generation) {
-        return null; // same staleness guard on the failure path
+        return null;
       }
-      // Declutter analysis/items and the user's overridesById are
-      // deliberately left untouched here, a failed confirmation must
-      // never erase review work already done.
+      // A failed confirmation preserves analysis and review work.
       setConfirmationStatus("error");
       setConfirmationError(CONFIRMATION_ERROR);
       return null;
     }
   }, [correctingItemId, flow.declutter, flow.runId, overridesById, invalidateListing]);
 
-  // -------------------------------------------------------------------------
-  // Marketplace listing actions. Drafts live in a run-scoped cache keyed by
-  // item_id (listingCache) that survives confirmation changes and is
-  // cleared only by a new upload or reset. What is ACTIVE is always derived
-  // from the current server confirmation: a cached draft is shown, edited,
-  // copied or regenerated only while its item is a confirmed non-excluded
-  // Sell item. Every request snapshots the exact runId / analysis /
-  // declutter / confirmation / review items it is validated against BEFORE
-  // awaiting, and every write-back checks listingGenerationRef, which any
-  // confirmation change, upload or reset bumps, so a late response can
-  // never write a draft for a confirmation that no longer exists.
-  // -------------------------------------------------------------------------
+  // Active drafts are derived from the current server confirmation. Requests
+  // snapshot their validation inputs and guard every write with the listing
+  // counter; the item_id-keyed cache itself survives reconfirmation.
 
   const hasCurrentConfirmation = confirmationStatus === "confirmed" && confirmation !== null;
-  // Memoised so identities are stable across renders while nothing changed
-  // (consumers and tests compare listingResult / drafts by identity).
+  // Preserve result identity while inputs are unchanged.
   const eligibleListingIds = useMemo(
     () => (hasCurrentConfirmation ? deriveEligibleSellItemIds(confirmation) : []),
     [hasCurrentConfirmation, confirmation]
@@ -540,18 +352,14 @@ export function useDeclutterFlow({
     [eligibleListingIds, listingCache]
   );
 
-  // idle | generating | ready | error. A confirmation whose Sell
-  // items already have cached drafts is "ready" at once, with no request:
-  // re-confirming never forces a new batch.
+  // Cached eligible drafts make a reconfirmed result ready without a request.
   let listingStatus;
   if (!hasCurrentConfirmation) listingStatus = "idle";
   else if (listingPhase === "generating") listingStatus = "generating";
   else if (activeListingIds.length > 0) listingStatus = "ready";
   else listingStatus = listingPhase;
 
-  // Aggregate view of the active drafts (the shape the
-  // listing contract normalisers produce). Provenance is null exactly
-  // when there are no active drafts, as the contract's empty shape says.
+  // Provenance is null exactly when the active result has no drafts.
   const activeServerDrafts = useMemo(
     () => activeListingIds.map((id) => listingCache[id].draft),
     [activeListingIds, listingCache]
@@ -572,9 +380,7 @@ export function useDeclutterFlow({
     [listingStatus, flow.runId, confirmation, eligibleListingIds, activeServerDrafts, listingProvenance]
   );
 
-  // What a draft is generated with: the serialised seller details plus
-  // the reasoning label at that moment, so a later rename OR a later
-  // Decide-items label correction both mark the draft as older.
+  // Capture details and reasoning label so later changes mark a draft stale.
   function generatedWithFor(serialised, reviewItem) {
     return {
       listing_name: serialised.listing_name,
@@ -587,15 +393,8 @@ export function useDeclutterFlow({
     Boolean(a && b) && a.modelName === b.modelName && a.promptVersion === b.promptVersion && a.maxAttempts === b.maxAttempts;
 
   const generateListingDrafts = useCallback(async () => {
-    // Never auto-runs; the Results screen's explicit button calls it.
-    // Generates ONLY what is missing for the current confirmation:
-    //   - nothing eligible  -> a ready empty result, no request;
-    //   - every eligible item already drafted -> a no-op, no request;
-    //   - nothing drafted yet -> one batch request;
-    //   - some drafted, some new -> one single-item request per NEW item
-    //     (the single-item endpoint derives eligibility server-side and
-    //     needs no prior draft), leaving every existing draft, edit,
-    //     condition and discard untouched.
+    // Explicitly generates only missing eligible drafts. An empty eligible
+    // set or a fully cached set never reaches the network.
     if (confirmationStatus !== "confirmed" || !confirmation) return null;
     if (!flow.runId || !flow.analysis || !flow.declutter) return null;
     if (activeListingRef.current !== null) return null;
@@ -625,15 +424,15 @@ export function useDeclutterFlow({
     }
 
     const missing = eligibleSellIds.filter((id) => !listingCache[id]);
-    if (missing.length === 0) return null; // everything already drafted
+    if (missing.length === 0) return null;
 
     const generation = ++listingGenerationRef.current;
-    activeListingRef.current = generation; // claim the slot for the round-trip(s)
+    activeListingRef.current = generation;
     const overrides = serialiseDecisionOverrides(overridesById, declutterSnapshot.expected_item_ids);
     setListingError(null);
     setRegenerationError(null);
 
-    // --- first drafts for this confirmation: one batch -------------------
+    // First drafts use one batch request.
     if (missing.length === eligibleSellIds.length) {
       const listingDetails = serialiseListingDetails(eligibleSellIds, listingDetailsById, currentReviewItems);
       setListingPhase("generating");
@@ -652,7 +451,7 @@ export function useDeclutterFlow({
           currentReviewItems,
         });
         if (listingGenerationRef.current !== generation) {
-          return null; // stale success: something newer already changed the confirmation
+          return null;
         }
         const detailsById = new Map(listingDetails.map((d) => [d.item_id, d]));
         setListingCache((prev) => {
@@ -674,7 +473,7 @@ export function useDeclutterFlow({
         return normalised;
       } catch (err) {
         if (listingGenerationRef.current !== generation) {
-          return null; // stale rejection discarded too -- no state change
+          return null;
         }
         setListingError(LISTING_GENERATION_ERROR);
         setListingPhase("error");
@@ -684,7 +483,7 @@ export function useDeclutterFlow({
       }
     }
 
-    // --- only the newly confirmed Sell items, one at a time --------------
+    // Newly eligible items are generated individually without replacing cache.
     const provenanceSnapshot = listingProvenance;
     let generatedCount = 0;
     try {
@@ -713,7 +512,7 @@ export function useDeclutterFlow({
           setListingError(LISTING_GENERATION_ERROR);
           return null;
         }
-        if (listingGenerationRef.current !== generation) return null; // stale: write nothing
+        if (listingGenerationRef.current !== generation) return null;
         if (!provenanceMatches(normalised, provenanceSnapshot)) {
           setListingError("Listing draft generation returned inconsistent provenance");
           return null;
@@ -757,13 +556,10 @@ export function useDeclutterFlow({
       const currentReviewItems = buildReviewItems(flow.items, overridesById);
       const reviewById = new Map(currentReviewItems.map((item) => [item.item_id, item]));
       const overrides = serialiseDecisionOverrides(overridesById, declutterSnapshot.expected_item_ids);
-      // The run's provenance must match the single response exactly, so a
-      // merged view can never pair maxAttempts 3 with attempts 4.
+      // Regeneration must match the batch provenance snapshot exactly.
       const provenanceSnapshot = listingProvenance;
-      // The edit this regeneration may replace. If the person edits the
-      // text again while the request is in flight, that NEWER edit is kept.
+      // Preserve edits made after regeneration starts.
       const editSnapshot = listingEditsById[itemId];
-      // Only the target's own current details travel with a regeneration.
       const listingDetails = serialiseListingDetails([itemId], listingDetailsById, currentReviewItems);
 
       setRegeneratingItemId(itemId);
@@ -786,7 +582,7 @@ export function useDeclutterFlow({
           itemId,
         });
         if (listingGenerationRef.current !== generation) {
-          return null; // stale success: NO state change at all
+          return null;
         }
         if (!provenanceMatches(normalised, provenanceSnapshot)) {
           setRegeneratingItemId(null);
@@ -817,7 +613,7 @@ export function useDeclutterFlow({
         return normalised;
       } catch (err) {
         if (listingGenerationRef.current !== generation) {
-          return null; // stale rejection: NO state change
+          return null;
         }
         setRegeneratingItemId(null);
         setRegenerationError({
@@ -843,13 +639,8 @@ export function useDeclutterFlow({
     ]
   );
 
-  // Seller-supplied details for one item: a listing name and/or a declared
-  // condition. The listing name is also the item's user-facing name on
-  // Decide items, Confirm choices and Results (reviewItems[].display_label).
-  // Frontend-only: never a backend call, never a decision, label-correction
-  // or confirmation change, and never a change to existing draft text (a
-  // draft made with older details is flagged is_stale; only an explicit
-  // regeneration replaces it). Throws for a bad id or an invalid value.
+  // Seller details are frontend metadata. Existing text changes only through
+  // explicit regeneration; older drafts are marked stale.
   const setListingDetails = useCallback((itemId, patch) => {
     if (typeof itemId !== "string" || itemId.trim() === "") {
       throw new Error("setListingDetails: itemId must be a non-blank string");
@@ -874,9 +665,7 @@ export function useDeclutterFlow({
 
   const regenerateListingDraft = useCallback(
     (itemId) => {
-      // Synchronous, fail-fast guards: only a currently eligible item of a
-      // ready listing view may be regenerated. A cached draft for an item
-      // that is no longer a confirmed Sell item is never reachable here.
+      // Only currently eligible drafts in a ready result can regenerate.
       if (listingStatus !== "ready") {
         throw new Error("regenerateListingDraft: there is no current listing result to regenerate from");
       }
@@ -913,9 +702,7 @@ export function useDeclutterFlow({
       if (title === undefined && description === undefined) {
         throw new Error("editListingDraft: nothing to edit");
       }
-      // Frontend only -- never a backend call. Stored VERBATIM: the
-      // intermediate string states a controlled input produces are kept
-      // exactly, never trimmed or coerced.
+      // Store controlled-input edits verbatim; this makes no backend call.
       setListingEditsById((prev) => {
         const base = prev[itemId] ?? { title: draft.title, description: draft.description };
         return {
@@ -961,11 +748,9 @@ export function useDeclutterFlow({
     [listingStatus, activeListingIds]
   );
 
-  // The active drafts, in confirmation (eligible-Sell) order. Identity is
-  // item_id; server title/description are kept beside the editable values.
-  // effective_label is the CURRENT reasoning label (it can differ from the
-  // label the draft was written for after a Decide-items correction), and
-  // is_stale says the draft was made with older details or an older label.
+  // Active drafts follow confirmed Sell order and use item_id identity.
+  // effective_label is current reasoning text; is_stale compares it and
+  // seller details with the generation snapshot.
   const reviewItemsById = new Map(reviewItems.map((item) => [item.item_id, item]));
   const listingDrafts = activeListingIds.map((itemId) => {
     const { draft, generatedWith } = listingCache[itemId];
@@ -993,17 +778,10 @@ export function useDeclutterFlow({
     };
   });
 
-  // Deterministic full reset invalidates
-  // ALL concurrency domains (any in-flight upload/correction, any
-  // in-flight/completed confirmation, AND -- via invalidateConfirmation
-  // chaining to invalidateListing -- any in-flight/completed listing
-  // batch or regen) via the exact same refs the individual operations
-  // already use, then clears every piece of state back to its initial
-  // value, matching useReorganiseFlow's own reset() convention exactly.
-  // useBothFlow composes this alongside its own generation-state reset.
+  // Reset invalidates every concurrency domain before clearing state.
   const reset = useCallback(() => {
-    flowGenerationRef.current += 1; // invalidates any in-flight upload/correction write
-    invalidateConfirmation(); // separate refs; also chains to invalidateListing()
+    flowGenerationRef.current += 1;
+    invalidateConfirmation();
     setStatus("idle");
     setError(null);
     setFlow(EMPTY_FLOW);
@@ -1035,7 +813,6 @@ export function useDeclutterFlow({
     correctingItemId,
     correctionError,
     correctLabel,
-    // Marketplace listing domain
     listingStatus,
     listingResult,
     listingDrafts,

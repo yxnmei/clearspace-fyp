@@ -1,20 +1,6 @@
 import { Sofa, ScanSearch, ListChecks, TriangleAlert } from "lucide-react";
 
-// The "What we found" summary on Direct Reorganise's Analyse space
-// screen. It mirrors the Declutter summary's shape and vocabulary while
-// naming the different downstream action honestly: Direct Reorganise
-// lets the user include actionable items in a tidy plan on Select
-// items; it does not send them through decision reasoning. On a
-// successful analysis this heading is the screen's ONE visible h2: the
-// workflow tracker already says "Analysis complete." and names the next
-// action (in an aria-live region), so the page renders no second
-// success heading or banner.
-//
-// User-facing only: the space type (no confidence percentage), how many
-// items were found, and how many are available to include. No analysis
-// timing, no candidate / detection / classification vocabulary, no
-// warning codes; a warning is one calm sentence, rendered only when the
-// analysis actually carries one.
+// User-facing Direct Reorganise summary and the success screen's only h2.
 function Stat({ icon: Icon, label, value }) {
   return (
     <div className="flex min-w-0 items-start gap-2.5 rounded-control border border-border bg-surface-muted p-3">

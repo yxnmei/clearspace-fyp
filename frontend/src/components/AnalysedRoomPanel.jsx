@@ -3,29 +3,9 @@ import { Maximize2 } from "lucide-react";
 import { decisionBorderColor, itemNumberLabel } from "../utils/format";
 import ImageLightbox from "./ImageLightbox";
 
-// Overlays the analysed room photo with one box per detection, positioned
-// as CSS percentages derived directly from each item's normalized [0,1]
-// box, never pixel math, so alignment survives the image resizing at any
-// breakpoint with no resize listener needed. Every box is keyed and
-// identified by item_id only; two same-labelled items (e.g. two "picture
-// frame" detections) render as two fully independent boxes purely because
-// they carry different item_ids, never merged or deduplicated by label.
-//
-// This panel is supplementary, not required: it renders zero decision
-// controls of its own (no radios/checkboxes on a box), every review
-// action still happens in the item list. A box click only requests that
-// the corresponding list entry be focused/scrolled to, via onBoxClick;
-// the composing screen (DeclutterReviewSection for Declutter and Both,
-// ReorganiseItemSelector for Reorganise), which owns activeItemId,
-// showAllBoxes and the item ref map, decides what that means.
-//
-// declutterBoxClassName is Declutter's own box-coloring rule (reads
-// is_unresolved/is_expected/ai_decision, fields only Declutter's
-// reviewItems carry), kept as the DEFAULT for the optional
-// getBoxClassName prop below, so Declutter's existing usage (which never
-// passes that prop) keeps its box categories. Direct Reorganise's item
-// shape has none of those fields (only a boolean "selected" concept), so
-// it supplies its own classifier instead, see ReorganiseItemSelector.
+// Percentage overlays stay aligned through responsive image scaling. Boxes
+// use item_id identity, never labels. Hosts own selection and row focus;
+// Direct Reorganise supplies a classifier for its different item shape.
 function declutterBoxClassName(item, isActive, isQuiet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = item.is_unresolved
@@ -53,8 +33,7 @@ export default function AnalysedRoomPanel({
   getBoxClassName = declutterBoxClassName,
 }) {
   const visibleItems = showAllBoxes ? items : items.filter((item) => item.item_id === activeItemId);
-  // The enlarged view is presentation state local to this panel; opening
-  // it never changes the active item, the overlay or any callback.
+  // Enlarging the photo does not change the active item.
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   return (

@@ -3,27 +3,8 @@ import { Button } from "./ui/button";
 import { DECISION_OPTIONS } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// The persistent summary + navigation bar for the Decide items screen,
-// shared by the Declutter wizard and Both. It replaces that screen's
-// WizardNav, so there is exactly one Back and one Continue control.
-//
-// Presentational only: counts, the disabled flags and the blocker text
-// are derived by the page from its current review data and wizard
-// derivation; nothing here reads a hook or changes workflow state.
-//
-// Sticky to the bottom of the viewport while its (long) list scrolls,
-// and in normal flow once the list ends, so it never covers a row that
-// cannot be scrolled past. Below sm the summary sits above full-width
-// Back / Continue controls; from sm up everything fits in one row.
-//
-// At every breakpoint it is a floating panel aligned to the review content
-// width (never viewport-wide): full subtle border, rounded, pale mint
-// translucent surface with blur, soft elevation, lifted slightly off the
-// viewport edge.
-//
-// describeContinueBlocker mirrors the page's existing Continue guard
-// (missing result, label correction in flight, unresolved items, a
-// request lock) in words, so a disabled Continue always says why.
+// Shared sticky decision summary and navigation. The page supplies all state;
+// describeContinueBlocker explains each disabled Continue guard.
 
 export function describeContinueBlocker({
   hasAnalysis = true,

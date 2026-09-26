@@ -4,23 +4,8 @@ import RoomPhotoField from "./RoomPhotoField";
 import VoiceContextInput from "./VoiceContextInput";
 import { Button } from "./ui/button";
 
-// Presentational + its own small local UI state (selected file, context
-// text, preview URL), mirrors DeclutterUploadForm's own established
-// structure, but is a SEPARATE component rather than a shared/prop-
-// branching one: the accepted file types differ (PNG/JPEG only, matching
-// the backend's exact supported set, not "image/*"), and the copy differs. This
-// keeps DeclutterUploadForm free of any Reorganise-specific knowledge,
-// per this project's stated preference for not forcing Declutter
-// components to understand Reorganise state.
-//
-// The space-photo presentation is delegated to the shared, stateless
-// RoomPhotoField; the PNG/JPEG type check, file state, the object-URL
-// lifecycle and the submit guards stay here. The visible structure
-// (heading, copy, photo left / optional context right from lg, one
-// primary action) is the same as DeclutterUploadForm's on purpose.
-//
-// onSubmit is the only thing this component calls out to; it never talks
-// to the API directly.
+// Owns PNG/JPEG picker validation, context state and preview cleanup;
+// onSubmit is its only workflow action.
 const ACCEPTED_TYPES = ["image/png", "image/jpeg"];
 
 export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
@@ -28,8 +13,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
   const [context, setContext] = useState("");
   const [previewUrl, setPreviewUrl] = useState(null);
   const [typeError, setTypeError] = useState(null);
-  // Same reasoning as DeclutterUploadForm's own voiceBusy: an upload
-  // must not start while the microphone or a transcription is live.
+  // Block submit while voice input is unfinished.
   const [voiceBusy, setVoiceBusy] = useState(false);
   const previewUrlRef = useRef(null);
 
@@ -89,8 +73,6 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
         </p>
       </div>
 
-      {/* Photo first (the primary task), optional context second; a
-          balanced two-column composition from lg, one column below. */}
       <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
         <RoomPhotoField
           id="reorganise-image"
@@ -124,8 +106,7 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
             />
           </div>
 
-          {/* The same reusable voice UI DeclutterUploadForm mounts, it
-              fills the context field above only when the user applies it. */}
+          {/* Voice fills context only after explicit apply. */}
           <VoiceContextInput
             idPrefix="reorganise"
             context={context}
@@ -136,9 +117,6 @@ export default function ReorganiseUploadForm({ phase, error, onSubmit }) {
         </div>
       </div>
 
-      {/* Footer: the one primary action sits at the right edge at every
-          width (self-end, natural width, 44px tall on phones); the status
-          and error lines below it keep the full width. */}
       <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
         <Button
           type="submit"

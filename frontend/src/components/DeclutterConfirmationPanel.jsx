@@ -4,31 +4,10 @@ import ConfirmedChoicesSummary from "./ConfirmedChoicesSummary";
 import { DECISION_OPTIONS } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// The ONE confirmation surface of the Confirm choices screen, rendered
-// by DeclutterPage and BothPage. It transforms in place:
-//
-//   - before confirmation (idle / confirming / error): "Confirm your
-//     choices", the live decision summary as compact chips (non-zero
-//     categories only), the unresolved blocker with a way back to Decide
-//     items, the Confirm decisions action and its inline error;
-//   - after a successful CURRENT confirmation (confirmationStatus ===
-//     "confirmed" with a confirmation result): "Choices confirmed", the
-//     confirmed counts and a short note on what the next screen offers.
-//
-// Never two panels at once, never a run id, item id or other technical
-// metadata. Every count and flag is derived by the page (via
-// lib/declutterReview) from current review data or the normalised
-// confirmation; `onConfirm` is the hook's confirm, forwarded unchanged,
-// and `onReviewUnresolved` is the page's own step navigation (no request,
-// no reset). Identity stays item_id underneath, it is just not shown.
+// One panel covers every confirmation state. Counts come from current review
+// data or the normalised confirmation; item_id remains the hidden identity.
 
-// Chips must read clearly against BOTH the white pre-confirmation panel
-// and the pale green confirmed panel: every decision chip sits on the same
-// solid surface with the same visible brand-green border and normal
-// high-contrast foreground text; only the ICON carries the decision
-// colour, which keeps the four categories distinguishable without four
-// competing tints. Full literal class strings so Tailwind's scanner keeps
-// them.
+// Keep literal classes so Tailwind detects every decision colour.
 const CHIP_BASE =
   "inline-flex min-h-9 items-center gap-1.5 rounded-pill border px-3 py-1 text-sm text-foreground shadow-card";
 
@@ -51,8 +30,7 @@ function CountChip({ icon: Icon, label, value, className, iconClassName }) {
   );
 }
 
-// Only categories with a value > 0 are rendered; a decision nobody chose
-// is simply absent rather than shown as an empty zero card.
+// Omit zero-count categories.
 function CountChips({ counts, changedCount, excludedCount, label }) {
   const chips = [];
   for (const { value, label: decisionLabel, Icon } of DECISION_OPTIONS) {
@@ -125,7 +103,6 @@ export default function DeclutterConfirmationPanel({
   const isConfirming = confirmationStatus === "confirming";
   const isConfirmed = confirmationStatus === "confirmed" && confirmation !== null;
 
-  // ------------------------------------------------------------ confirmed
   if (isConfirmed) {
     const decisionCount = confirmation.confirmedDecisions.length;
     return (
@@ -137,10 +114,7 @@ export default function DeclutterConfirmationPanel({
           <CheckCircle2 aria-hidden="true" width={20} height={20} className="shrink-0" />
           Choices confirmed
         </h2>
-        {/* Wording says what the system does: a change is still possible,
-            it happens on Decide items, and it invalidates this
-            confirmation. Never "locked in". The grouped chips below carry
-            each category's count, so no separate count chips here. */}
+        {/* Decisions remain editable through Decide items. */}
         <p role="status" className="mt-1 text-sm text-foreground">
           {decisionCount} decision{decisionCount === 1 ? "" : "s"} confirmed. Go back to Decide items to change one;
           you will confirm again afterwards.
@@ -160,7 +134,6 @@ export default function DeclutterConfirmationPanel({
     );
   }
 
-  // -------------------------------------------------- before confirmation
   const hasUnresolved = unresolvedCount > 0;
   return (
     <section

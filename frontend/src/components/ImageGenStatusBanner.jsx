@@ -1,28 +1,10 @@
 import { Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 
-// Surfaces Colab/ngrok status in the UI itself, rather than only
-// failing once someone clicks Create tidy plan. Purely presentational,
-// status/recheck are passed in as props, this component never calls
-// useImageGenHealth() itself. ReorganisePage and BothPage each own ONE
-// instance of that hook (see their docstrings and useImageGenHealth.js's),
-// so mounting a page issues exactly one GET /image-gen/health request,
-// never two.
-//
-// Advisory only: this component renders nothing when status is
-// "available", but even when it renders its "unavailable" message, it
-// never disables anything, Create tidy plan stays available regardless
-// (the backend deliberately plans first and returns a complete structured
-// plan with image_status="unavailable" when Colab is offline; see
-// app/services/reorganise_pipeline_service.py).
-//
-// Presentation follows the shared warning surface (warning border and
-// tint, icon beside the text) and the Button primitive, stacking the
-// message above the action on phones and sitting in one row from sm. It
-// carries no live role of its own: the hosting section is not an
-// announcement, and a recheck result changes this text in place.
+// Advisory health status only. It never disables tidy-plan generation because
+// the structured plan remains available without an image.
 export default function ImageGenStatusBanner({ status, recheck }) {
-  if (status === "available") return null; // don't clutter the UI when everything's fine
+  if (status === "available") return null;
 
   const isChecking = status === "checking";
   const message = isChecking
@@ -39,10 +21,7 @@ export default function ImageGenStatusBanner({ status, recheck }) {
         )}
         <span>{message}</span>
       </p>
-      {/* Disabled, not hidden, while a check is already in flight, a
-          manual recheck() call here would race the one already running
-          rather than usefully do anything. Label changes so a disabled
-          button isn't mistaken for a stuck/broken one. */}
+      {/* Disable recheck while the existing check owns the request. */}
       <Button
         type="button"
         variant="outline"

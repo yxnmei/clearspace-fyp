@@ -1,24 +1,5 @@
-// "Storage and organisation ideas": a compact section rendered ONLY when
-// the plan carries at least one suggestion; with none, nothing is
-// rendered (no empty-state card). Shared by Direct Reorganise and Both
-// through ReorganiseResult.
-//
-// Each card is exactly the contract's name and reason: a generic idea
-// and one sentence saying what it would do for the selected items that
-// motivated it. related_item_ids stay in the normalised response and its
-// contract (validated, joined by item_id) but are not shown: the reason
-// already names the items, so a "For: ..." line only repeated it. No
-// prices, brands, links, availability claims or shopping controls, and
-// no disclosure or tooltip; the backend has none of that to offer.
-//
-// Layout: always one readable column on phones. With two or more
-// suggestions the list becomes two columns from sm and three from lg; a
-// single suggestion keeps one column at every width, so its card uses
-// the section's width rather than sitting alone in a third of the row.
-// Same markup either way, only the grid classes change.
-// From lg the section sits in the narrower right-hand column beneath the
-// visual preview (ReorganiseResult), so it drops back to one column there
-// and opens out to two again from xl.
+// Render only grounded name/reason pairs. related_item_ids stay validated
+// contract data and are not repeated in the UI.
 const MULTI_COLUMN_GRID = "sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2";
 
 export default function StorageSuggestions({ storageSuggestions }) {

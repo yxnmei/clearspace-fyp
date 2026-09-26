@@ -2,19 +2,8 @@ import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { cn } from "../lib/cn";
 
-// A floating "back to top" control for one long, scrolling workspace
-// (the Declutter Review view). It is purely presentational: it watches a
-// sentinel near the top of the workspace with an IntersectionObserver
-// and, once that sentinel has scrolled out of view, offers a fixed
-// lower-right button that returns scroll and focus to the top.
-//
-// A second, optional sentinel placed just before the wizard's
-// Back / Continue row lets the button hide itself again near the bottom,
-// so it never sits on top of those controls.
-//
-// Where IntersectionObserver is unavailable (older engines, jsdom
-// without a stub) the button simply never appears; nothing else on the
-// page depends on it.
+// Sentinel-driven back-to-top control that hides near bottom navigation.
+// It stays absent when IntersectionObserver is unavailable.
 export default function BackToTopButton({
   scrollTargetRef,
   topSentinelRef,

@@ -5,19 +5,8 @@ import ConfirmedChoicesSummary from "./ConfirmedChoicesSummary";
 import { DECISION_OPTIONS } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// The compact closing overview of a confirmed Declutter run, rendered on
-// the Results screen of DeclutterPage and BothPage. It is deliberately
-// different from the Confirm choices panel: counts first, the item chips
-// collapsed behind one control, and one Edit decisions link back to
-// Decide items. Listings (and, in Both, the tidy plan) are the primary
-// content that follows it.
-//
-// Presentational. Counts are derived from the normalised confirmation
-// (non-excluded decisions by final category; excluded items are counted
-// once, separately). The expanded view reuses ConfirmedChoicesSummary,
-// so thumbnails, the chip lightbox and Copy summary are the same code
-// as the Confirm screen's; it is read-only here (no per-category Edit
-// links), because editing belongs on Decide items.
+// Compact closing overview derived from confirmation. Expanded items reuse
+// the read-only confirmed summary; editing returns to Decide items.
 const CARD_ICON = {
   keep: "text-decision-keep",
   sell: "text-decision-sell",

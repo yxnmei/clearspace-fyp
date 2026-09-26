@@ -1,24 +1,13 @@
-// Pure helpers for the marketplace-listing review UI. No
-// React/DOM/fetch/clipboard here, same convention as lib/declutterReview.js
-// and lib/workflowProgress.js: this file only does maths and string
-// mapping so ListingsView / ListingDraftCard stay presentational.
-//
-// Identity is always item_id. Eligibility is derived STRICTLY from the
-// confirmed decisions, never from labels, draft presence, Keep ids or
-// any client-supplied fallback list.
+// Listing helpers use item_id identity. Eligibility comes only from confirmed
+// decisions, never labels, draft presence, Keep ids or client fallbacks.
 
-// Backend bounds, mirrored from app/core/listing_schemas.py and enforced
-// again by api/listingContract.js. The UI shows these numbers to the user
-// and disables copy while the current edited text is outside them.
+// Mirrored backend bounds used to validate editable copy text.
 export const TITLE_MIN = 2;
 export const TITLE_MAX = 120;
 export const DESCRIPTION_MIN = 10;
 export const DESCRIPTION_MAX = 1200;
 
-// Friendly, non-technical text for each sanitised unavailable reason the
-// backend can return (app.core.listing_schemas.ListingUnavailableReason).
-// No raw model output or transport error ever reaches this map, it is a
-// fixed allowlist keyed presentation string.
+// Fixed display text for sanitised unavailable reasons.
 export const UNAVAILABLE_REASON_MESSAGES = {
   timeout: "The model took too long to write this draft. You can try regenerating it.",
   service_unavailable:
@@ -31,15 +20,12 @@ export const UNAVAILABLE_REASON_MESSAGES = {
 const UNAVAILABLE_REASON_FALLBACK =
   "This draft could not be generated. You can try regenerating it.";
 
-// Never throws: an unrecognised / missing reason maps to a safe generic
-// sentence rather than surfacing the raw value.
+// Unknown reasons map to safe generic text.
 export function unavailableReasonMessage(reason) {
   return UNAVAILABLE_REASON_MESSAGES[reason] ?? UNAVAILABLE_REASON_FALLBACK;
 }
 
-// Trimmed-length validity for one editable field. The user's raw string
-// is never mutated here, only measured: trimmedLength is what the backend
-// bound applies to, so that is what the count and the valid flag use.
+// Measure trimmed validity without mutating the user's raw text.
 export function fieldValidity(value, min, max) {
   const text = typeof value === "string" ? value : "";
   const trimmedLength = text.trim().length;
@@ -53,9 +39,7 @@ export function fieldValidity(value, min, max) {
   };
 }
 
-// Combined validity for a draft's editable title + description. `valid`
-// is true only when BOTH fields are within their bounds; the card uses
-// it to gate the Copy action.
+// Copy is valid only when both editable fields meet their bounds.
 export function draftEditValidity(title, description) {
   const titleValidity = fieldValidity(title, TITLE_MIN, TITLE_MAX);
   const descriptionValidity = fieldValidity(description, DESCRIPTION_MIN, DESCRIPTION_MAX);
@@ -66,17 +50,12 @@ export function draftEditValidity(title, description) {
   };
 }
 
-// The exact clipboard payload for a generated draft: the CURRENT editable
-// title and description, separated by one blank line. Values are used
-// verbatim, never trimmed or reordered.
+// Clipboard uses current title and description verbatim.
 export function formatListingClipboardText(title, description) {
   return `${title}\n\n${description}`;
 }
 
-// Confirmed, non-excluded Sell item_ids, in confirmation order. Derived
-// ONLY from confirmation.confirmedDecisions. A missing/malformed
-// confirmation yields an empty list rather than throwing, so a component
-// can call this unconditionally.
+// Derive non-excluded Sell item_ids in confirmation order.
 export function deriveEligibleSellItemIds(confirmation) {
   if (!confirmation || !Array.isArray(confirmation.confirmedDecisions)) return [];
   return confirmation.confirmedDecisions
@@ -84,18 +63,11 @@ export function deriveEligibleSellItemIds(confirmation) {
     .map((d) => d.item_id);
 }
 
-// ---------------------------------------------------------------------------
-// Seller-supplied listing details: a listing name and a declared condition
-// per item_id. Listing metadata only: they never touch the detected label,
-// the decision or the confirmation, and the server ignores them for any
-// item that is not a confirmed non-excluded Sell item.
-// ---------------------------------------------------------------------------
+// Seller details are item_id-keyed metadata, never decisions or eligibility.
 
 export const LISTING_NAME_MAX = 80;
 
-// Mirrors the backend ListingCondition enum, in display order. The first
-// entry is the default and means the model is told nothing about
-// condition; it is never inferred from the image.
+// not_specified supplies no condition; condition is never inferred.
 export const LISTING_CONDITIONS = [
   { value: "not_specified", label: "Not specified" },
   { value: "new", label: "New" },
@@ -115,9 +87,7 @@ export function listingConditionLabel(value) {
   return LISTING_CONDITIONS.find((option) => option.value === value)?.label ?? LISTING_CONDITIONS[0].label;
 }
 
-// The current details for one item: explicit user values from
-// `detailsById` over the defaults (listing name = the reviewed effective
-// label, condition = not specified). Pure; never mutates its inputs.
+// Explicit details override reviewed-label and not-specified defaults.
 export function resolveListingDetails(itemId, detailsById, reviewItem) {
   const explicit = detailsById && detailsById[itemId] ? detailsById[itemId] : {};
   const fallbackName = reviewItem?.effective_label ?? reviewItem?.clean_label ?? "";
@@ -126,9 +96,7 @@ export function resolveListingDetails(itemId, detailsById, reviewItem) {
   return { listing_name: listingName, condition };
 }
 
-// The request-side shape for a set of eligible item ids, in the given
-// order. A blank listing name is sent as null (server: "use the detected
-// label") rather than as an empty string the schema would reject.
+// Serialise in eligible order; null means use the detected label.
 export function serialiseListingDetails(itemIds, detailsById, reviewItems) {
   const byId = new Map((reviewItems ?? []).map((item) => [item.item_id, item]));
   return itemIds.map((itemId) => {
@@ -142,9 +110,7 @@ export function serialiseListingDetails(itemIds, detailsById, reviewItems) {
   });
 }
 
-// Whether the details a draft was generated with still match the current
-// ones for that item. Compared on the same normalised shape the request
-// uses, so retyping the identical name is not a change.
+// Compare on request-normalised values so equivalent names are unchanged.
 export function listingDetailsMatch(generatedWith, current) {
   if (!generatedWith || !current) return false;
   const normalise = (name) => {

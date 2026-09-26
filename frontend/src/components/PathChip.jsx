@@ -2,13 +2,7 @@ import { Layers, LayoutGrid, PackageCheck } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/cn";
 
-// The small "which workflow am I in" chip. Rendered by AppShell's header
-// (from sm up) and by WorkflowProgress's mobile summary (below sm), so the
-// workflow name is shown exactly once at every breakpoint. Purely
-// presentational: it receives the display name and derives nothing.
-//
-// Icons are a secondary cue only; the visible name is always present and
-// a visually hidden "Workflow:" prefix gives assistive tech the context.
+// Responsive workflow label; visible text remains the primary cue.
 const WORKFLOW_ICONS = {
   Declutter: PackageCheck,
   Reorganise: LayoutGrid,

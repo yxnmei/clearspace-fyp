@@ -6,31 +6,9 @@ import ImageLightbox from "./ImageLightbox";
 import { itemNumberLabel } from "../utils/format";
 import { cn } from "../lib/cn";
 
-// The grouped, read-only view of a successful confirmation: every
-// confirmed decision as a compact chip under its final category (Keep,
-// Sell, Donate, Discard), excluded items under their own heading, and
-// one Copy summary action. Rendered inside the Confirm choices panel
-// (DeclutterPage and BothPage) and again inside the Results summary
-// (DeclutterResultsSummary) as the collapsible confirmed-items view.
-//
-// Presentational. Every row is joined to reviewItems strictly by item_id
-// (two items sharing a label stay two chips); labels are display text
-// only. No item id, AI reason or user reason is ever rendered.
-//
-// Nothing here changes a decision. A chip is a button that opens the
-// original photo in the shared lightbox with only that item's outline
-// drawn and highlighted, so a person can check which "cup" a chip means
-// without leaving the screen. When `onEditCategory` is supplied, each
-// group heading carries an Edit link that hands the group's decision
-// value to the page, which navigates to Decide items with that filter
-// applied; changing a choice still means going back there, which
-// invalidates the confirmation by design.
-//
-// Copy uses the same discipline as ListingDraftCard: the clipboard write
-// happens synchronously inside the click handler (real Clipboard API
-// permission is gated on user activation), a token plus a mounted flag
-// mean only the newest attempt can set feedback, and a failure shows a
-// fixed generic message, never the browser's exception text.
+// Read-only confirmed groups joined strictly by item_id. Edit links return to
+// filtered review. Copy starts synchronously and only the newest mounted
+// attempt may set fixed, display-safe feedback.
 
 const SUMMARY_GROUPS = [
   ["keep", "Keep"],
@@ -40,8 +18,7 @@ const SUMMARY_GROUPS = [
   ["excluded", "Excluded"],
 ];
 
-// The Decide items filter each group maps to. Excluded items sit under
-// their own decision on Decide items, so that group opens the full list.
+// Excluded items span decisions, so that group opens the full list.
 const GROUP_FILTER = {
   keep: "keep",
   sell: "sell",
@@ -73,8 +50,7 @@ export function summaryRows(confirmation, reviewItems) {
   })).filter((group) => group.entries.length > 0);
 }
 
-// One line per non-empty group; a repeated label is counted as
-// "shelf (2)", never pluralised by guesswork.
+// Count repeated labels without guessing plurals.
 export function copySummaryText(groups) {
   return groups
     .map(({ title, entries }) => {

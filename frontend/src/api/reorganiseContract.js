@@ -1,71 +1,17 @@
-// Pure functions only, unit-tested, no React/DOM/fetch here. See
-// utils/format.js and api/declutterContract.js/confirmationContract.js
-// for the same convention. Small LOCAL validation helpers (fail/
-// isPlainObject/requireArray/etc. below) are duplicated here rather than
-// imported from those files, matching the existing convention that each
-// contract file owns its own copies rather than sharing a helpers
-// module. normaliseConfirmationResponse (a higher-level normalizer, not
-// a small helper) is the one deliberate exception, see job 3 below.
-//
-// Three jobs live here:
-//   1. normaliseReorganiseUploadResponse(), validates POST /upload's
-//      path="reorganise" response (see app/api/routes.py's
-//      ReorganiseUploadResponse). Deliberately NOT built on top of
-//      declutterContract.js's normaliseAnalysisDeclutterEnvelope: that
-//      function hard-requires a `declutter` object which the Reorganise
-//      response never carries at all, this is a genuinely different
-//      envelope, not a variant of the Declutter one.
-//   2. normaliseGenerateResponse(), validates POST /generate's response
-//      (GenerateResponse: action_plan + tidy_plan + focus_areas + storage_suggestions
-//      + image_prompt + the image fields) against the exact
-//      selected_item_ids that were requested and the input_image_sha256
-//      the upload step reported, both passed in by the caller, exactly
-//      like normaliseConfirmationResponse() takes sourceDeclutter to
-//      cross-check against.
-//   3. normaliseConfirmedGenerateResponse(), validates POST
-//      /generate/confirmed's response (ConfirmedGenerateResponse, Both).
-//      Reuses validateGenerationBody()/validateGeneratedImage() below
-//      VERBATIM and reuses confirmationContract.js's own
-//      normaliseConfirmationResponse() verbatim too, genuine reuse of
-//      existing normalizers, not a parallel reimplementation.
-//
-// Never merges/joins by label text anywhere in this file, item_id is
-// the only identity. Duplicate labels are explicitly legal and remain
-// fully independent (see requireNoDuplicates, which only ever runs
-// against item_id lists). Focus areas and storage suggestions may only
-// reference selected item_ids. Phased tidy steps reference only selected
-// or, for Both, confirmed non-excluded departing item_ids.
-//
-// A checklist-preserving image_status="unavailable" response is a
-// SUCCESSFUL, fully validated result here, never thrown as an error.
-// Only a genuinely malformed/contract-violating response throws.
+// Validates Direct and Both upload/generation envelopes against request
+// snapshots. item_id is the only identity; duplicate labels remain distinct.
+// An unavailable image is valid because the checklist remains usable.
 
 import { normaliseConfirmationResponse } from "./confirmationContract";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
-// Structural base64, not just "valid characters": a correct base64
-// string is a sequence of complete 4-character groups, with padding
-// ('=') allowed ONLY in the final group (1 or 2 trailing '=' chars,
-// never in the middle, never on its own). The earlier
-// `^[A-Za-z0-9+/]*={0,2}$` pattern accepted wrong-length strings (e.g.
-// length not a multiple of 4) and misplaced padding, this pattern
-// rejects both.
+// Enforce complete base64 groups and final-group-only padding.
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
 const ITEM_ID_RE = /^item_\d{3,}$/;
-// Mirrors app.services.reorganise_actions_service.ActionPlanProvenance.
-// "llm_generated": the single checklist-model call returned a trusted
-// checklist. "deterministic_fallback": that one call failed or was
-// rejected, so the checklist is the deterministic one (exactly one issue
-// says why). "deterministic_direct": no model was called at all (the
-// explicit no-model path). Per-provenance attempt/issue/metadata rules
-// are enforced below, so a response cannot claim a model wrote the
-// checklist while also reporting zero attempts, or vice versa.
+// Provenance controls the allowed attempts, issues and model metadata.
 const VALID_ACTION_PLAN_PROVENANCE = new Set(["llm_generated", "deterministic_fallback", "deterministic_direct"]);
 const VALID_ACTION_PLAN_ISSUE_KINDS = new Set(["call_failed", "invalid_json", "invalid_actions"]);
-// Mirrors app.core.reorganise_actions / reorganise_focus_areas /
-// reorganise_storage: the bounds and the exact key sets. An extra key on
-// an action, area or suggestion (a zone, a coordinate, a price, a link)
-// is contract drift and is rejected rather than displayed.
+// Exact key sets reject unsupported fields instead of displaying drift.
 const MIN_ACTIONS = 1;
 const MAX_ACTIONS = 5;
 const TITLE_MIN_LENGTH = 3;
@@ -93,9 +39,6 @@ const VALID_UNAVAILABLE_REASONS = new Set([
 ]);
 const VALID_MEDIA_TYPES = new Set(["image/png", "image/jpeg"]);
 const VALID_ITEM_ROLES = new Set(["actionable", "contextual"]);
-// Matches app.models.image_gen_client.IMAGE_GEN_API_VERSION; the
-// generated image's api_version must equal this EXACT value, not merely
-// be some non-empty string.
 const EXPECTED_IMAGE_API_VERSION = "v1";
 
 function fail(message) {
@@ -166,10 +109,6 @@ function requireNoDuplicates(ids, name) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 1. normaliseReorganiseUploadResponse
-// ---------------------------------------------------------------------------
-
 export function normaliseReorganiseUploadResponse(response) {
   if (!isPlainObject(response)) fail("response must be an object");
   if (response.path !== "reorganise") fail(`expected path "reorganise", got ${JSON.stringify(response.path)}`);
@@ -213,18 +152,13 @@ export function normaliseReorganiseUploadResponse(response) {
     );
     return item.item_id;
   });
-  // Duplicate LABELS are explicitly legal and never checked here, only
-  // item_id (the one real identity) must be unique.
+  // Labels may repeat; item_id must not.
   requireNoDuplicates(itemIds, "analysis.items item_id");
 
   const inputImageSha256 = requireSha256Hex(response.input_image_sha256, "input_image_sha256");
 
   return { runId, analysis, items, inputImageSha256 };
 }
-
-// ---------------------------------------------------------------------------
-// 2. normaliseGenerateResponse
-// ---------------------------------------------------------------------------
 
 function requireExactKeys(value, keys, name) {
   const actual = Object.keys(value).sort();
@@ -244,12 +178,9 @@ function validateAction(action, index) {
   const name = `action_plan.actions[${index}]`;
   if (!isPlainObject(action)) fail(`${name} must be an object`);
   requireExactKeys(action, ACTION_KEYS, name);
-  // The server numbers actions 1..n in order; a gap, repeat or reorder
-  // is contract drift, never silently renumbered here.
+  // Reject numbering drift rather than silently renumbering.
   const priority = requireInteger(action.priority, `${name}.priority`);
   if (priority !== index + 1) fail(`${name}.priority must be ${index + 1}, got ${priority}`);
-  // Same trimmed bounds as ReorganiseAction (app.core.reorganise_actions):
-  // a title of 3..80 and an instruction of 10..300 characters.
   requireBoundedString(action.title, `${name}.title`, TITLE_MIN_LENGTH, TITLE_MAX_LENGTH);
   requireBoundedString(action.instruction, `${name}.instruction`, INSTRUCTION_MIN_LENGTH, INSTRUCTION_MAX_LENGTH);
 }
@@ -288,11 +219,7 @@ function validateActionPlan(plan, runId) {
     fail("action_plan.model_name and action_plan.prompt_version must either both be non-empty strings or both be null");
   }
 
-  // Per-provenance truthfulness. At most ONE model call ever happens, so
-  // attempts is 1 whenever a call was made and 0 only on the explicit
-  // no-model path; a fallback must say why (exactly one issue); a model
-  // may be named only if a call happened; was_repaired is a genuine
-  // boolean only for a checklist the model actually wrote.
+  // At most one model call: provenance must agree with attempts and metadata.
   if (plan.provenance === "deterministic_direct") {
     if (plan.attempts !== 0) fail(`action_plan.attempts must be 0 for deterministic_direct (no model is called), got ${JSON.stringify(plan.attempts)}`);
     if (issues.length !== 0) fail(`deterministic_direct requires action_plan.issues to be empty, no attempt was made to fail, got ${issues.length}`);
@@ -350,8 +277,7 @@ function validateTidyPlan(plan, allowedItemIds) {
   requireNoDuplicates(stepIds, "tidy step_id");
 }
 
-// Focus areas: at most three, count-ordered, every item_id selected and
-// in at most one area. Joined by item_id only; the label is display text.
+// Focus areas are count-ordered and reference selected item_ids once at most.
 function validateFocusAreas(focusAreas, selectedItemIds) {
   const areas = requireArray(focusAreas, "focus_areas");
   if (areas.length === 0 || areas.length > MAX_FOCUS_AREAS) {
@@ -382,8 +308,7 @@ function validateFocusAreas(focusAreas, selectedItemIds) {
   requireNoDuplicates(seenIds, "focus area item_id (across areas)");
 }
 
-// Storage suggestions: at most three, unique names, every related id
-// selected. Exact keys, so a price/brand/link field is rejected.
+// Storage suggestions use unique names and selected item_ids only.
 function validateStorageSuggestions(suggestions, selectedItemIds) {
   const list = requireArray(suggestions, "storage_suggestions");
   if (list.length > MAX_STORAGE_SUGGESTIONS) {
@@ -409,9 +334,7 @@ function validateStorageSuggestions(suggestions, selectedItemIds) {
   });
 }
 
-// The shared, non-image part of both generate responses. `selectedItemIds`
-// is the authoritative selection: the client's own request for
-// /generate, the server-derived confirmed Keep set for /generate/confirmed.
+// Both response types share this body; Both supplies server-derived Keep ids.
 function validateGenerationBody(response, runId, selectedItemIds, tidyAllowedItemIds = selectedItemIds) {
   validateActionPlan(response.action_plan, runId);
   validateTidyPlan(response.tidy_plan, tidyAllowedItemIds);
@@ -440,8 +363,7 @@ function validateGeneratedImage(image, expectedInputImageSha256) {
     2,
     { minExclusive: true }
   );
-  // requireInteger's own typeof check already rejects booleans (typeof
-  // true/false is "boolean", never "number") before Number.isInteger runs.
+  // The type check rejects booleans before the integer check.
   const seed = requireInteger(image.seed, "image.seed");
   requireRange(seed, "image.seed", 0, 2 ** 32 - 1);
 
@@ -461,10 +383,7 @@ function validateGeneratedImage(image, expectedInputImageSha256) {
 export function normaliseGenerateResponse(response, { runId, selectedItemIds, inputImageSha256 }) {
   if (!isPlainObject(response)) fail("response must be an object");
 
-  // Caller-supplied input, not response data, validated with the same
-  // rigor as everything else: non-empty, every entry a genuine item_id,
-  // no duplicates. A malformed caller-supplied selection should fail
-  // loudly here rather than produce a confusing partition mismatch below.
+  // Validate the request snapshot before comparing the response.
   requireArray(selectedItemIds, "selectedItemIds");
   if (selectedItemIds.length === 0) fail("selectedItemIds must be a non-empty array");
   selectedItemIds.forEach((id, i) => requireItemId(id, `selectedItemIds[${i}]`));
@@ -504,37 +423,8 @@ export function normaliseGenerateResponse(response, { runId, selectedItemIds, in
   };
 }
 
-// ---------------------------------------------------------------------------
-// 3. normaliseConfirmedGenerateResponse
-// ---------------------------------------------------------------------------
-
-// POST /generate/confirmed's response (ConfirmedGenerateResponse, Both),
-// see app/api/routes.py: EXTENDS GenerateResponse's shape
-// (run_id/action_plan/tidy_plan/focus_areas/storage_suggestions/image_prompt/
-// image_status/image/image_unavailable_reason) with `confirmation`,
-// never reshaping it. This adapter mirrors that composition: it
-// validates the shared generation portion with the SAME
-// validateGenerationBody()/validateGeneratedImage() functions
-// normaliseGenerateResponse() above already uses (genuine reuse, not a
-// parallel copy), and validates `confirmation` with
-// confirmationContract.js's own normaliseConfirmationResponse()
-// (imported at the top of this file), never a reimplementation of that
-// logic either.
-//
-// `sourceDeclutter` is the exact DeclutterResult the /generate/confirmed
-// request was built from (i.e. useBothFlow's own declutter.declutter at
-// generate() time), normaliseConfirmationResponse cross-checks the
-// returned confirmation against it exactly like /confirm's own response
-// already is elsewhere.
-//
-// `priorConfirmedKeepIds` is the confirmed_keep_ids the client's own
-// earlier POST /confirm call already returned for this same
-// sourceDeclutter+overrides pair. The server independently re-derives
-// confirmed_keep_ids from declutter+overrides (see both_service.py),
-// never trusting anything the client sends, so this cross-check catches
-// any drift between the two confirm() calls (e.g. a race, or a bug that
-// let generate() fire against a stale confirmation) rather than silently
-// trusting the fresh server response at face value.
+// Both revalidates confirmation and requires its server-derived Keep ids to
+// match the prior confirmation snapshot before accepting generation output.
 export function normaliseConfirmedGenerateResponse(
   response,
   { runId, sourceDeclutter, priorConfirmedKeepIds, inputImageSha256 }
@@ -559,9 +449,7 @@ export function normaliseConfirmedGenerateResponse(
     );
   }
 
-  // Focus areas and suggestions may only reference the server-derived
-  // confirmed Keep set, never a client-supplied selection (there is none
-  // here at all; see generateConfirmedReorganisation in api/client.js).
+  // Focus areas and suggestions use only server-derived confirmed Keep ids.
   validateGenerationBody(
     response,
     runId,

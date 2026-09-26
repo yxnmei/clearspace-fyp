@@ -4,14 +4,8 @@ import { itemNumberLabel } from "../utils/format";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/cn";
 
-// The unresolved expected-items section. Rendered only when there is at
-// least one unresolved item. All partitioning, ref registration,
-// activation and correction-error scoping still live in the composing
-// review section and are passed in. These items stay prominent: they
-// are what blocks confirmation, and they are the ONLY rows that carry
-// the "Please double check" flag (a genuinely unresolved decision, never
-// a confidence threshold). Raw item_id is not rendered; the number badge
-// derived from it keeps the row linked to its detection box.
+// Only unresolved decisions receive the warning flag and block confirmation.
+// item_id links each row to its detection box but is not displayed raw.
 export default function DeclutterUnresolvedItems({
   items,
   activeItemId,

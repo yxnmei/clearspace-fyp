@@ -4,34 +4,9 @@ import { X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../lib/cn";
 
-// A full-viewport enlarged view of ONE image, with step zoom, scroll
-// panning and optional detection outlines. No dependency: it is a fixed
-// overlay with a dialog inside, rendered through a portal onto
-// document.body so no ancestor stacking context (the review column is
-// position: sticky, which always creates one) can paint page chrome such
-// as the sticky action bar over it.
-//
-// Behaviour the hosts rely on:
-//   - opens only when `open` is true; the close button receives focus on
-//     open and focus returns to whatever element opened it on close;
-//   - Escape closes, a click on the backdrop (not the image) closes, the
-//     close button closes; Tab and Shift+Tab stay inside the dialog;
-//   - zoom is 1x, 2x or 3x via the two buttons or the + and - keys; at
-//     1x the image fits the viewport, above 1x it grows past it and the
-//     scroll container pans, which works with mouse, touch and keyboard
-//     without any drag handling;
-//   - `overlays` (optional) are normalised boxes drawn over the image in
-//     a wrapper that is exactly the image's rendered size, so they stay
-//     aligned at every zoom level. A "Show boxes" toggle in the toolbar
-//     shows or hides them; its initial state comes from
-//     `initialShowOverlays` each time the lightbox opens, so it mirrors
-//     the host's own "Show all boxes" setting. The outlines are
-//     decorative here (aria-hidden): the host already lists every item;
-//   - page scrolling is locked while open and restored on close;
-//   - no animation, so reduced-motion needs nothing special.
-//
-// It shows exactly the `src` it is given: hosts pass the same object URL
-// or data URL they already render, so nothing is fetched or re-encoded.
+// Portalled image dialog with focus trapping, restored opener focus, step
+// zoom, scroll panning and optional aligned overlays. It renders the supplied
+// URL without fetching or re-encoding it.
 const ZOOM_LEVELS = [1, 2, 3];
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -175,11 +150,7 @@ export default function ImageLightbox({
         </div>
       </div>
 
-      {/* The scroll container is the backdrop: a click on it (not on the
-          image or its outlines) closes. Above 1x the wrapper is wider
-          than the container, so ordinary scrolling pans both ways. The
-          wrapper is an inline block sized by the image, so percentage
-          positioned outlines stay aligned at any zoom. */}
+      {/* The image-sized wrapper keeps percentage overlays aligned while zooming. */}
       <div
         data-testid="lightbox-backdrop"
         onClick={handleBackdropClick}

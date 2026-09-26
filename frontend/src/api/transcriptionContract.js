@@ -1,28 +1,6 @@
-// Pure functions only, unit-tested, no React/DOM/fetch here. Same
-// convention as declutterContract.js / confirmationContract.js /
-// reorganiseContract.js, including the deliberate duplication of the
-// small local helpers below rather than sharing a helpers module.
-//
-// One job: normaliseTranscriptionResponse(), validates POST
-// /transcribe's response (see app/api/routes.py's TranscribeResponse)
-// before anything reads a transcript out of it.
-//
-// The distinction this module exists to protect is narrow and easy to
-// lose: an EMPTY transcript is a legitimate result (a silent recording),
-// but only when the server actually said so by returning
-// `transcript: ""` inside an otherwise complete, well-formed response. A
-// response missing the field, carrying the wrong type, or carrying
-// fields the contract does not define is MALFORMED, it is not evidence
-// of silence, and treating it as such would tell the user "no speech
-// detected" about a response that never described any speech at all.
-//
-// Mirrors TranscribeResponse's own `extra="forbid"` on the wire: an
-// unrecognised field means the client and server disagree about the
-// contract, which is a defect to surface, not a field to ignore.
-//
-// Nothing here coerces. A numeric string is not a number, `1` is not
-// `true`, and no value is trimmed, rounded or defaulted, the caller
-// gets exactly what the server sent, or an error.
+// An empty transcript is valid only when the server explicitly returns ""
+// in an otherwise exact response. Missing, extra or mistyped fields are not
+// evidence of silence. Values are never coerced or defaulted.
 
 const EXPECTED_FIELDS = ["transcript", "model_name", "transcription_ms", "audio_duration_s"];
 const EXPECTED_FIELD_SET = new Set(EXPECTED_FIELDS);
@@ -35,8 +13,7 @@ function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Deliberately NOT requireNonEmptyString: "" is the contract's own
-// representation of a silent recording.
+// "" is the server's explicit representation of silence.
 function requireString(value, name) {
   if (typeof value !== "string") fail(`${name} must be a string`);
   return value;
@@ -47,9 +24,7 @@ function requireNonEmptyString(value, name) {
   return value;
 }
 
-// typeof rejects booleans before Number.isFinite ever runs (typeof true
-// is "boolean"), so `true` cannot slip through as 1, the same trap
-// TranscribeResponse's own validator calls out on the server side.
+// The type check rejects booleans before numeric validation.
 function requireNonNegativeNumber(value, name) {
   if (typeof value !== "number" || !Number.isFinite(value)) fail(`${name} must be a finite number`);
   if (value < 0) fail(`${name} must not be negative`);
@@ -73,8 +48,6 @@ export function normaliseTranscriptionResponse(response) {
 
   const transcript = requireString(response.transcript, "transcript");
   const modelName = requireNonEmptyString(response.model_name, "model_name");
-  // Inference wall-clock and decoded audio length respectively are kept
-  // separate on the server so neither can stand in for the other here.
   const transcriptionMs = requireNonNegativeNumber(response.transcription_ms, "transcription_ms");
   const audioDurationS = requireNonNegativeNumber(response.audio_duration_s, "audio_duration_s");
 

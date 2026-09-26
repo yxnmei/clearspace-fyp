@@ -8,10 +8,7 @@ import ReorganiseLabelCorrection from "./ReorganiseLabelCorrection";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/cn";
 
-// Box colouring for the analysed-room overlay: an included item's box is
-// solid brand green, an excluded item's box is dashed and muted, and the
-// active (hovered / focused) box gets the ring. Tokens only, no raw
-// palette classes.
+// Distinguish included, excluded and active boxes with design tokens.
 function reorganiseBoxClassName(item, isActive, isQuiet, selectedSet) {
   const base = "absolute rounded-sm border-2 transition-none";
   const category = selectedSet.has(item.item_id)
@@ -25,26 +22,9 @@ function reorganiseBoxClassName(item, isActive, isQuiet, selectedSet) {
   return `${base} ${category} ${state}`;
 }
 
-// Direct Reorganise's Select items screen. Every actionable detection
-// starts included; the user may exclude false detections before moving
-// to the separate Tidy plan screen. Identity is item_id throughout (the
-// checkbox id, the React key, the overlay link and the only callback,
-// onToggleItem(item_id)); nothing technical is rendered: no raw id, no
-// confidence, no status. Position / size appear only where they help
-// tell apart items that share a label. Selection never calls an API and
-// contextual items are never selectable. Layout and long-list navigation
-// match the Declutter review workspace: preview first on mobile, sticky
-// preview beside the list from lg.
-//
-// Label correction: when onCorrectLabel is supplied each actionable row
-// gets a ReorganiseLabelCorrection control BELOW its checkbox <label>, a
-// sibling rather than a descendant, so typing, clicking or pressing Enter
-// in it can never toggle the item's selection. `items` already carry any
-// corrected effective_label (see useReorganiseFlow), so the row text and
-// the photo-box labels show the same name; a corrected row also shows the
-// detector's label. Correction stays available while selection is
-// locked on a finished plan (it clears that plan), and is disabled only
-// by correctionDisabled.
+// Actionable selection uses item_id throughout; contextual items are not
+// selectable. Label correction is outside the checkbox label so its controls
+// cannot toggle selection.
 export default function ReorganiseItemSelector({
   items,
   selectedItemIds,
@@ -88,14 +68,12 @@ export default function ReorganiseItemSelector({
   const actionableItems = items.filter((item) => item.item_role === "actionable");
   const contextualItems = items.filter((item) => item.item_role !== "actionable");
 
-  // Counts come from actionable items only; contextual items are never
-  // part of the plan and never counted.
+  // Contextual items are outside plan counts.
   const detectedCount = actionableItems.length;
   const includedCount = actionableItems.filter((item) => selectedSet.has(item.item_id)).length;
   const excludedCount = detectedCount - includedCount;
 
-  // Position / size are shown only for labels that appear more than once
-  // among the actionable items, where they genuinely disambiguate.
+  // Position and size disambiguate duplicate labels only.
   const labelCounts = new Map();
   for (const item of actionableItems) {
     labelCounts.set(item.effective_label, (labelCounts.get(item.effective_label) ?? 0) + 1);
@@ -198,10 +176,7 @@ export default function ReorganiseItemSelector({
                         isActive && "border-primary ring-1 ring-primary"
                       )}
                     >
-                      {/* The whole card is the label of its native checkbox,
-                          so the entire row is the touch target while the
-                          checkbox keeps real keyboard and screen-reader
-                          semantics. */}
+                      {/* The native checkbox keeps keyboard and screen-reader semantics. */}
                       <label
                         htmlFor={inputId}
                         className={cn(

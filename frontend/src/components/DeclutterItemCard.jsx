@@ -7,33 +7,19 @@ import ItemCropThumbnail from "./ItemCropThumbnail";
 import DecisionControl, { DECISION_OPTIONS_BY_VALUE } from "./DecisionControl";
 import { cn } from "../lib/cn";
 
-// Shared by DeclutterItemCard (resolved items) and DeclutterUnresolvedItems
-// (the unresolved list), a label correction is available for both, so
-// the form lives here once. Collapsed to a single "Wrong label?" toggle
-// until opened, so it doesn't visually compete with the primary decision
-// controls.
-//
-// isCorrecting/correctionDisabled/correctionError are the UI's local
-// reflection of useDeclutterFlow's correctingItemId/correctionError,
-// this component never calls the API itself (onCorrectLabel is the only
-// way out).
+// Shared label-correction form for resolved and unresolved items. It calls
+// onCorrectLabel only; request state remains in the flow hook.
 export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled, correctionError, onCorrectLabel }) {
   const [isOpen, setIsOpen] = useState(false);
   const [labelInput, setLabelInput] = useState("");
 
   function handleOpen() {
-    // Pre-filled with the name the person sees, which may be a listing
-    // rename. Submitting still reruns reasoning for this item only.
+    // Pre-fill the displayed name; submission still targets this item_id.
     setLabelInput(item.display_label ?? item.effective_label ?? item.clean_label);
     setIsOpen(true);
   }
 
-  // Three visible states for the one submit control, derived from the
-  // item itself rather than local memory, so a correction that the hook
-  // has applied (label_source becomes "user" and effective_label becomes
-  // the submitted text) reads as applied, and editing that text again
-  // reads as an update. Nothing here calls the API; onCorrectLabel is
-  // still the only way out.
+  // Derive applied/update state from the item returned by the hook.
   const trimmed = labelInput.trim();
   const appliedByUser = item.label_source === "user";
   const isApplied = appliedByUser && trimmed !== "" && trimmed === (item.effective_label ?? "").trim();
@@ -47,7 +33,7 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
 
   function handleSubmit(event) {
     event.preventDefault();
-    if (!trimmed || isApplied) return; // blank labels are never submitted, button is also disabled below
+    if (!trimmed || isApplied) return;
     onCorrectLabel(item.item_id, trimmed);
   }
 
@@ -106,29 +92,8 @@ export function LabelCorrectionControl({ item, isCorrecting, correctionDisabled,
   );
 }
 
-// One compact row per resolved, expected item: thumbnail, number badge,
-// the effective label with its status badges, a short position / size
-// line, the segmented decision control, then a secondary line with the
-// AI suggestion and reason, the exclusion checkbox and the collapsed
-// label correction. Raw item_id, detection confidence and item_validity
-// are deliberately NOT rendered; item_id stays the row's identity for
-// the key, every callback and the overlay link.
-//
-// Decision controls call back to useDeclutterFlow's setDecisionOverride/
-// setItemExcluded, keyed only by item.item_id (never clean_label, two
-// items sharing a label render as two independent rows with independent
-// state, purely by item_id).
-//
-// isActive/onActivate/onDeactivate/registerRef link this row to its box
-// in AnalysedRoomPanel (owned by the parent, not this component):
-// hovering/focusing the row marks it active, which highlights the
-// matching box, and a box click scrolls/focuses back here via the
-// registered ref. All four are optional/no-op by default so the row
-// still works standalone in a test without the overlay wired up.
-//
-// imageUrl is the single analysed-room source image; ItemCropThumbnail
-// derives a small decorative crop from it and the item's normalized box.
-// No per-item image or object URL is created.
+// Resolved item row linked to its overlay. item_id keys every callback and
+// link, so duplicate labels remain independent.
 export default function DeclutterItemCard({
   item,
   onDecisionChange,
@@ -143,9 +108,7 @@ export default function DeclutterItemCard({
   correctionDisabled = false,
   correctionError = null,
 }) {
-  // One user-facing name per item_id: a listing rename if there is one,
-  // else the reasoning label. When the two differ the row also shows the
-  // detector's label, so the provenance is never hidden.
+  // Show a listing rename while retaining detector/reasoning provenance.
   const reasoningLabel = item.effective_label ?? item.clean_label;
   const displayLabel = item.display_label ?? reasoningLabel;
   const isRenamed = displayLabel !== reasoningLabel;
@@ -166,12 +129,6 @@ export default function DeclutterItemCard({
         isActive ? "border-primary ring-1 ring-primary" : "border-border"
       )}
     >
-      {/* One CSS grid, two placements. Below md: row 1 = thumbnail | item
-          info, row 2 = the decision control spanning BOTH columns (the full
-          card width, so four options fit without clipping), row 3 = the
-          secondary lines. From md: thumbnail | info | control on row 1,
-          secondary lines under the info on row 2. One control instance,
-          moved by grid placement only. */}
       <div
         data-testid="item-card-grid"
         className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 md:grid-cols-[auto_minmax(0,1fr)_auto] md:gap-x-4"

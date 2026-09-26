@@ -4,24 +4,8 @@ import { useVoiceContext } from "../hooks/useVoiceContext";
 import { Button, buttonVariants } from "./ui/button";
 import { cn } from "../lib/cn";
 
-// The reusable voice half of the context field, mounted beside, never
-// instead of, the ordinary textarea it can fill. It is deliberately
-// dumb about workflows: it knows the current context text and how to
-// hand back a new one, nothing about Declutter, Reorganise or Both.
-//
-// The single rule this component exists to enforce: a transcript is
-// NEVER written into context on arrival. It lands in a review panel the
-// user can edit, apply or throw away, and only an explicit click on
-// "Use as context"/"Replace context" calls onApplyTranscript.
-//
-// `onBusyChange` is how the host form learns to disable its own submit
-// while the microphone or the transcription request is live, the
-// alternative, lifting the whole hook into both forms, would duplicate
-// this component's rules in two places.
-//
-// This panel uses the ClearSpace design system; the
-// concurrency latch, operation token, microphone cleanup and
-// transcript-review flow all still live in useVoiceContext, untouched.
+// Workflow-agnostic voice review. Transcripts never enter context on arrival;
+// only explicit apply calls onApplyTranscript. Busy state disables host submit.
 export default function VoiceContextInput({
   idPrefix,
   context = "",
@@ -46,10 +30,7 @@ export default function VoiceContextInput({
     discard,
   } = useVoiceContext();
 
-  // Held in a ref so the two effects below depend on `isBusy` alone. A
-  // host passing an inline arrow would otherwise change the callback's
-  // identity every render, and the unmount effect's cleanup would fire
-  // on each of them, fighting the notify effect.
+  // Stabilise busy notifications even when the host passes an inline callback.
   const onBusyChangeRef = useRef(onBusyChange);
   useEffect(() => {
     onBusyChangeRef.current = onBusyChange;
@@ -59,16 +40,12 @@ export default function VoiceContextInput({
     onBusyChangeRef.current?.(isBusy);
   }, [isBusy]);
 
-  // Report idle on the way out, so unmounting mid-recording cannot
-  // leave the host form's submit button disabled forever.
+  // Unmount must release the host's disabled state.
   useEffect(() => {
     return () => onBusyChangeRef.current?.(false);
   }, []);
 
-  // The chosen file's NAME, kept here because the native input cannot:
-  // handleFileChange clears input.value immediately (see below), which
-  // also wipes the browser's own filename label. Only File.name, never
-  // a path, which the browser does not expose anyway.
+  // Retain File.name because the native value is cleared for same-file retry.
   const [selectedFileName, setSelectedFileName] = useState(null);
 
   const audioInputId = `${idPrefix}-voice-file`;
@@ -79,20 +56,15 @@ export default function VoiceContextInput({
   async function handleFileChange(event) {
     const input = event.target;
     const file = input.files?.[0] ?? null;
-    // Clear the input so choosing the SAME file again after a failure
-    // still fires a change event. This is why the name is held in state
-    // rather than read back off the input.
+    // Clearing allows the same file to fire change again after failure.
     input.value = "";
     if (!file) return;
-    // Set before transcribing and kept on failure: a rejected file is
-    // when the user most needs to see which one they picked.
+    // Keep the selected name visible on failure.
     setSelectedFileName(file.name);
     await transcribeFile(file);
   }
 
-  // Apply, discard and record-instead are the three moments the chosen
-  // file stops being what the panel is about; every other state keeps
-  // the name on screen.
+  // Clear the filename only when leaving that file's flow.
   function handleApply() {
     const text = (pendingTranscript ?? "").trim();
     if (!text) return;
@@ -146,11 +118,7 @@ export default function VoiceContextInput({
             </Button>
           ))}
 
-        {/* The real input is kept and only its native rendering is
-            replaced: visually hidden, so it stays focusable and
-            labelled, with `peer` carrying focus and disabled onto the
-            label. Hiding it is what stops the browser's own "No file
-            chosen" contradicting the retained filename beside it. */}
+        {/* Keep the labelled native input focusable behind the styled control. */}
         <input
           id={audioInputId}
           type="file"

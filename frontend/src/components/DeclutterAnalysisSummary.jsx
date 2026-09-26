@@ -1,22 +1,7 @@
 import { Sofa, ScanSearch, ListChecks, TriangleAlert } from "lucide-react";
 
-// The "What we found" summary on the Declutter / Both Analyse space
-// screen, presentational only: every value comes straight from the
-// analysis and declutter results the page already holds. On a
-// successful analysis this heading is the screen's ONE visible h2: the
-// workflow tracker already says "Analysis complete." and names the next
-// action (in an aria-live region), so the page renders no second
-// success heading or banner.
-//
-// Deliberately user-facing: the space type (no confidence percentage),
-// how many items were found, and how many are ready to review on Decide
-// items. No analysis timing, no candidate / detection / classification
-// vocabulary, no warning codes. Contextual items are not counted here
-// because Decide items explains them where they appear. A warning is one
-// calm sentence, rendered only when the analysis actually carries one.
-//
-// `contextualCount` and `totalDurationMs` are still accepted from older
-// callers but are not shown.
+// User-facing Declutter/Both summary and the success screen's only h2.
+// contextualCount and totalDurationMs remain accepted but are not displayed.
 function Stat({ icon: Icon, label, value }) {
   return (
     <div className="flex min-w-0 items-start gap-2.5 rounded-control border border-border bg-surface-muted p-3">

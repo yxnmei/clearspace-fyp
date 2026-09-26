@@ -2,23 +2,8 @@ import { ImageUp, Upload } from "lucide-react";
 import { buttonVariants } from "./ui/button";
 import { cn } from "../lib/cn";
 
-// Stateless, presentational space-photo field shared by the Declutter and
-// Reorganise upload forms. It owns NO state and NO validation, the host
-// form keeps file state, the object-URL lifecycle, type checking and the
-// workflow-specific copy, and passes the results down here.
-//
-// The native <input type="file"> stays in the DOM, keeps its label
-// association (via aria-label so a single name resolves), stays keyboard
-// focusable and is disabled with the rest of the form. Only its default
-// visual rendering is replaced, a styled trigger plus a filename drawn
-// from File.name alone (never a path). There is no drag-and-drop: the
-// surface is a calm placeholder, not a drop zone, and says nothing that
-// implies one.
-//
-// Two visual states: an empty, dashed, muted surface that asks for a
-// photo, and, once one is chosen, a taller framed preview that becomes
-// the emphasised element of the field, with a "Replace photo" trigger
-// beneath it.
+// Stateless shared photo field. The native labelled input remains focusable;
+// hosts own validation, file state and object URLs.
 export default function RoomPhotoField({
   id,
   accept,
@@ -64,10 +49,6 @@ export default function RoomPhotoField({
         </div>
       )}
 
-      {/* Trigger first, filename beside it from sm; stacked on phones so a
-          long filename never pushes the trigger off screen. The trigger
-          is a full-width 44px target on phones and a natural-width small
-          button from sm. */}
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <input
           id={id}

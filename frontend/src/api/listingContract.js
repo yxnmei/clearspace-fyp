@@ -1,36 +1,13 @@
-// Pure functions only, unit-tested, no React/DOM/fetch/clipboard or
-// hook state here. Same convention as api/confirmationContract.js /
-// declutterContract.js / reorganiseContract.js: this file owns its own
-// small local validation helpers (fail/isPlainObject/requireArray/...)
-// rather than importing a shared helpers module. normaliseConfirmationResponse
-// (a higher-level normalizer, not a small helper) is the one deliberate
-// import, reused verbatim exactly as reorganiseContract.js already does.
-//
-// Two jobs, sharing every internal helper so there is only one
-// implementation of each rule:
-//   1. normaliseListingResponse() - validates a complete POST /listings
-//      response (app/api/routes.py's ListingGenerationResult) against the
-//      source DeclutterResult, the already-current confirmed result, and
-//      the current review items.
-//   2. normaliseSingleListingResponse() - validates a single POST
-//      /listings/{item_id}/regenerate response (SingleListingDraftResult)
-//      against the same trusted state PLUS the requested item_id.
-//
-// Never joins by label text: item_id is the only identity. A draft's
-// effective_label is checked to EQUAL the current review item's
-// effective_label (found strictly by item_id) - it is a consistency
-// check, never a matching key, and there is no `id` alias anywhere.
-//
-// An `unavailable` draft is a SUCCESSFUL, fully validated result here,
-// never thrown. Only a genuinely malformed / contract-violating response
-// throws - this file never silently falls back to an empty draft list.
+// Validates batch and single listing responses against current confirmed
+// state. item_id is the only identity. effective_label is checked only for
+// consistency after the item_id join, never used as a join key.
+// An unavailable draft is valid; malformed responses never become empty data.
 
 import { normaliseConfirmationResponse } from "./confirmationContract";
 
 const ITEM_ID_RE = /^item_\d{3,}$/;
 
 const VALID_STATUS = new Set(["generated", "unavailable"]);
-// Matches app.core.listing_schemas.ListingUnavailableReason exactly.
 const VALID_UNAVAILABLE_REASONS = new Set([
   "timeout",
   "service_unavailable",
@@ -38,8 +15,7 @@ const VALID_UNAVAILABLE_REASONS = new Set([
   "generation_failed",
 ]);
 
-// Backend bounds (app/core/listing_schemas.py): trimmed length ranges and
-// the strict-int attempt ceiling.
+// Mirrors backend content bounds and attempt ceiling.
 const TITLE_MIN = 2;
 const TITLE_MAX = 120;
 const DESCRIPTION_MIN = 10;
@@ -59,9 +35,7 @@ const DRAFT_KEYS = [
   "was_repaired",
   "attempts",
 ];
-// The confirmed_decisions fields that must match the current confirmed
-// result field-for-field for the listing response to be considered
-// consistent (not derived from different overrides / a stale run).
+// These fields must match the current confirmation exactly.
 const CONFIRMED_DECISION_FIELDS = [
   "item_id",
   "ai_decision",
@@ -105,11 +79,7 @@ function requireNoDuplicates(ids, name) {
   }
 }
 
-// A GENUINE integer in [min, max]. typeof-guards first, so a boolean
-// (typeof "boolean"), a numeric string, null, undefined never reach
-// Number.isInteger; Number.isInteger then rejects NaN, Infinity and any
-// non-whole float. JavaScript coercion cannot turn any of those into
-// valid integer provenance.
+// Require a real integer; the type check rejects booleans before range checks.
 function requireBoundedInteger(value, name, min, max) {
   if (typeof value !== "number" || !Number.isInteger(value)) {
     fail(`${name} must be a genuine integer, got ${JSON.stringify(value)} (${typeof value})`);
@@ -118,9 +88,7 @@ function requireBoundedInteger(value, name, min, max) {
   return value;
 }
 
-// A string that is ALREADY trimmed (the backend returns canonical
-// trimmed values, so leading/trailing whitespace is contract drift and
-// is rejected, never silently trimmed) and whose length is in [min, max].
+// Backend text is canonical; untrimmed text is contract drift, not input to fix.
 function requireExactTrimmedString(value, name, min, max) {
   if (typeof value !== "string") fail(`${name} must be a string, got ${typeof value}`);
   if (value !== value.trim()) {
@@ -140,14 +108,7 @@ function requireExactKeys(obj, expectedKeys, name) {
   if (unexpected.length) fail(`${name} has unexpected field(s): ${JSON.stringify(unexpected)}`);
 }
 
-// ---------------------------------------------------------------------------
-// shared internal helpers
-// ---------------------------------------------------------------------------
-
-// Minimal shape check for the caller-supplied "already current" confirmed
-// result (the normalised object an earlier normaliseConfirmationResponse
-// produced). A malformed one must fail loudly here rather than let
-// undefined === undefined pass in _requireSameConfirmation below.
+// Check current shape before equality so undefined values cannot compare equal.
 function _requireCurrentConfirmedShape(currentConfirmed) {
   if (!isPlainObject(currentConfirmed)) fail("currentConfirmed must be an object");
   requireNonEmptyString(currentConfirmed.runId, "currentConfirmed.runId");
@@ -167,10 +128,7 @@ function _requireCurrentConfirmedShape(currentConfirmed) {
   );
 }
 
-// `normalised` is the freshly-normalised confirmation from the listing
-// response; `current` is the already-current confirmed result. They must
-// describe the SAME confirmation - a listing response derived from
-// different overrides / a different run is rejected as stale.
+// Reject responses derived from a different run or override set.
 function _requireSameConfirmation(normalised, current) {
   if (normalised.runId !== current.runId) {
     fail("listing response confirmation.run_id differs from the current confirmed result");
@@ -204,9 +162,7 @@ function _requireSameConfirmation(normalised, current) {
   }
 }
 
-// Eligible = confirmed Sell and not excluded, in confirmation order.
-// Derived ONLY from the validated confirmation, never from anything the
-// client passed in or the listing response claimed.
+// Eligible Sell ids are derived only from validated server confirmation.
 function _deriveEligibleItemIds(confirmation) {
   return confirmation.confirmedDecisions
     .filter((d) => d.confirmed_decision === "sell" && d.excluded === false)
@@ -226,9 +182,7 @@ function _reviewItemsById(currentReviewItems) {
   return byId;
 }
 
-// Validate one draft object and return a fresh normalised draft (never a
-// reference to, or a mutation of, the input). `maxAttempts` is a real
-// integer here (both callers only validate drafts once they have one).
+// Return a fresh draft after exact-key and value validation.
 function _normaliseDraft(draft, name, maxAttempts, reviewItemsById) {
   if (!isPlainObject(draft)) fail(`${name} must be an object`);
   requireExactKeys(draft, DRAFT_KEYS, name);
@@ -283,9 +237,7 @@ function _normaliseDraft(draft, name, maxAttempts, reviewItemsById) {
     unavailableReason = draft.unavailable_reason;
   }
 
-  // Fresh object; identity stays item_id (no `id` alias). Field names
-  // kept identical to the wire so a hook can tell server values from its
-  // own local edit state at a glance.
+  // Preserve wire names and item_id identity in a fresh object.
   return {
     item_id: itemId,
     effective_label: draft.effective_label,
@@ -298,10 +250,7 @@ function _normaliseDraft(draft, name, maxAttempts, reviewItemsById) {
   };
 }
 
-// Shared: validate the shared confirmation portion (reusing
-// normaliseConfirmationResponse verbatim, then cross-checking against the
-// current confirmed result) and return { confirmation, eligibleItemIds,
-// reviewItemsById }.
+// Validate source and current confirmation before deriving eligibility.
 function _validateSharedListingContext(responseConfirmation, { runId, sourceDeclutter, currentConfirmed, currentReviewItems }) {
   if (!isPlainObject(responseConfirmation)) fail("confirmation must be an object");
   const confirmation = normaliseConfirmationResponse(responseConfirmation, sourceDeclutter);
@@ -314,10 +263,6 @@ function _validateSharedListingContext(responseConfirmation, { runId, sourceDecl
   const reviewItemsById = _reviewItemsById(currentReviewItems);
   return { confirmation, eligibleItemIds, reviewItemsById };
 }
-
-// ---------------------------------------------------------------------------
-// 1. normaliseListingResponse - complete POST /listings response
-// ---------------------------------------------------------------------------
 
 export function normaliseListingResponse(response, { runId, sourceDeclutter, currentConfirmed, currentReviewItems }) {
   if (!isPlainObject(response)) fail("response must be an object");
@@ -351,9 +296,7 @@ export function normaliseListingResponse(response, { runId, sourceDeclutter, cur
     maxAttempts = requireBoundedInteger(response.max_attempts, "max_attempts", ATTEMPTS_MIN, ATTEMPTS_MAX);
   }
 
-  // Exact draft-id partition against the eligible set, in confirmation
-  // order: no missing, no duplicate, no unexpected (which also catches an
-  // excluded / non-Sell id), no reorder.
+  // Draft ids must exactly partition eligible Sell ids in confirmation order.
   const draftIds = drafts.map((draft, i) => {
     if (!isPlainObject(draft)) fail(`drafts[${i}] must be an object`);
     return requireItemId(draft.item_id, `drafts[${i}].item_id`);
@@ -389,10 +332,6 @@ export function normaliseListingResponse(response, { runId, sourceDeclutter, cur
   };
 }
 
-// ---------------------------------------------------------------------------
-// 2. normaliseSingleListingResponse - POST /listings/{item_id}/regenerate
-// ---------------------------------------------------------------------------
-
 export function normaliseSingleListingResponse(
   response,
   { runId, sourceDeclutter, currentConfirmed, currentReviewItems, itemId }
@@ -415,9 +354,7 @@ export function normaliseSingleListingResponse(
     fail(`the requested itemId ${JSON.stringify(itemId)} is not currently a confirmed non-excluded Sell item`);
   }
 
-  // A single regeneration ALWAYS targets one eligible item and always
-  // makes at least one model call - there is no empty case, so
-  // model / prompt / max_attempts are always present.
+  // Single regeneration has no empty case, so provenance is required.
   const modelName = requireNonEmptyString(response.model_name, "model_name");
   const promptVersion = requireNonEmptyString(response.prompt_version, "prompt_version");
   const maxAttempts = requireBoundedInteger(response.max_attempts, "max_attempts", ATTEMPTS_MIN, ATTEMPTS_MAX);

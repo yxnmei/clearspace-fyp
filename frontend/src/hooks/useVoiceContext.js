@@ -2,21 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { transcribeAudio } from "../api/client";
 import { normaliseTranscriptionResponse } from "../api/transcriptionContract";
 
-// Voice is an OPTIONAL way to populate the existing `user_context`
-// field, never a command channel, and never an automatic writer. This
-// hook owns the whole recording/transcription lifecycle and produces a
-// *pending* transcript; whether that text ever becomes context is the
-// user's decision, made explicitly in VoiceContextInput. Nothing here
-// touches the caller's context state.
-//
-// Mirrors the backend's own framing (POST /transcribe returns a
-// transcript and nothing else: no run, no analysis, no correlation).
+// Voice produces a pending transcript only. Applying it to context remains
+// an explicit user action owned by VoiceContextInput.
 
-// Ordered by preference, filtered through MediaRecorder.isTypeSupported
-// the browser is asked what it supports rather than assumed to be
-// Chrome. Every candidate is inside the backend's accepted set (see
-// app/core/audio_decode.py); codec parameters are stripped server-side,
-// so "audio/webm;codecs=opus" is validated as "audio/webm".
+// Preferred browser-supported types within the backend allowlist.
 const PREFERRED_MIME_TYPES = [
   "audio/webm;codecs=opus",
   "audio/webm",
@@ -25,9 +14,7 @@ const PREFERRED_MIME_TYPES = [
   "audio/mp4",
 ];
 
-// Client-side mirror of the backend allowlist, so an obviously wrong
-// file fails immediately and locally instead of costing an upload and
-// coming back as a sanitised 415.
+// Reject unsupported files before upload.
 const ACCEPTED_AUDIO_TYPES = new Set([
   "audio/webm",
   "audio/ogg",
@@ -41,10 +28,7 @@ const ACCEPTED_AUDIO_TYPES = new Set([
   "audio/x-m4a",
 ]);
 
-// Concise, optional-feature wording: every message says what the user
-// can do next, and none of them leaks a status code, a response body or
-// a backend detail string. Exported so tests assert against the same
-// constants the UI renders rather than duplicated literals.
+// Fixed display-safe messages never expose response bodies or backend details.
 export const VOICE_MESSAGES = {
   unsupportedAudio: "That audio could not be read. Record again, or choose a different audio file.",
   tooLong: "That recording is too long. Record a shorter clip and try again.",
@@ -67,9 +51,7 @@ function stripParameters(mediaType) {
     .toLowerCase();
 }
 
-// Both halves are required: a browser with MediaRecorder but no
-// getUserMedia (or an insecure origin, where mediaDevices is absent)
-// cannot record, and must fall through to the file/typed fallbacks.
+// Recording requires both MediaRecorder and getUserMedia.
 export function canRecordAudio() {
   if (typeof window === "undefined") return false;
   if (typeof window.MediaRecorder !== "function") return false;
@@ -79,16 +61,14 @@ export function canRecordAudio() {
 
 function pickMimeType() {
   const isTypeSupported = window.MediaRecorder?.isTypeSupported;
-  if (typeof isTypeSupported !== "function") return null; // let the browser choose
+  if (typeof isTypeSupported !== "function") return null;
   for (const candidate of PREFERRED_MIME_TYPES) {
     if (window.MediaRecorder.isTypeSupported(candidate)) return candidate;
   }
   return null;
 }
 
-// ApiError keeps status and the parsed backend detail separate from its
-// generic message. They are used here for routing only; every branch
-// resolves to one of the fixed VOICE_MESSAGES strings.
+// ApiError status/detail route to fixed messages only; neither is displayed.
 function messageForError(error) {
   const status = Number(error?.status);
   const detail = typeof error?.detail === "string" ? error.detail.toLowerCase() : "";
@@ -107,31 +87,23 @@ function stopStream(stream) {
     try {
       track.stop();
     } catch {
-      // A track the browser already ended must not break teardown.
+      // An already-ended track must not break teardown.
     }
   }
 }
 
 export function useVoiceContext() {
-  const [status, setStatus] = useState("idle"); // idle | starting | recording | transcribing
+  const [status, setStatus] = useState("idle");
   const [pendingTranscript, setPendingTranscript] = useState(null);
-  // Whether the MODEL returned nothing, deliberately separate from
-  // "the pending text is empty right now". A user who clears the review
-  // box has not been told there was no speech; they are mid-edit, and
-  // the editable panel must stay open for them.
+  // Server-reported silence differs from a user clearing the review text.
   const [pendingIsSilent, setPendingIsSilent] = useState(false);
   const [error, setError] = useState(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recordingSupported, setRecordingSupported] = useState(() => canRecordAudio());
 
-  // One operation at a time, latched synchronously: getUserMedia is
-  // async, so a state flag would let a double click through before the
-  // first await ever resolved.
+  // Latch synchronously; state alone lets a double click pass before await.
   const busyRef = useRef(false);
-  // Bumped by every new operation, by discard() and on unmount. Async
-  // continuations capture the value at their start and write state only
-  // while it still matches, so a late response belonging to an
-  // abandoned operation can never revive itself.
+  // Operation tokens block late continuations after replacement or discard.
   const operationRef = useRef(0);
   const mountedRef = useRef(true);
   const streamRef = useRef(null);
@@ -146,9 +118,7 @@ export function useVoiceContext() {
     }
   }, []);
 
-  // Every exit path, normal stop, recorder error, permission failure,
-  // discard and unmount, funnels through here, so there is exactly one
-  // place that releases the microphone and the timer.
+  // Every exit path shares this microphone and timer teardown.
   const releaseRecording = useCallback(() => {
     clearTimer();
     const recorder = recorderRef.current;
@@ -157,7 +127,7 @@ export function useVoiceContext() {
       try {
         recorder.stop();
       } catch {
-        // Already torn down by the browser.
+        // Already torn down.
       }
     }
     stopStream(streamRef.current);
@@ -169,15 +139,11 @@ export function useVoiceContext() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      operationRef.current += 1; // invalidate anything still in flight
+      operationRef.current += 1;
       busyRef.current = false;
       releaseRecording();
     };
   }, [releaseRecording]);
-
-  // This hook creates no object URLs, the pending transcript is text,
-  // and recorded audio is never played back, so there is deliberately
-  // nothing to revoke. The interval above is the only timer it owns.
 
   const runTranscription = useCallback(async (blob, token) => {
     if (mountedRef.current && token === operationRef.current) {
@@ -188,8 +154,7 @@ export function useVoiceContext() {
     try {
       response = await transcribeAudio({ audioBlob: blob });
     } catch (caught) {
-      // Only the CURRENT operation may release the busy latch: a stale
-      // rejection must not unlock work that has since replaced it.
+      // A stale rejection must not unlock its replacement.
       if (token !== operationRef.current) return;
       busyRef.current = false;
       if (!mountedRef.current) return;
@@ -202,27 +167,19 @@ export function useVoiceContext() {
     busyRef.current = false;
     if (!mountedRef.current) return;
 
-    // A 200 is not proof of a usable body. Validating here is what keeps
-    // "the server said the recording was silent" separate from "the
-    // server sent something this client cannot read": only the first is
-    // allowed to become a pending transcript at all.
+    // Only a valid response may represent server-reported silence.
     let validated;
     try {
       validated = normaliseTranscriptionResponse(response);
     } catch {
-      // The thrown message names fields and values, diagnostic detail
-      // that must not reach the UI. It is deliberately swallowed in
-      // favour of the fixed generic message.
+      // Keep contract diagnostics out of the UI.
       setStatus("idle");
       setError(VOICE_MESSAGES.failed);
       return;
     }
 
     const transcript = validated.transcript.trim();
-    // "" is a legitimate result, a silent recording, not an error, and
-    // now only reachable when the server explicitly said so. It becomes
-    // a visible "No speech detected" panel that cannot be applied,
-    // rather than blank text quietly offered as context.
+    // Explicit "" is valid silence and cannot be applied as context.
     setPendingTranscript(transcript);
     setPendingIsSilent(transcript === "");
     setStatus("idle");
@@ -264,8 +221,7 @@ export function useVoiceContext() {
       return;
     }
 
-    // Permission can land after the user discarded or navigated away,
-    // the tracks that were just granted still have to be released.
+    // Release permission granted after discard or unmount.
     if (token !== operationRef.current || !mountedRef.current) {
       stopStream(stream);
       return;
@@ -290,18 +246,11 @@ export function useVoiceContext() {
     streamRef.current = stream;
     recorderRef.current = recorder;
 
-    // A recorder error is TERMINAL for this take. The MediaRecorder
-    // specification permits error -> dataavailable -> stop, so the
-    // handlers below all run again after a failure; without this flag
-    // the trailing stop would build a blob from post-failure chunks and
-    // start a transcription for a take that already reported an error.
+    // MediaRecorder may emit error -> dataavailable -> stop. Mark the take
+    // terminal so the trailing events cannot start transcription.
     let takeFailed = false;
 
-    // Releases THIS take only. If the refs have already moved on, a
-    // discard, an unmount, or a later take, they are left alone: the
-    // path that moved them already stopped this stream, and tearing
-    // down again here would either double-stop these tracks or stop a
-    // microphone the user is currently recording into.
+    // Release only this take, never a later recorder now held by the refs.
     const releaseThisTake = () => {
       if (recorderRef.current !== recorder) return;
       releaseRecording();
@@ -314,18 +263,14 @@ export function useVoiceContext() {
     };
 
     recorder.onerror = () => {
-      if (takeFailed) return; // one error per take, whatever the browser sends
+      if (takeFailed) return;
       takeFailed = true;
 
       const isCurrentOperation = token === operationRef.current;
       releaseThisTake();
       if (!isCurrentOperation) return;
 
-      // Invalidating the token is what makes the failure terminal
-      // rather than merely reported: every later continuation of this
-      // take, the trailing stop event, and any transcription it might
-      // otherwise have started, now fails its own token check, so
-      // nothing can overwrite the message set just below.
+      // Invalidate every trailing continuation of this failed take.
       operationRef.current += 1;
       busyRef.current = false;
       if (!mountedRef.current) return;
@@ -335,15 +280,13 @@ export function useVoiceContext() {
 
     recorder.onstop = () => {
       if (takeFailed) {
-        // The spec-permitted stop after an error. The take is already
-        // released and reported; there is nothing left to do.
+        // The take was already released and reported.
         releaseThisTake();
         return;
       }
 
       const chunks = chunksRef.current;
-      // The blob is typed with what the recorder actually settled on,
-      // not with what we asked for, the two can differ.
+      // Use the recorder's actual type, which may differ from the request.
       const type = stripParameters(recorder.mimeType || mimeType || "audio/webm");
       releaseThisTake();
 
@@ -357,7 +300,6 @@ export function useVoiceContext() {
         return;
       }
 
-      // Every chunk collected during the take, joined into ONE Blob.
       const blob = new Blob(chunks, { type });
       if (!mountedRef.current) {
         busyRef.current = false;
@@ -389,7 +331,7 @@ export function useVoiceContext() {
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === "inactive") return;
     try {
-      recorder.stop(); // onstop builds the Blob and starts transcription
+      recorder.stop();
     } catch {
       releaseRecording();
       busyRef.current = false;
@@ -422,15 +364,12 @@ export function useVoiceContext() {
     [runTranscription],
   );
 
-  // Editing the pending transcript before applying it is the point of
-  // the review step; it stays entirely local until the caller applies it.
+  // Pending edits remain local until explicitly applied.
   const editPendingTranscript = useCallback((text) => {
     setPendingTranscript(typeof text === "string" ? text : "");
   }, []);
 
-  // Abandons whatever voice work exists: the pending transcript, any
-  // error, and any in-flight operation, whose response is invalidated
-  // by the token bump and can no longer write state.
+  // Discard invalidates in-flight work before clearing local state.
   const discard = useCallback(() => {
     operationRef.current += 1;
     busyRef.current = false;

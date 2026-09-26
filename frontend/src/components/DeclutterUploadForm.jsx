@@ -4,25 +4,13 @@ import RoomPhotoField from "./RoomPhotoField";
 import VoiceContextInput from "./VoiceContextInput";
 import { Button } from "./ui/button";
 
-// Presentational + its own small local UI state (selected file, context
-// text, preview URL), none of that is workflow state, so it stays out
-// of useDeclutterFlow (components stay presentational, hooks own
-// real state). onSubmit is the only thing this component calls out to;
-// it never talks to the API directly.
-//
-// The space-photo presentation is delegated to the shared, stateless
-// RoomPhotoField; file state, the object-URL lifecycle and the submit
-// guards stay here. The same structure is used by ReorganiseUploadForm
-// (heading, copy, photo left / optional context right from lg, one
-// primary action), which stays a separate component because its file
-// validation and copy differ.
+// Owns picker/context presentation state and object-URL cleanup; onSubmit is
+// its only workflow action.
 export default function DeclutterUploadForm({ status, error, onSubmit }) {
   const [file, setFile] = useState(null);
   const [context, setContext] = useState("");
   const [previewUrl, setPreviewUrl] = useState(null);
-  // Owned here, reported up by VoiceContextInput: submitting while
-  // the microphone or a transcription request is live would upload
-  // context the user has not finished dictating.
+  // Block submit while voice input is unfinished.
   const [voiceBusy, setVoiceBusy] = useState(false);
   const previewUrlRef = useRef(null);
 
@@ -32,8 +20,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
   function handleFileChange(event) {
     const selected = event.target.files?.[0] ?? null;
 
-    // Revoke the previous object URL before creating a new one, object
-    // URLs are only released by an explicit revoke, never automatically.
+    // Revoke the previous preview before replacement.
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current);
       previewUrlRef.current = null;
@@ -49,8 +36,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
     }
   }
 
-  // Clean up the last object URL if the component unmounts with one
-  // still outstanding (e.g. navigating away mid-review).
+  // Revoke the final preview on unmount.
   useEffect(() => {
     return () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -78,8 +64,6 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
         </p>
       </div>
 
-      {/* Photo first (the primary task), optional context second; a
-          balanced two-column composition from lg, one column below. */}
       <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-2">
         <RoomPhotoField
           id="declutter-image"
@@ -112,8 +96,7 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
             />
           </div>
 
-          {/* Optional voice route into the SAME context field above, it
-              hands back text for setContext, and never writes it itself. */}
+          {/* Voice applies only through setContext. */}
           <VoiceContextInput
             idPrefix="declutter"
             context={context}
@@ -124,9 +107,6 @@ export default function DeclutterUploadForm({ status, error, onSubmit }) {
         </div>
       </div>
 
-      {/* Footer: the one primary action sits at the right edge at every
-          width (self-end, natural width, 44px tall on phones); the status
-          and error lines below it keep the full width. */}
       <div className="flex flex-col gap-3 border-t border-border p-5 sm:p-6">
         <Button
           type="submit"

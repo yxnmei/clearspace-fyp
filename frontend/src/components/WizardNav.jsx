@@ -1,16 +1,7 @@
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "./ui/button";
 
-// The Back / Continue control row shared by the wizard views of every
-// workflow. It only renders and disables buttons, the availability rules
-// and the actual step change live in the pages / lib derivations.
-//
-// Layout: below sm the controls stack vertically, Back first, each one
-// full width with its icon and label centred (the Button primitive already
-// centres its content). From sm up they return to one row at their natural
-// widths, Back on the left and Continue on the right; `sm:ml-auto` keeps
-// Continue on the right even when there is no Back control, so no empty
-// placeholder element is needed on either breakpoint.
+// Shared presentational Back/Continue row; pages own availability and navigation.
 export default function WizardNav({
   backLabel,
   onBack,

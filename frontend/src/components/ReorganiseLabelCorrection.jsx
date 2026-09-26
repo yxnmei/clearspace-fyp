@@ -4,22 +4,15 @@ import { itemNumberLabel } from "../utils/format";
 import { MAX_CORRECTED_LABEL_LENGTH, validateCorrectedLabel } from "../lib/reorganiseLabelCorrections";
 import { cn } from "../lib/cn";
 
-// Plain buttons rather than the Button primitive: the selector workspace
-// must carry no no-wrap class (see ReorganiseItemSelector's layout test),
-// and the primitive's base includes whitespace-nowrap. Touch targets are
-// 44px tall below sm and compact from sm.
+// Plain buttons avoid the primitive's no-wrap class in the selector workspace.
 const BUTTON_BASE =
   "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 sm:min-h-8";
 const PRIMARY_BUTTON = `${BUTTON_BASE} bg-primary text-primary-foreground shadow-card hover:bg-primary-hover`;
 const OUTLINE_BUTTON = `${BUTTON_BASE} border border-input bg-surface text-foreground hover:bg-accent hover:text-accent-foreground`;
 const GHOST_BUTTON = `${BUTTON_BASE} text-foreground hover:bg-accent hover:text-accent-foreground`;
 
-// Direct Reorganise's label correction for one Select items row. It sits
-// OUTSIDE the row's checkbox <label>, so no click, key press or focus in
-// here can toggle the item's selection. Saving calls onCorrectLabel
-// (item_id, label) and nothing else; there is no API call and no model
-// rerun, the corrected label is used the next time the plan is created.
-// Identity is item.item_id only.
+// Sits outside the checkbox label, so correction cannot toggle selection.
+// Saving targets item_id and affects only the next generated plan.
 export default function ReorganiseLabelCorrection({
   item,
   onCorrectLabel,
@@ -51,7 +44,7 @@ export default function ReorganiseLabelCorrection({
     }
   }, [isOpen]);
 
-  // A disabled control (a plan is being created) never stays open.
+  // Close when plan generation disables correction.
   useEffect(() => {
     if (disabled) setIsOpen(false);
   }, [disabled]);

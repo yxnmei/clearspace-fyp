@@ -7,21 +7,8 @@ import declutterIcon from "../assets/declutter.svg";
 import reorganiseIcon from "../assets/reorganise.svg";
 import bothIcon from "../assets/both.svg";
 
-// Top-level workflow entry point. Presentational apart from a single piece of
-// local UI state: which card is currently selected in the radio group.
-// App.jsx still owns the real `mode` state, this component only calls
-// onChoose("declutter" | "reorganise" | "both") once, when Continue is
-// pressed.
-//
-// The three cards are ONE native radio group (name="workflow"), so keyboard
-// selection is the browser's own arrow-key behaviour and nothing here
-// re-implements it. Continue stays disabled until a workflow is chosen, and
-// decorative card content never navigates on its own.
-//
-// Each card carries three short feature bullets instead of a paragraph so
-// the workflows can be compared at a glance: what the AI does, how the
-// user stays in control, and what sets this workflow apart. The list is
-// the radio's accessible description.
+// Native radio cards preserve keyboard selection. App owns the chosen workflow;
+// this component reports it only when Continue is pressed.
 const WORKFLOWS = [
   {
     value: "declutter",
@@ -134,9 +121,6 @@ export default function PathSelector({ onChoose }) {
                     />
                   </span>
 
-                  {/* Three scannable bullets, left-aligned, each free to wrap
-                      inside the card (min-w-0 + break-words) with a small
-                      brand-tinted dot as the marker. */}
                   <ul id={`workflow-${value}-desc`} className="mt-3 flex-1 space-y-1.5 text-left text-sm text-muted-foreground">
                     {features.map((feature) => (
                       <li key={feature} className="flex min-w-0 items-start gap-2">

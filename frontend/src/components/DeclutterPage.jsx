@@ -20,28 +20,8 @@ import DecisionActionBar, { describeContinueBlocker } from "./DecisionActionBar"
 import DeclutterConfirmationPanel from "./DeclutterConfirmationPanel";
 import ListingsView from "./ListingsView";
 
-// The Declutter workflow as a five-view wizard: Upload → Analyse →
-// Review → Confirm → Listings. useDeclutterFlow stays the sole owner of
-// analysis, decisions, confirmation, listing state/actions, concurrency
-// and API activity; this component adds only presentation state, which
-// step is being viewed, and whether the user has acknowledged Review by
-// pressing Continue to Confirm choices.
-//
-// All five views stay mounted (the non-viewed ones `hidden`, so they are
-// out of the accessibility tree and unfocusable) purely so DeclutterUploadForm's
-// picked file/context and the review workspace's local UI state survive
-// moving between views. Navigation never touches the network, it is
-// setViewedStep and nothing else. lib/declutterWizard derives the
-// unlocking rules; lib/declutterReview derives the partition, counts and
-// the confirmation guard. Listings is the standalone-Declutter run's
-// final step, this workflow never continues into Reorganise, unlike Both.
-//
-// submittedFile is captured at the moment submit() is actually called and
-// drives a separate object-URL lifecycle (useObjectUrl) from
-// DeclutterUploadForm's own picker preview, so the analysed-room image
-// is always the one that was analysed, never whatever the form shows
-// after. The same object URL is reused as ListingsView's imageUrl, so
-// listing draft cards crop from the identical analysed photo.
+// Hidden mounted views preserve presentation state. The hook owns workflow
+// state; submittedFile keeps the analysed image and listing crops stable.
 export default function DeclutterPage() {
   const {
     status,
@@ -88,17 +68,11 @@ export default function DeclutterPage() {
   const decideItemCount = resolvedItems.length + unresolvedCount;
   const confirmDisabled = isConfirmBlocked({ confirmationStatus, declutter, unresolvedCount, correctingItemId });
 
-  // The Analyse view's own heading exists only while the request is
-  // running or has failed; a successful analysis is headed by the
-  // summary's "What we found" instead (the tracker already announces
-  // completion), so the page never shows the same state twice.
+  // On success the summary supplies the only heading.
   const analyseHeading = status === "error" ? "Analysis unsuccessful" : "Analysing your space";
   const showAnalyseHeading = !(status === "ready" && hasAnalysis);
 
-  // Eligibility is derived the SAME way ListingsView derives it (both
-  // consume lib/listingDrafts.js's deriveEligibleSellItemIds), strictly
-  // from confirmation.confirmedDecisions: confirmed_decision === "sell"
-  // && excluded === false. Never labels, draft presence or Keep ids.
+  // Derive eligible Sell count from confirmation, never labels or drafts.
   const eligibleSellCount = deriveEligibleSellItemIds(confirmation).length;
 
   const wizard = deriveDeclutterWizard({
@@ -120,9 +94,9 @@ export default function DeclutterPage() {
 
   const handleSubmit = useCallback(
     ({ file, context }) => {
-      setSubmittedFile(file); // capture the analysed image now
-      setConfirmAcknowledged(false); // a new upload relocks Review + Confirm
-      setViewedStep("analyse"); // move to Analyse immediately
+      setSubmittedFile(file); // Keep the analysed image stable.
+      setConfirmAcknowledged(false); // Relock Review and Confirm.
+      setViewedStep("analyse");
       return submit({ file, context });
     },
     [submit]
@@ -130,8 +104,6 @@ export default function DeclutterPage() {
 
   const goToStep = useCallback(
     (stepId) => {
-      // The tracker/controls only offer unlocked, non-locked targets, but
-      // guard here too so a stale click can never jump to a locked step.
       if (wizard.navigationLocked) return;
       if (!wizard.unlockedStepIds.includes(stepId)) return;
       setViewedStep(stepId);
@@ -145,11 +117,7 @@ export default function DeclutterPage() {
     setViewedStep(wizard.continueTargetId);
   }, [wizard.canContinue, wizard.continueTargetId]);
 
-  // A per-category Edit link on Confirm (or Edit decisions on Results)
-  // navigates to Decide items with that decision filter applied. Only
-  // presentation: no decision changes here, and the review section owns
-  // the filter afterwards. The nonce lets the same filter be requested
-  // twice in a row.
+  // Edit links request a review filter; the nonce permits repeat requests.
   const [filterRequest, setFilterRequest] = useState(null);
   const handleEditCategory = useCallback(
     (filterId) => {
@@ -159,10 +127,6 @@ export default function DeclutterPage() {
     [goToStep]
   );
 
-  // Start over from the closing Listing drafts view: the hook's reset
-  // clears analysis, decisions, confirmation and listing state (and
-  // relocks every step), and the page drops its own presentation state
-  // and the analysed-image URL, returning to Upload photo.
   const handleStartOver = useCallback(() => {
     reset();
     setSubmittedFile(null);
@@ -187,7 +151,6 @@ export default function DeclutterPage() {
       />
 
       <div className="mt-4">
-        {/* ---------- Upload ---------- */}
         <div hidden={viewed !== "upload"}>
           <p className="mb-4 max-w-2xl text-muted-foreground">
             Get a suggested action for every item, then review and confirm each one.
@@ -195,15 +158,12 @@ export default function DeclutterPage() {
           <DeclutterUploadForm status={status} error={error} onSubmit={handleSubmit} />
         </div>
 
-        {/* ---------- Analyse ---------- */}
         <div hidden={viewed !== "analyse"}>
           <section className="space-y-4">
             {showAnalyseHeading && (
               <h2 className="text-title font-semibold tracking-tight text-foreground">{analyseHeading}</h2>
             )}
 
-            {/* One hierarchy per state: the heading above says which
-                state this is, so each panel is a single calm line. */}
             {status === "uploading" && (
               <p
                 role="status"
@@ -227,10 +187,6 @@ export default function DeclutterPage() {
               </p>
             )}
 
-            {/* Success renders no heading or banner of its own: the tracker's
-                live status line already says "Analysis complete." and names
-                the next action, and the summary below supplies the screen's
-                single visible h2. */}
             {hasAnalysis && <DeclutterAnalysisSummary analysis={analysis} declutter={declutter} />}
 
             <WizardNav
@@ -244,7 +200,6 @@ export default function DeclutterPage() {
           </section>
         </div>
 
-        {/* ---------- Review ---------- */}
         <div hidden={viewed !== "review"}>
           {hasAnalysis && (
             <>
@@ -259,9 +214,6 @@ export default function DeclutterPage() {
                 enableBackToTop
                 filterRequest={filterRequest}
               />
-              {/* The sticky summary bar is this view's ONLY Back / Continue
-                  pair. The Continue guard is unchanged; the bar just says
-                  why it is disabled. */}
               <DecisionActionBar
                 totalCount={decideItemCount}
                 counts={counts}
@@ -282,13 +234,9 @@ export default function DeclutterPage() {
           )}
         </div>
 
-        {/* ---------- Confirm ---------- */}
         <div hidden={viewed !== "confirm"}>
           {hasAnalysis && (
             <div className="space-y-6">
-              {/* One panel for every confirmation state; it turns into the
-                  success summary in place. "Review unresolved items" is
-                  plain step navigation back to Decide items. */}
               <DeclutterConfirmationPanel
                 counts={counts}
                 changedCount={changedCount}
@@ -309,13 +257,7 @@ export default function DeclutterPage() {
                 backLabel="Back to Decide items"
                 onBack={() => goToStep("review")}
                 backDisabled={wizard.navigationLocked}
-                // Continue to Listings appears only once there is a
-                // successful CURRENT confirmation (not merely disabled
-                // before then, unlike Review's Continue) and only ever
-                // navigates, it never calls generateListingDrafts itself,
-                // generation stays an explicit action on the Listings
-                // view (ListingsView's own "Generate listing drafts"
-                // button).
+                // Current confirmation unlocks navigation only; generation stays explicit.
                 continueLabel="Continue to Results"
                 onContinue={confirmationStatus === "confirmed" && confirmation ? handleContinue : undefined}
                 continueDisabled={!(viewed === "confirm" && wizard.canContinue)}
@@ -324,16 +266,9 @@ export default function DeclutterPage() {
           )}
         </div>
 
-        {/* ---------- Listings ---------- */}
         <div hidden={viewed !== "listings"}>
           {hasAnalysis && (
             <div className="space-y-6">
-              {/* The closing overview of a standalone Declutter run: counts
-                  first, the item chips collapsed behind one control, and
-                  Edit decisions back to Decide items. The listings below
-                  are the primary content. It renders only with a current
-                  successful confirmation, which is also the only way this
-                  view unlocks. */}
               {confirmationStatus === "confirmed" && confirmation ? (
                 <DeclutterResultsSummary
                   confirmation={confirmation}
@@ -362,8 +297,6 @@ export default function DeclutterPage() {
                 missingListingItemIds={missingListingItemIds}
               />
 
-              {/* Start over is the one whole-workflow reset on this page,
-                  offered only here, at the end, beside the wizard's Back. */}
               <div aria-label="Declutter actions" role="group" className="border-t border-border pt-6">
                 <Button
                   type="button"

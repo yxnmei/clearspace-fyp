@@ -1,23 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { getImageGenHealth } from "../api/client";
 
-// The UI checks Colab/ngrok health up front, before the user ever
-// clicks Reorganise, not only on failure after they try. Poll on mount
-// and expose a manual refresh for a "check again" button.
-//
-// This is the ONE owner of the health check for the whole app, see
-// ReorganisePage, which calls this hook exactly once and passes the
-// resulting {status, recheck} down to both ImageGenStatusBanner and the
-// item-selection screen's advisory copy, rather than either of them
-// calling this hook themselves. Mounting two independent instances would
-// issue two GET /image-gen/health requests for no reason.
-//
-// Reads the actual response body (GET /image-gen/health always returns
-// HTTP 200, see app/api/routes.py's ImageGenHealthResponse) rather than
-// treating "the fetch didn't throw" as "available": a 200 response with
-// {"available": false} must still become "unavailable" here.
+// Single owner for proactive health checks and manual refresh. Availability
+// comes from the response body, not merely a successful HTTP response.
 export function useImageGenHealth() {
-  const [status, setStatus] = useState("checking"); // "checking" | "available" | "unavailable"
+  const [status, setStatus] = useState("checking");
 
   const check = useCallback(async () => {
     setStatus("checking");

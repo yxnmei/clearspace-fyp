@@ -5,24 +5,8 @@ import DeclutterPage from "./components/DeclutterPage";
 import ReorganisePage from "./components/ReorganisePage";
 import BothPage from "./components/BothPage";
 
-// Root shell, owns ONLY the top-level workflow choice ("choose" |
-// "declutter" | "reorganise" | "both"), nothing else.
-//
-// Switching workflows (or returning to path selection) fully UNMOUNTS
-// whichever page was showing, rather than hiding it, DeclutterPage's
-// useDeclutterFlow state, ReorganisePage's useReorganiseFlow/
-// useImageGenHealth/useObjectUrl state, and BothPage's useBothFlow/
-// useImageGenHealth/useObjectUrl state all live inside those component
-// subtrees, so unmounting them is what guarantees no stale state leaks
-// between workflows, with zero extra reset logic needed here. This is
-// also exactly why PathSelector is cards, not tabs, tabs imply
-// state-preserving switching, which is the wrong model for this app.
-//
-// The single "Back to workflows" action is provided by AppShell and shown
-// on every workflow page (i.e. whenever mode !== "choose"). Progress is
-// not universal: each workflow page renders its own WorkflowProgress
-// stepper from its own hook state, since the three workflows have
-// different state machines. The workflow-selection screen shows none.
+// Switching workflows unmounts the prior page so hook state cannot leak
+// between workflows. This root owns only the top-level choice.
 const WORKFLOW_NAMES = {
   declutter: "Declutter",
   reorganise: "Reorganise",
@@ -30,11 +14,9 @@ const WORKFLOW_NAMES = {
 };
 
 export default function App() {
-  const [mode, setMode] = useState("choose"); // "choose" | "declutter" | "reorganise" | "both"
+  const [mode, setMode] = useState("choose");
 
   const backToChoose = mode === "choose" ? undefined : () => setMode("choose");
-  // The header breadcrumb chip; undefined on the chooser, where there is
-  // no workflow to name yet.
   const workflowName = WORKFLOW_NAMES[mode];
 
   return (

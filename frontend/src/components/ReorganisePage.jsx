@@ -13,9 +13,7 @@ import ReorganiseItemSelector from "./ReorganiseItemSelector";
 import ReorganiseResult from "./ReorganiseResult";
 import { Button } from "./ui/button";
 
-// Direct Reorganise uses the same presentation model as Declutter: every
-// tracker step is a separate mounted-but-hidden screen, navigation is local
-// presentation state, and the hook remains the sole owner of API state.
+// Mounted-but-hidden views preserve presentation state; the hook owns API state.
 export default function ReorganisePage() {
   const flow = useReorganiseFlow();
   const health = useImageGenHealth();
@@ -64,10 +62,7 @@ export default function ReorganisePage() {
     setViewedStep("upload");
   }, [flow.reset]);
 
-  // The Analyse view's own heading exists only while the request is
-  // running or has failed; a successful analysis is headed by the
-  // summary's "What we found" instead (the tracker already announces
-  // completion), so the page never shows the same state twice.
+  // On success the summary supplies the only heading.
   const analyseHeading = flow.phase === "analysing" ? "Analysing your space" : "Analysis unsuccessful";
   const showAnalyseHeading = flow.phase === "analysing" || Boolean(flow.uploadError);
 
@@ -100,8 +95,6 @@ export default function ReorganisePage() {
             {showAnalyseHeading && (
               <h2 className="text-title font-semibold tracking-tight text-foreground">{analyseHeading}</h2>
             )}
-            {/* One hierarchy per state: the heading above says which
-                state this is, so each panel is a single calm line. */}
             {flow.phase === "analysing" && (
               <p role="status" className="flex items-center gap-2 rounded-card border border-border bg-surface-muted p-4 text-sm text-foreground">
                 <Loader2 aria-hidden="true" width={16} height={16} className="shrink-0 animate-spin text-primary" />
@@ -117,10 +110,6 @@ export default function ReorganisePage() {
                 </span>
               </p>
             )}
-            {/* Success renders no heading or banner of its own: the tracker's
-                live status line already says "Analysis complete." and names
-                the next action, and the summary below supplies the screen's
-                single visible h2. */}
             {hasAnalysis && <ReorganiseAnalysisSummary analysis={flow.analysis} />}
             <WizardNav
               backLabel="Back to Upload photo"
@@ -164,9 +153,7 @@ export default function ReorganisePage() {
           {hasAnalysis && (
             <div className="space-y-6">
               {flow.generateResult ? (
-                /* The generated result carries its own "Visual preview
-                   unavailable" state, so no separate health banner sits
-                   beside it. */
+                /* The result owns its visual-preview unavailable state. */
                 <ReorganiseResult
                   generateResult={flow.generateResult}
                   originalImageUrl={imageUrl}
@@ -191,10 +178,7 @@ export default function ReorganisePage() {
                       plan again to use the corrected labels.
                     </p>
                   )}
-                  {/* The image-service notice belongs here, inside the tidy
-                      plan section, and is the ONE notice: the banner renders
-                      nothing when the service is available, and it never
-                      disables Create tidy plan. */}
+                  {/* Image health is advisory and belongs to plan creation. */}
                   <div className="mt-3 empty:hidden">
                     <ImageGenStatusBanner status={health.status} recheck={health.recheck} />
                   </div>

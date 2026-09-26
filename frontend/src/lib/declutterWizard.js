@@ -1,14 +1,6 @@
 import { WORKFLOW_STEPS } from "./workflowProgress";
 
-// Pure derivation of the Declutter wizard's presentation + navigation
-// model. It owns no state: DeclutterPage passes in the flow snapshot plus
-// the two page-owned pieces of presentation state (which step is being
-// viewed, and whether the user has acknowledged Review by pressing
-// Continue to Confirm choices), and gets back everything WorkflowProgress and the
-// Back/Continue controls need.
-//
-// Navigation never depends on this module doing anything with the network
-// it is a plain function of state.
+// Derives Declutter presentation and navigation from a state snapshot.
 
 export const DECLUTTER_WIZARD_STEPS = WORKFLOW_STEPS.declutter; // Upload → Analyse → Review → Confirm → Listings
 
@@ -122,12 +114,7 @@ function describeViewedStep({
         processing: false,
       };
     case "listings": {
-      // Order matters: an in-flight or just-failed single-item
-      // regeneration is reported first, it overlays the (already "ready")
-      // batch state rather than being hidden by it. Eligibility is a
-      // truthful fact of the current confirmation regardless of
-      // listingStatus, so "nothing to sell" is reported the same way
-      // whether or not a (no-op) generation has run yet.
+      // Single-item regeneration overlays the already-ready batch state.
       if (regeneratingItemId !== null) {
         return {
           statusText: "Regenerating one listing draft…",
@@ -156,9 +143,7 @@ function describeViewedStep({
           processing: false,
         };
       }
-      // Both "complete" states name the closing overview on this screen
-      // (the confirmed-choices summary) rather than only the listings,
-      // because a Declutter run with nothing to sell is still finished.
+      // Zero eligible Sell items is also a complete Declutter result.
       if (eligibleSellCount === 0) {
         return {
           statusText: "Your declutter is complete.",
@@ -195,14 +180,8 @@ export function deriveDeclutterWizard(input = {}) {
     unresolvedCount = 0,
     viewedStep = "upload",
     confirmAcknowledged = false,
-    // Marketplace listing state, explicit inputs rather than
-    // the raw confirmation/hook objects, so this module keeps its
-    // existing plain-flag style. eligibleSellCount MUST be derived by the
-    // caller only from the current confirmation's confirmedDecisions
-    // (confirmed_decision === "sell" && excluded === false), never from
-    // labels, draft presence or Keep ids, matching ListingsView's own
-    // eligibility rule exactly (both consume
-    // lib/listingDrafts.js's deriveEligibleSellItemIds).
+    // eligibleSellCount must come from server confirmation, never labels,
+    // draft presence or Keep ids.
     listingStatus = "idle",
     eligibleSellCount = 0,
     regeneratingItemId = null,
@@ -211,13 +190,10 @@ export function deriveDeclutterWizard(input = {}) {
 
   const steps = DECLUTTER_WIZARD_STEPS;
 
-  // --- unlocking rules ---
-  const analyseUnlocked = status !== "idle"; // a submit has been dispatched
-  const reviewUnlocked = hasAnalysis; // analysis succeeded
-  const confirmUnlocked = confirmAcknowledged && reviewUnlocked; // explicit Continue from Review
-  // Listings unlocks only on a genuinely successful CURRENT confirmation,
-  // never merely by reaching/acknowledging Confirm. Confirming does not
-  // navigate here and does not generate anything by itself, see confirm().
+  const analyseUnlocked = status !== "idle";
+  const reviewUnlocked = hasAnalysis;
+  const confirmUnlocked = confirmAcknowledged && reviewUnlocked;
+  // Listings requires a successful current confirmation.
   const listingsUnlocked = confirmationStatus === "confirmed" && hasConfirmation;
 
   const unlockedStepIds = ["upload"];
@@ -226,13 +202,7 @@ export function deriveDeclutterWizard(input = {}) {
   if (confirmUnlocked) unlockedStepIds.push("confirm");
   if (listingsUnlocked) unlockedStepIds.push("listings");
 
-  // A confirmed run with zero eligible (non-excluded Sell) items has
-  // nothing to generate, so Listings counts as complete without ever
-  // calling generateListingDrafts, matching ListingsView's own truthful
-  // empty state (no button, no request). Otherwise Listings is complete
-  // whenever listingStatus is "ready", whether the current drafts came
-  // from a completed batch or the run-scoped cache. Local edits/discards
-  // never affect this status.
+  // Zero eligible Sell items completes Listings without a request.
   const listingsComplete = listingsUnlocked && (eligibleSellCount === 0 || listingStatus === "ready");
 
   const completedStepIds = [];
@@ -242,20 +212,14 @@ export function deriveDeclutterWizard(input = {}) {
   if (confirmationStatus === "confirmed" && hasConfirmation) completedStepIds.push("confirm");
   if (listingsComplete) completedStepIds.push("listings");
 
-  // No navigation while a safety-critical request is in flight. Batch
-  // listing generation and a single-item regeneration both lock
-  // navigation the same way upload/confirm do; purely local presentation
-  // actions (editing, copying, discarding, restoring) never do, they
-  // never touch listingStatus or regeneratingItemId.
+  // Network mutations lock navigation; local listing edits do not.
   const navigationLocked =
     status === "uploading" ||
     confirmationStatus === "confirming" ||
     listingStatus === "generating" ||
     regeneratingItemId !== null;
 
-  // The step actually shown. A stale viewedStep (e.g. "confirm" after a
-  // re-upload relock, or "listings" after the confirmation it depended on
-  // was invalidated) falls back to the furthest unlocked step.
+  // Clamp a relocked viewed step to the furthest unlocked step.
   const viewedStepId = unlockedStepIds.includes(viewedStep)
     ? viewedStep
     : unlockedStepIds[unlockedStepIds.length - 1];
@@ -276,13 +240,10 @@ export function deriveDeclutterWizard(input = {}) {
       canContinue = canContinueFromReview;
       continueTargetId = "confirm";
     } else if (viewedStepId === "confirm") {
-      // Navigation only, never a listing API call, mirrors submit()'s
-      // own separation from analysis.
+      // Navigation only, never a listing API call.
       canContinue = confirmationStatus === "confirmed" && hasConfirmation;
       continueTargetId = "listings";
     }
-    // Upload's forward action is the form's own "Analyse space" submit.
-    // Listings is the final step.
   }
   const canGoBack = !navigationLocked && backTargetId !== null;
 

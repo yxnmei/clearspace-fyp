@@ -5,27 +5,8 @@ import PathChip from "./PathChip";
 import { Button } from "./ui/button";
 import { cn } from "../lib/cn";
 
-// The persistent page frame: a banner header with the brand, the active
-// workflow breadcrumb and the one "Back to workflows" action, then the
-// bounded content column. It owns no workflow state.
-//
-// `onBack`, when provided, means a workflow is mounted. Leaving a
-// workflow unmounts its whole subtree (App.jsx), which discards the
-// analysis, decisions, drafts and local edits, so both ways out of a
-// workflow (the header's Back button and the brand, which becomes a
-// button only while a workflow is open) go through one inline
-// confirmation strip: Stay closes it and returns focus to whichever
-// control opened it; Leave calls onBack. No window.confirm, no modal:
-// the strip sits under the header bar, is announced as an alertdialog,
-// takes focus on open, and closes on Escape. It always asks while a
-// workflow is open rather than guessing whether there is anything to
-// lose, which is honest and needs no dirty tracking across three
-// different state machines.
-//
-// The brand stays plain text on the chooser (nothing to leave). Its
-// accessible name while a workflow is open is "ClearSpace home", which
-// deliberately does not contain the words "back to workflows", so the
-// text button keeps a unique name.
+// Persistent shell with an inline leave confirmation. Leaving unmounts the
+// workflow subtree, so both exit controls share this focus-restoring guard.
 export default function AppShell({ onBack, workflowName, children, className }) {
   const [leaveRequested, setLeaveRequested] = useState(false);
   const triggerRef = useRef(null);

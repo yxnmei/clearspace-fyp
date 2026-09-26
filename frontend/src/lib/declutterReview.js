@@ -1,14 +1,6 @@
-// Pure derivations shared by the Declutter review surfaces: the
-// DeclutterReviewSection that DeclutterPage and BothPage both render,
-// and the two pages themselves, which derive the counts and the
-// confirmation guard for their Confirm choices screens. Keeping the
-// partition, counts and the guard in one place means no page or
-// section re-implements them.
+// Shared review partitions, counts and confirmation guards.
 
-// The backend contract distinguishes three item groups: resolved expected
-// items (a real decision to review), unresolved expected items (no valid
-// AI decision, these block confirmation), and contextual detections
-// (never sent for a Declutter decision).
+// Unresolved expected items block confirmation; contextual items have no decision.
 export function partitionReviewItems(reviewItems = []) {
   return {
     resolvedItems: reviewItems.filter((item) => item.is_expected && !item.is_unresolved),
@@ -17,8 +9,7 @@ export function partitionReviewItems(reviewItems = []) {
   };
 }
 
-// Decision tallies + changed/excluded evidence, computed only from the
-// resolved items (the only ones that carry a review decision).
+// Count decisions and review changes only for resolved items.
 export function deriveReviewCounts(resolvedItems = []) {
   const counts = { keep: 0, sell: 0, donate: 0, discard: 0 };
   let changedCount = 0;
@@ -31,11 +22,7 @@ export function deriveReviewCounts(resolvedItems = []) {
   return { counts, changedCount, excludedCount };
 }
 
-// The exact confirmation guard, used by DeclutterPage and BothPage to
-// disable Confirm decisions (unchanged meaning since the original
-// review screen):
-//   confirmationStatus === "confirming" || !declutter ||
-//   unresolvedCount > 0 || correctingItemId !== null
+// Confirmation requires a complete result with no correction in flight.
 export function isConfirmBlocked({ confirmationStatus, declutter, unresolvedCount, correctingItemId }) {
   return (
     confirmationStatus === "confirming" ||
@@ -45,11 +32,7 @@ export function isConfirmBlocked({ confirmationStatus, declutter, unresolvedCoun
   );
 }
 
-// The Review workspace decision filter: "all" plus the four decisions.
-// Filtering is always by an item's CURRENT effective review_decision,
-// never its original ai_decision, so an item moves between filters the
-// instant the user changes its decision. Exclusion is orthogonal: an
-// excluded item still sits under its current decision.
+// Filter by current review_decision; exclusion does not change the bucket.
 export const REVIEW_DECISION_FILTERS = [
   { id: "all", label: "All" },
   { id: "keep", label: "Keep" },
@@ -73,10 +56,7 @@ export function deriveDecisionFilterCounts(resolvedItems = []) {
   return counts;
 }
 
-// Whether the wizard's "Continue to Confirm" acknowledgement is allowed.
-// It is a subset of the confirmation guard: the "confirming" clause is
-// irrelevant here (you are still on Review), but a missing result, any
-// unresolved item, or a label correction in flight all block it.
+// Review can continue only with a complete result and no correction in flight.
 export function canContinueToConfirm({ declutter, unresolvedCount, correctingItemId }) {
   return Boolean(declutter) && unresolvedCount === 0 && correctingItemId === null;
 }

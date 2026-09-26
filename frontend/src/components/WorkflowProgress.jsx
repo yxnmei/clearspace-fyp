@@ -2,34 +2,9 @@ import { Check, Loader2 } from "lucide-react";
 import PathChip from "./PathChip";
 import { cn } from "../lib/cn";
 
-// Workflow progress tracker. It renders already-derived presentation data
-// and derives nothing about workflow state itself, no hooks.
-//
-// Two independent concepts:
-//   - completed / unlocked: whether a step is done and reachable
-//     (`completedStepIds`, `unlockedStepIds`);
-//   - viewed: which step's content is on screen right now
-//     (`viewedStepId`), which gets the current-step highlight and
-//     `aria-current="step"` even when it is also completed.
-//
-// Non-navigable steppers pass neither `onStepSelect` nor the id lists and
-// get the plain behaviour: check derived from `currentStepId` /
-// `isComplete`, and no buttons. Wizard steppers pass `onStepSelect` plus
-// the id lists; completed unlocked steps that are not the viewed step
-// become real navigation buttons, unless `navigationLocked` (a
-// safety-critical request is processing).
-//
-// Two presentations of the SAME props, switched by CSS only (one DOM):
-//   - from sm up, the full step row: completed = solid green circle with
-//     a check, viewed (current) = deep-green circle and bold label on a
-//     pale pill, upcoming = outlined circle and muted label; connectors
-//     sit on the circle centre-line one z-layer back, solid green once
-//     the previous step is done, dashed otherwise;
-//   - below sm, a compact summary instead of a squeezed row: the path
-//     chip, "Step X of N", a progress bar and the current step's title.
-//     Backward navigation there is the screen's own Back control; the
-//     step buttons remain in the DOM but are not displayed.
-// The status / next-action lines below are shared by both.
+// Completed/unlocked describes progress; viewed identifies visible content
+// and keeps aria-current even when completed. Wizard step buttons remain in
+// the DOM below sm but CSS hides the row in favour of the mobile summary.
 export default function WorkflowProgress({
   workflowName,
   steps,
@@ -47,9 +22,7 @@ export default function WorkflowProgress({
   const navigable = typeof onStepSelect === "function";
   const currentIndex = steps.findIndex((step) => step.id === currentStepId);
 
-  // In a non-navigable stepper that has finished, there is no "current"
-  // step, every step reads as completed. Elsewhere the viewed step is
-  // the current one.
+  // A completed non-navigable flow has no current step.
   const viewed = !navigable && isComplete ? null : (viewedStepId ?? currentStepId);
   const viewedIndex = steps.findIndex((step) => step.id === (viewedStepId ?? currentStepId));
   const viewedLabel = viewedIndex >= 0 ? steps[viewedIndex].label : "";
@@ -72,7 +45,7 @@ export default function WorkflowProgress({
       aria-label={`${workflowName} workflow progress`}
       className="mx-auto w-full max-w-4xl rounded-card border border-border bg-surface p-3 sm:p-4"
     >
-      {/* Mobile summary (below sm). No list, no buttons, no percentage. */}
+      {/* Mobile summary. */}
       <div className="sm:hidden">
         <div className="flex items-center justify-between gap-3">
           <PathChip workflowName={workflowName} />
@@ -97,7 +70,7 @@ export default function WorkflowProgress({
         <p className="mt-2 text-base font-semibold text-foreground">{viewedLabel}</p>
       </div>
 
-      {/* Full step row (sm and up). */}
+      {/* Desktop step row. */}
       <ol className="hidden items-start sm:flex">
         {steps.map((step, index) => {
           const completed = isStepCompleted(step, index);

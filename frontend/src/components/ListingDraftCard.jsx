@@ -17,30 +17,9 @@ import {
 } from "../lib/listingDrafts";
 import { cn } from "../lib/cn";
 
-// One confirmed Sell item's marketplace draft, laid out as a usable
-// listing: a large crop of the item on the left (a button that opens the
-// original photo in the shared lightbox with only this item outlined) and
-// the listing editor on the right; on phones the image, the editor and
-// the actions stack. Shared by Declutter's Results and Both's Results.
-//
-// Identity is item_id throughout: the article key, every field id, the
-// lightbox outline and the only value any callback receives. The header
-// shows the listing name (the seller's own name for the item, defaulting
-// to the reviewed label) with a Draft status badge; no numbered badge,
-// because nothing on this screen refers to items by number.
-//
-// Seller details (listing name, condition) live beside the editor. They
-// are metadata: changing them never rewrites the title or description.
-// A generated draft whose details have since changed is flagged stale
-// and only an explicit AI Regenerate replaces it; regenerating an edited
-// draft still asks first. Copy writes only the edited title and
-// description, never the condition or any internal field. There is no
-// price anywhere by design.
-//
-// The clipboard write starts synchronously inside the click handler. A
-// token plus a mounted flag mean only the newest attempt can set feedback,
-// and a failure
-// shows a fixed generic message, never the browser's exception text.
+// Shared editor for one confirmed Sell item. item_id is its only identity.
+// Seller metadata never rewrites draft text; explicit regeneration does.
+// A copy token plus mounted flag lets only the newest live attempt set feedback.
 
 function defaultClipboardWriter(text) {
   if (
@@ -83,6 +62,8 @@ export default function ListingDraftCard({
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    // Re-assert on every setup: StrictMode runs setup -> cleanup -> setup in
+    // development, otherwise every later copy result would be ignored.
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -298,6 +279,7 @@ export default function ListingDraftCard({
     setCopyState("idle");
     const payload = formatListingClipboardText(draft.edited_title, draft.edited_description);
     try {
+      // Start within the click event because clipboard access requires user activation.
       const result = clipboardWriter(payload);
       Promise.resolve(result)
         .then(() => {
@@ -339,8 +321,6 @@ export default function ListingDraftCard({
       data-item-id={itemId}
       className="rounded-card border border-border bg-surface p-3 shadow-card sm:p-4"
     >
-      {/* Two columns from md: the item image, then the editor. Below md
-          everything stacks: image, editor, actions. */}
       <div className="grid gap-4 md:grid-cols-[auto_minmax(0,1fr)] md:items-start">
         {itemImage("h-40 w-40 sm:h-48 sm:w-48 md:h-56 md:w-56")}
 
@@ -419,8 +399,6 @@ export default function ListingDraftCard({
             )}
           </div>
 
-          {/* Footer actions: Copy is the one primary action (full width on
-              phones), AI Regenerate secondary, Discard quiet. */}
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Button
               type="button"

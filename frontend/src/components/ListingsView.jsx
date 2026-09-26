@@ -5,28 +5,12 @@ import ListingDetailsFields from "./ListingDetailsFields";
 import ItemCropThumbnail from "./ItemCropThumbnail";
 import { deriveEligibleSellItemIds, resolveListingDetails } from "../lib/listingDrafts";
 
-// The marketplace-listing surface, shared by the Declutter wizard's
-// Listing drafts screen and Both's Results screen. Presentational: it
-// takes the listing state and actions as props and never calls
-// useDeclutterFlow / useBothFlow itself.
-//
-// Eligibility (which items get a draft) is derived STRICTLY from
-// confirmation.confirmedDecisions: confirmed_decision === "sell" and
-// excluded === false, in confirmation order. Never from labels, draft
-// presence, Keep ids, or any client-supplied fallback list.
-//
-// Nothing here auto-generates. generateListingDrafts runs only from the
-// explicit button (and its retry). A confirmation with zero eligible
-// Sell items shows a calm empty state and offers no pointless Generate
-// button. One section, one heading, state-specific content inside it;
-// the "editable, never published" reassurance is said once per state at
-// section level, not repeated on every card.
+// Shared presentational listing surface. Eligibility comes only from confirmed,
+// non-excluded Sell decisions in confirmation order. Generation is explicit.
 
 const HEADING_ID = "listings-view-heading";
 
-// Module-level so its identity is stable across ListingsView renders,
-// re-declaring it inside the component would remount the whole subtree
-// (and drop input focus) on every keystroke while editing a draft.
+// Stable component identity prevents editor remounts on each keystroke.
 function Frame({ children }) {
   return (
     <section
@@ -60,7 +44,6 @@ export default function ListingsView({
   missingListingItemIds = [],
   clipboardWriter,
 }) {
-  // 1. No confirmation yet: no actionable listing UI, no generation.
   if (!confirmation) {
     return (
       <Frame>
@@ -74,8 +57,6 @@ export default function ListingsView({
 
   const eligibleItemIds = deriveEligibleSellItemIds(confirmation);
 
-  // 2. Confirmed, but nothing was marked Sell: calm empty state, no
-  // loading/error, no Generate button.
   if (eligibleItemIds.length === 0) {
     return (
       <Frame>
@@ -101,9 +82,7 @@ export default function ListingsView({
     return item?.display_label ?? item?.effective_label ?? item?.clean_label ?? itemId;
   };
 
-  // One row per item: thumbnail, the user-facing name, then the editable
-  // listing name and condition. Field labels use the reasoning label so
-  // they stay stable while the name itself is being typed.
+  // Field labels use the stable reasoning label while listing names change.
   function renderDetailsList(itemIds, ariaLabel, pendingItemId = null) {
     return (
       <ul className="mt-4 space-y-3" aria-label={ariaLabel}>
@@ -140,9 +119,6 @@ export default function ListingsView({
   const eligibleCountLabel = `${eligibleCount} item${eligibleCount === 1 ? "" : "s"}`;
   const listingBusy = listingStatus === "generating" || regeneratingItemId !== null;
 
-  // 3. Eligible items, not generated yet: explain once, show each item's
-  //    seller details (name, condition) so they can shape the first draft,
-  //    then one explicit action.
   if (listingStatus === "idle") {
     return (
       <Frame>
@@ -168,8 +144,6 @@ export default function ListingsView({
     );
   }
 
-  // 4. Generating: one accessible progress line, the action held disabled
-  // so a second request cannot be started; layout matches the idle state.
   if (listingStatus === "generating") {
     return (
       <Frame>
@@ -191,7 +165,6 @@ export default function ListingsView({
     );
   }
 
-  // 5. Error: concise message, decisions unchanged, one explicit retry.
   if (listingStatus === "error") {
     return (
       <Frame>
@@ -217,10 +190,8 @@ export default function ListingsView({
     );
   }
 
-  // 6. Ready: render every draft in hook order, no silent filtering.
   if (listingDrafts.length === 0) {
-    // Defensive: eligible items exist but no drafts arrived. Offer the
-    // explicit action again rather than a blank panel.
+    // Keep a recovery action if an eligible ready state has no drafts.
     return (
       <Frame>
         <p className="mt-2 text-sm text-foreground">No listing drafts were returned.</p>
@@ -271,9 +242,7 @@ export default function ListingsView({
         ))}
       </ul>
 
-      {/* Items confirmed as Sell after the other drafts were written. Only
-          these get a new draft; every existing draft, edit, condition and
-          discard above stays exactly as it is. */}
+      {/* Generate only newly eligible items; preserve existing draft state. */}
       {missingListingItemIds.length > 0 && (
         <section
           aria-labelledby="listings-new-items-heading"

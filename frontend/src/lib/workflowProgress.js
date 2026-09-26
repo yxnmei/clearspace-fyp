@@ -1,11 +1,6 @@
-// Pure, model-free progress and wizard-navigation derivation for the
-// three workflows. Declutter has additional listing-specific rules in
-// declutterWizard.js; Direct Reorganise and Both use the helpers here.
+// Derives workflow progress and wizard navigation from state snapshots.
 
-// Step ids are the stable identity used by every page, hook-derived
-// unlock rule and test; only the labels are user-facing. Labels name the
-// action of each screen ("Decide items", not "Review") so the same word
-// never means two different things across workflows.
+// Step ids are stable identity; labels are user-facing actions.
 const DECLUTTER_STEPS = [
   { id: "upload", label: "Upload photo" },
   { id: "analyse", label: "Analyse space" },
@@ -66,7 +61,6 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
       if (selectedItemCount === 0) return ["Nothing is included in your tidy plan.", "Include at least one actionable item to continue.", false];
       return ["Your detected items are ready to review.", "Exclude anything incorrect, then continue to Tidy plan.", false];
     case "generate":
-      // Tidy plan: the same terms Both's Results screen uses.
       if (phase === "generating") return ["Creating your tidy plan…", "This can take several minutes, no action needed yet.", true];
       if (phase === "result") return ["Your tidy plan is ready.", "Review your checklist, any storage and organisation ideas and the visual preview below.", false];
       if (phase === "selecting" && uploadError == null) return ["Ready to create your tidy plan.", "Press Create tidy plan when you are ready.", false];
@@ -76,8 +70,7 @@ function describeReorganiseStep({ viewedStepId, phase, uploadError, hasAnalysis,
   }
 }
 
-// Direct Reorganise as a navigable four-screen wizard. `viewedStep` is
-// presentation state; `phase` remains the hook-owned network state.
+// viewedStep is presentation state; phase remains hook-owned network state.
 export function deriveReorganiseProgress({
   phase = "upload",
   uploadError = null,
@@ -189,8 +182,7 @@ function describeBothStep({
       if (hasConfirmation) return ["Your decisions are locked in.", "Continue to Results when you are ready.", false];
       return ["Ready to confirm.", "Press Confirm decisions when your review is ready.", false];
     case "reorganise":
-      // Results: Tidy up and Marketplace listings are independent, so the
-      // busy text for one always says the other remains available.
+      // Tidy up and Listings remain independent on Results.
       if (generationStatus === "generating") return ["Creating your tidy plan…", "Listings remain independently available on this screen.", true];
       if (listingStatus === "generating") return ["Generating your listing drafts…", "Tidy up remains independently available on this screen.", true];
       if (regeneratingItemId !== null) return ["Regenerating one listing draft…", "Tidy up and your other drafts are unaffected.", true];
@@ -202,8 +194,7 @@ function describeBothStep({
   }
 }
 
-// Both follows the same screen-by-screen pattern while keeping Listings
-// and Reorganise as independent actions on the final screen.
+// Both keeps Listings and Reorganise independent on its final screen.
 export function deriveBothProgress({
   status = "idle",
   analysis = null,
