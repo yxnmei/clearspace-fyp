@@ -1,8 +1,6 @@
 """
-FastAPI entrypoint. Deliberately thin — no model calls, no orchestration
-logic here. HTTP concerns live in app/api/routes.py; everything routes
-delegates to lives in app/services so the same functions are callable
-from evaluation scripts without going through HTTP at all.
+FastAPI entrypoint: app setup only. Handlers live in app/api/routes.py and
+logic in app/services, so evaluation scripts can call it without HTTP.
 """
 
 import logging
@@ -23,18 +21,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ClearSpace", version="0.1.0")
 
-# Fixed, value-free 422 body. FastAPI's default RequestValidationError
-# handler serialises exc.errors() unchanged, and pydantic attaches the
-# offending `input` to every error — for a body-level model validator
-# (run_id mismatch, unknown override id, ...) that is the WHOLE request:
-# the base64 image, the user's context, every submitted field. Model-
-# validator `msg` strings also quote submitted ids. The frontend's
-# request helper embeds the response body in the thrown Error and pages
-# render that message in an alert, so the default shape echoed a client's
-# own upload back into the UI at request-body size. This handler replaces
-# it with a small deterministic response whose size does not depend on
-# the request. Service-level HTTPException details (409/422 with fixed
-# sanitised strings) are unaffected — they never raise this error type.
+# Fixed, value-free 422 body. FastAPI's default handler returns
+# exc.errors(), whose `input` for a body-level model validator is the whole
+# request (base64 image, user context, every submitted field) and whose
+# `msg` can quote submitted ids, so any client that displays or logs error
+# bodies would echo the upload back. This body never echoes input and its
+# size does not depend on the request. Route HTTPException details are
+# unaffected.
 VALIDATION_FAILED_DETAIL = "Request validation failed. Check the submitted fields and try again."
 
 # `loc[0]` is the request part FastAPI validated (never a value the client
@@ -44,12 +37,10 @@ _MAX_REPORTED_ERRORS = 20
 
 
 def _summarise_validation_errors(exc: RequestValidationError) -> list[dict[str, str]]:
-    """Reduce exc.errors() to a bounded, deduplicated, sorted list of
-    {type, location}. `type` is pydantic's fixed error identifier (e.g.
-    "missing", "value_error", "extra_forbidden") and `location` the
-    validated request part. Nothing else from the error is kept: `msg`,
-    `input`, `ctx`, `url` and the deeper `loc` elements (which can be
-    dict keys copied from the request) are all dropped."""
+    """Bounded, deduplicated, sorted {type, location} pairs: pydantic's
+    fixed error id and the validated request part. Everything else (msg,
+    input, ctx, url, deeper loc elements that can be request keys) is
+    dropped."""
     summary: set[tuple[str, str]] = set()
     for error in exc.errors():
         error_type = error.get("type")

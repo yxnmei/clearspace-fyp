@@ -1,58 +1,33 @@
 """
-Pure logic: deterministic, evidence-bound generic storage and organisation
-ideas for a Reorganise result.
+Deterministic, evidence-bound generic storage ideas for a Reorganise
+result, derived only from the selected items' effective_label and
+relative_size. No model call, retailer data, prices, brands or links.
 
-Deliberately modest. Every suggestion is derived only from the selected
-DetectedItems (effective_label, relative_size). No model call, no web
-search, no retailer API, no database, no persistence, no prices, brands,
-links, stock claims, local-availability claims or marketplace integration
-of any kind. The output is a generic idea ("Compartment tray") plus one
-sentence saying what it would do for the detected items that motivated
-it: a mechanism or ongoing home, not a second wording of the checklist's
-"group these together".
+Rules:
 
-Rules, and why they are narrow:
+  - Each rule is ONE narrow category (tech accessories, desktop
+    accessories, toys and games, books and papers, clothing/bags/shoes,
+    soft furnishings, display items, jewellery/keys/watches/glasses).
+    Categories are never mixed: one container for unrelated things
+    (two cups and a charger) is not useful advice.
+  - A rule fires only when at least MIN_EVIDENCE_ITEMS (2) items match
+    its keywords by whole word AND fall within its size set. Sizes are
+    per category: a compartment tray takes small things only, a hanging
+    organiser can take a large coat.
+  - Never positional: sharing part of the photo is not evidence.
+  - Insufficient evidence means fewer suggestions (zero is common),
+    never an invented one; no detected box or shelf is named as a
+    destination.
+  - At most MAX_STORAGE_SUGGESTIONS (3), ordered by evidence count then
+    rule order.
 
-  - Each rule is ONE compatible category (technology accessories; desktop
-    accessories; toys and games; books and papers; clothing, bags and
-    shoes; soft furnishings; framed pictures and other display items;
-    jewellery, keys, watches and glasses). Categories are never merged:
-    two cups and a charger are not "small loose items" and never become
-    one suggestion, because a single container for unrelated things is
-    not useful advice. Tableware, bottles and furniture match no rule.
-  - A rule fires only when at least MIN_EVIDENCE_ITEMS selected items
-    match its keyword set by whole-word label match AND fall within the
-    rule's own size set (relative_size is real detector-derived data,
-    never inferred here). One matching item is not evidence that storage
-    is needed. Sizes are category-specific: a compartment tray is for
-    small things only, a hanging organiser or a soft-furnishing basket
-    can truthfully take a large coat or blanket, bookends cannot take a
-    large item.
-  - Sharing a part of the photo is NOT evidence. Nothing here reads
-    position, and no rule fires because several arbitrary objects happen
-    to sit together.
-  - Insufficient evidence means FEWER suggestions, never an invented one.
-    Zero is a valid, common result.
-  - A detected box, bin or shelf is never treated as an available
-    destination: no rule names another selected item as the place to put
-    things, and no idea is presented as furniture the room already has.
-  - At most MAX_STORAGE_SUGGESTIONS are returned, ordered by evidence
-    count (descending) then by fixed rule order, so the output is fully
-    deterministic for the same inputs.
+`related_item_ids` carries item_id only; labels appear in `reason` as
+display text and are never used to identify or match.
 
-Identity discipline: `related_item_ids` carries item_id only. Labels
-appear in `reason` as display text and are never used to identify, match
-or deduplicate anything.
-
-The deterministic checklist (app.core.reorganise_actions) shares
-find_compatible_groups() so "compatible group" means one thing in both
-places, but reads it with the defaults: only CHECKLIST_GROUP_RULES (the
-categories whose group_noun reads as a sensible "Group <noun>" step) and
-only CHECKLIST_GROUP_SIZES (small and medium, the eligibility the
-checklist has always had). The storage-only categories (desktop
-accessories, soft furnishings, display items) and the per-rule size sets
-(a large coat is hanging-organiser evidence) apply to storage ideas only;
-neither adds or widens a checklist step.
+The deterministic checklist shares find_compatible_groups() but reads it
+with the defaults (CHECKLIST_GROUP_RULES, small/medium sizes only), so
+storage-only categories and per-rule size sets never add or widen a
+checklist step.
 """
 
 from __future__ import annotations
@@ -73,15 +48,12 @@ _MAX_REASON_LABELS = 3
 _NAME_MAX_LENGTH = 80
 _REASON_MAX_LENGTH = 300
 
-# Display fragments are bounded BEFORE a reason is assembled, because a
-# corrected_label is an unbounded NonEmptyStr: two long corrected labels
-# ending in "book" would otherwise push a reason past _REASON_MAX_LENGTH
-# and make StorageSuggestion raise, aborting the whole pipeline before
-# image generation. Arithmetic bound on the longest reason: template
-# (<110) + at most _MAX_REASON_LABELS fragments of (30 + "all 9999 " +
-# " items") + separators + "and the other <group noun (<45)>" < 300.
-# _bound_reason() below is a last-resort guard that can only truncate the
-# tail of the sentence.
+# corrected_label is unbounded, so display fragments are bounded before a
+# reason is assembled; otherwise long labels could push a reason past
+# _REASON_MAX_LENGTH and make StorageSuggestion raise, aborting the
+# pipeline. Longest reason: template (<110) + _MAX_REASON_LABELS
+# fragments of (30 + "all 9999 " + " items") + separators +
+# "and the other <group noun (<45)>" < 300.
 _MAX_LABEL_FRAGMENT_LENGTH = 30
 _TRUNCATION_SUFFIX = "..."
 
@@ -99,12 +71,9 @@ _WORD_RE = re.compile(r"[a-z]+")
 
 
 class StorageCategoryRule(BaseModel):
-    """One narrow compatible category. `group_noun` is the plain-language
-    name of the group used in reasons and in the deterministic checklist
-    fallback ("technology accessories"); `sizes` is the set of
-    relative_size values an item must have to count as evidence for THIS
-    rule; `reason_template` receives {items}, a grounded phrase built
-    only from the matched items' labels (see _items_phrase)."""
+    """One narrow category. `group_noun` names the group in reasons and
+    checklist steps; `sizes` are the relative_size values that count as
+    evidence for this rule; `reason_template` receives {items}."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -117,10 +86,8 @@ class StorageCategoryRule(BaseModel):
 
 
 # Keywords are matched as whole lowercase words inside the effective
-# label, so "bookshelf" matches nothing here (deliberately: it is
-# furniture, not a book) and "keyboard" is not "keys". Each rule's reason
-# template receives {items}, which already carries its own article
-# ("both toy items", "the keyboard and mouse").
+# label, so "bookshelf" matches nothing (it is furniture, not a book) and
+# "keyboard" is not "keys". {items} carries its own article.
 STORAGE_CATEGORY_RULES: tuple[StorageCategoryRule, ...] = (
     StorageCategoryRule(
         rule_id="tech_accessories",
@@ -230,11 +197,8 @@ STORAGE_CATEGORY_RULES: tuple[StorageCategoryRule, ...] = (
     ),
 )
 
-# The categories the deterministic checklist may turn into a "Group
-# <noun>" step, and the only sizes that count as checklist evidence.
-# Storage-only categories are deliberately absent and the per-rule size
-# sets are deliberately NOT used, so the checklist keeps exactly the shape
-# and eligibility it had before storage grew; see the module docstring.
+# The categories the checklist may turn into a "Group <noun>" step, and
+# the only sizes that count as checklist evidence.
 CHECKLIST_GROUP_RULES: tuple[StorageCategoryRule, ...] = tuple(
     rule
     for rule in STORAGE_CATEGORY_RULES
@@ -244,9 +208,8 @@ CHECKLIST_GROUP_SIZES: frozenset[str] = _SMALLER_SIZES
 
 
 class StorageSuggestion(BaseModel):
-    """One generic storage suggestion tied to real evidence. Frozen and
-    extra="forbid": there is no field for a price, brand, URL, stock
-    status or retailer, and none can be smuggled in."""
+    """One generic suggestion tied to real evidence. extra="forbid" so no
+    price, brand, URL or retailer field can be smuggled in."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -307,12 +270,10 @@ def format_label_list(items: list[DetectedItem], max_labels: int = _MAX_LISTED_L
 
 def _items_phrase(items: list[DetectedItem], group_noun: str) -> str:
     """The grounded noun phrase a reason is built around, with its own
-    article. One distinct label: "both toy items" / "all 6 toy items"
-    (the real count, stated once, no plural guessed for an arbitrary or
-    user-corrected label). Several: "the keyboard and mouse", a repeated
-    label rendered as "6 picture frame items", at most
-    _MAX_REASON_LABELS named and the rest folded into "the other <group
-    noun>" with no second count. Never a parenthesised inventory."""
+    article: "both toy items" / "all 6 toy items" for one label (no
+    plural guessed for a user-corrected label), otherwise "the keyboard
+    and mouse", naming at most _MAX_REASON_LABELS and folding the rest
+    into "the other <group noun>"."""
     order, counts = _label_counts(items)
     if len(order) == 1:
         label = shorten_for_display(order[0])
@@ -328,10 +289,8 @@ def _items_phrase(items: list[DetectedItem], group_noun: str) -> str:
 
 
 def _bound_reason(reason: str) -> str:
-    """Last-resort guard so a reason can never exceed the schema limit.
-    The fragment bounds above make this unreachable for the templates in
-    this module; it exists so the pipeline is safe even if a template
-    grows."""
+    """Last-resort guard, unreachable with the current templates, so a
+    grown template can never exceed the schema limit."""
     return shorten_for_display(reason, _REASON_MAX_LENGTH)
 
 
@@ -359,13 +318,9 @@ def find_compatible_groups(
     matching items (label keyword match AND an eligible size) in input
     order. Sorted by evidence count (descending) then rule order.
 
-    `sizes` is the eligibility applied to EVERY rule; None means "each
-    rule's own size set". The defaults (CHECKLIST_GROUP_RULES,
-    CHECKLIST_GROUP_SIZES) are what the deterministic checklist reads, so
-    a large coat or bag never becomes a checklist group;
-    derive_storage_suggestions passes every storage rule with sizes=None
-    so the same coat is hanging-organiser evidence. Raises ValueError for
-    malformed input."""
+    `sizes` applies to every rule; None means each rule's own size set
+    (used by storage suggestions, so a large coat counts there but never
+    becomes a checklist group). Raises ValueError for malformed input."""
     _validate_selected_items(selected_items)
 
     groups: list[tuple[int, int, StorageCategoryRule, list[DetectedItem]]] = []
@@ -385,14 +340,8 @@ def find_compatible_groups(
 
 
 def derive_storage_suggestions(selected_items: list[DetectedItem]) -> list[StorageSuggestion]:
-    """
-    Pure and deterministic. Raises ValueError (never AttributeError or
-    TypeError) for malformed caller input: an empty or non-list
-    selection, a non-DetectedItem entry, or a duplicate item_id.
-
-    Returns between zero and MAX_STORAGE_SUGGESTIONS suggestions, each a
-    generic idea plus one sentence grounded in the matched labels.
-    """
+    """Zero to MAX_STORAGE_SUGGESTIONS suggestions. Raises ValueError
+    (never AttributeError/TypeError) for malformed input."""
     suggestions: list[StorageSuggestion] = []
     for rule, matched in find_compatible_groups(selected_items, STORAGE_CATEGORY_RULES, sizes=None)[:MAX_STORAGE_SUGGESTIONS]:
         reason = _bound_reason(rule.reason_template.format(items=_items_phrase(matched, rule.group_noun)))

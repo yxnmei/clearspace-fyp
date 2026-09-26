@@ -1,19 +1,11 @@
 """
-Pure logic: the deterministic image-generation prompt for a Reorganise
-visual preview.
+Deterministic image-generation prompt for a Reorganise visual preview,
+built from the scene label, the selected items' effective labels, sizes
+and positions, and the reviewed user context.
 
-Built directly from the room type (scene label), the selected items'
-effective labels / sizes / positions, and the reviewed user context. No
-model writes or edits this prompt: the checklist model
-(app/models/reorganise_actions_llm.py) is never asked for an image
-prompt, so the visual and the checklist can share the user's stated goal
-without the visual claiming to follow each checklist action. item_ids
-never appear in the prompt; labels are display text for the image model.
-
-This is the same prompt shape the earlier deterministic plan built
-(app.core.reorganise_semantic_conversion.build_deterministic_fallback_plan,
-now research-only), extracted so the production pipeline no longer
-depends on the zone-plan structure at all.
+No model writes this prompt, so the visual shares the user's goal without
+claiming to follow each checklist step. item_ids never appear in it;
+labels are display text for the image model.
 """
 
 from __future__ import annotations

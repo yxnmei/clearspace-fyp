@@ -1,11 +1,7 @@
 """
-Pure logic: apply zero or more user decision-overrides to the AI's
-per-item decisions and produce final ConfirmedDecision objects, plus the
-confirmed Keep-item filter Reorganise/Both consume. No model calls — a
-decision override (Keep -> Donate) never re-invokes the LLM; that's a
-deliberate, explicit project decision, distinct from the existing
-/override route's label-correction/reclassification job (see
-DecisionOverride's docstring in app/core/schemas.py).
+Apply user decision overrides to the AI's per-item decisions, and derive
+the confirmed Keep ids Reorganise/Both consume. A decision override never
+re-invokes the LLM; only a label correction (/override) does.
 """
 
 from __future__ import annotations
@@ -14,15 +10,10 @@ from app.core.schemas import AiDecision, ConfirmedDecision, Decision, DecisionOv
 
 
 class ConfirmationInputError(ValueError):
-    """Malformed confirmation inputs — a duplicate item_id in
-    ai_decisions, a duplicate override for the same item_id, or an
-    override referencing an item_id that isn't in ai_decisions. A
-    ValueError subclass (not an unrelated exception type) so existing
-    `except ValueError`/`pytest.raises(ValueError)` callers keep working
-    unchanged; callers that need to distinguish "malformed caller input"
-    from any other ValueError (e.g. a pydantic ValidationError, which is
-    also a ValueError subclass) should catch this type specifically —
-    see app/api/routes.py's /confirm handler."""
+    """Malformed confirmation input: duplicate ai_decisions ids, duplicate
+    overrides, or an override for an unknown item_id. A ValueError
+    subclass; catch this type specifically to tell caller error apart
+    from a pydantic ValidationError."""
 
 
 def confirm_decisions(
@@ -30,20 +21,10 @@ def confirm_decisions(
     overrides: list[DecisionOverride] | None = None,
 ) -> list[ConfirmedDecision]:
     """
-    Deterministic merge: every ai_decisions item becomes exactly one
-    ConfirmedDecision, in the same order, with any matching override
-    applied. ai_decision/ai_reason are always the AI's original values,
-    preserved verbatim; confirmed_decision reflects the override (if any).
-    decision_changed is not set here at all — it's a computed field on
-    ConfirmedDecision itself (confirmed_decision != ai_decision), so it
-    can never drift from that invariant regardless of how a
-    ConfirmedDecision is constructed.
-
-    Raises ConfirmationInputError (not a warning) on malformed *caller*
-    input — a duplicate item_id in ai_decisions, a duplicate override for
-    the same item_id, or an override referencing an item_id that isn't in
-    ai_decisions — since these are client/programming errors, not LLM
-    output ambiguity (which id_mapping.py handles separately, by warning).
+    One ConfirmedDecision per AI decision, in order, with any matching
+    override applied; the AI's original decision and reason are kept
+    verbatim. Malformed input raises ConfirmationInputError rather than
+    warning, because it is a caller error, not LLM output ambiguity.
     """
     overrides = overrides or []
 
@@ -88,22 +69,10 @@ def confirm_decisions(
 
 
 def confirmed_keep_ids(confirmed: list[ConfirmedDecision]) -> list[str]:
-    """The item_ids Reorganise/Both should receive: confirmed Keep,
-    excluding anything the user excluded during review, so overrides
-    demonstrably change what reaches Reorganise.
+    """Confirmed, non-excluded Keep item_ids. Derived server-side from
+    the confirmed decisions, never accepted from the client.
 
-    Returns item_id strings ONLY — never a label, never a DetectedItem.
-    ConfirmedDecision (what this function reads) carries no label field
-    at all, by design (see core/schemas.py). A future Reorganise/Both
-    consumer that needs display text or anything else about a returned
-    Keep item must explicitly re-join these ids back to the LATEST
-    AnalysisResult.items by item_id (never assume any round-tripped
-    DeclutterResult/ConfirmationResult carries current label text) and
-    read DetectedItem.effective_label — never clean_label directly — so a
-    user's label correction (DetectedItem.corrected_label, applied via
-    app.services.declutter_service.reclassify_item) is honored rather
-    than silently dropped. This function does not perform that join
-    itself, and as of this docstring neither Reorganise nor Both exists
-    yet to need it — documented here so the requirement is visible before
-    that code is written, not discovered after."""
+    Returns ids only. A consumer needing display text must re-join to the
+    latest AnalysisResult.items by item_id and read effective_label, so a
+    user's label correction is honoured."""
     return [c.item_id for c in confirmed if c.confirmed_decision == Decision.KEEP and not c.excluded]

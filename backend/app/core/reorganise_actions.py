@@ -1,21 +1,13 @@
 """
-Pure logic for the Reorganise ACTION CHECKLIST: the strict content schema
-the checklist model must satisfy, the conversion of a raw (already-JSON-
-parsed, not-yet-trusted) object into trusted actions, and the fully
-deterministic checklist used in production.
+The Reorganise action checklist: a short, prioritised list of
+{priority, title, instruction} steps, not a zone plan or item partition.
 
-A checklist is a short, prioritised list of things to do, not a plan of
-zones, coordinates or item assignments. Nothing here partitions items,
-requires every item to be mentioned, or asks anything of the model beyond
-{priority, title, instruction} triples. The model is never asked for an
-image prompt (see app.core.reorganise_image_prompt) or a storage product
-(see app.core.reorganise_storage).
+build_deterministic_checklist() is the production path (provenance
+deterministic_direct). The model-output schema and
+parse_and_validate_actions() serve the research path only.
 
-No orchestration here: whether a model is called at all, how many times
-(at most once), and when the deterministic checklist is used is
-app/services/reorganise_actions_service.py's job. This module only ever
-answers "is this one raw object, on its own, a valid checklist" and "here
-is a deterministic checklist built directly from detected data."
+No orchestration: whether and when a model is called belongs to the
+service layer.
 """
 
 from __future__ import annotations
@@ -32,12 +24,8 @@ from app.core.schemas import DetectedItem
 MIN_ACTIONS = 1
 MAX_ACTIONS = 5
 
-# The action count the prompt asks the model for, and the count a model
-# response must reach to be trusted: selections of fewer than
-# SMALL_SELECTION_THRESHOLD items may answer with 1 to 3 actions; anything
-# larger must answer with 3 to 5. A shorter answer is not "partly usable",
-# it is rejected as invalid_actions and the deterministic checklist is used
-# instead (still bounded by the general MIN_ACTIONS..MAX_ACTIONS schema).
+# Research path: the action count a model answer must reach, by selection
+# size. A shorter answer is rejected, never treated as partly usable.
 SMALL_SELECTION_THRESHOLD = 3
 SMALL_ACTION_RANGE = (1, 3)
 NORMAL_ACTION_RANGE = (3, MAX_ACTIONS)
@@ -64,11 +52,9 @@ _Instruction = Annotated[
 ]
 _BoundedDetail = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=_MAX_DETAIL_LENGTH)]
 
-# Content the prompt forbids and validation refuses regardless: shopping,
-# retailers, links, money, and removing or disposing of a selected item
-# (every selected item is something the user chose to keep). A match is
-# an `forbidden_content` rejection, which the service turns into the
-# deterministic checklist, never a partially accepted model result.
+# Shopping, retailers, links, money, and removing a selected item (every
+# selected item is one the user chose to keep). A match rejects the whole
+# model answer, never part of it.
 _FORBIDDEN_CONTENT_RE = re.compile(
     r"(?:\b(?:buy|buys|buying|purchase|purchases|purchasing|shop|shopping|order online|"
     r"amazon|ikea|carousell|shopee|lazada|taobao|daiso|muji|price|prices|priced)\b"
@@ -90,10 +76,8 @@ def _bounded(text: str, limit: int = _MAX_DETAIL_LENGTH) -> str:
 
 
 class ReorganiseAction(BaseModel):
-    """One checklist entry. extra="forbid": this is model-facing content,
-    validated directly against this shape, so a stray zone / coordinate /
-    product / image field is rejected as malformed rather than ignored.
-    priority is a StrictInt so "1" (a string) is never coerced."""
+    """One checklist entry. extra="forbid" so a stray zone, coordinate or
+    product field in model output is rejected rather than ignored."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -103,11 +87,9 @@ class ReorganiseAction(BaseModel):
 
 
 class ReorganiseActionList(BaseModel):
-    """The whole model response: {"actions": [...]} and nothing else.
-    Priorities must be exactly 1..n (each once); order in the raw list is
-    normalised to priority order rather than rejected, since a complete,
-    correctly numbered list in the wrong order is still a usable
-    checklist."""
+    """The whole model response: {"actions": [...]}. Priorities must be
+    exactly 1..n; list order is normalised rather than rejected, since a
+    correctly numbered list in the wrong order is still usable."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -160,19 +142,13 @@ def find_forbidden_content(text: str) -> str | None:
 
 def parse_and_validate_actions(raw: Any, *, min_actions: int = MIN_ACTIONS) -> ActionConversionResult:
     """
-    Attempts to construct a trusted checklist from `raw` (already-parsed
-    JSON: a dict, or garbage). Every problem with `raw` is returned as a
-    structured error, never raised and never a raw traceback. Only the
-    expected data-validation failure (pydantic's ValidationError) is
-    caught; an unexpected internal exception stays loud.
+    Build a trusted checklist from `raw` (any parsed JSON value). Problems
+    with `raw` are returned as structured errors; only ValidationError is
+    caught, so an internal defect stays loud.
 
-    `min_actions` is the selection-dependent floor a MODEL answer must
-    reach (see expected_action_range); a syntactically valid answer with
-    fewer actions is reported as `too_few_actions`, never partially
-    accepted. It defaults to the schema minimum so callers validating a
-    checklist without a selection context (tests, tooling) still work.
-    Raises ValueError for a min_actions outside MIN_ACTIONS..MAX_ACTIONS,
-    a caller error rather than a model one.
+    `min_actions` is the selection-dependent floor (see
+    expected_action_range). An out-of-range min_actions is a caller error
+    and raises ValueError.
     """
     if not isinstance(min_actions, int) or isinstance(min_actions, bool) or not (MIN_ACTIONS <= min_actions <= MAX_ACTIONS):
         raise ValueError(f"min_actions must be an integer in {MIN_ACTIONS}..{MAX_ACTIONS}, got {min_actions!r}")
@@ -214,17 +190,11 @@ def parse_and_validate_actions(raw: Any, *, min_actions: int = MIN_ACTIONS) -> A
 
 # --- deterministic production checklist ----------------------------------
 #
-# Built only from real detected data: the coarse area each selected item
-# sits in (its `position`), its effective label and its relative size.
-# Never names a destination, container, piece of furniture or storage
-# object that is not itself a selected item, and never uses the user's
-# free-text context (unbounded, untrusted, and not needed to be useful).
-#
-# The title is a complete, self-contained imperative (no counts, no
-# parenthesised inventories, no label lists); the one-sentence
-# instruction beneath it adds what the title cannot carry: the real
-# count of a group, the reason, or up to three real labels to start
-# with. Neither ever repeats the other.
+# Built only from detected data (coarse area, effective label, relative
+# size). Never names a destination or container that is not a selected
+# item, and never uses the user's free-text context (untrusted and
+# unbounded). The title is a self-contained imperative; the instruction
+# adds the count, reason or up to three labels, never repeating it.
 
 
 def _validate_fallback_inputs(selected_items: Any, scene_label: Any) -> None:
@@ -276,15 +246,12 @@ def _name_some(items: list[DetectedItem], *, tail: str) -> str:
 
 
 def _cleanup_action(area_id: str, items: list[DetectedItem]) -> tuple[str, str]:
-    """The single area-cleanup step for the busiest area still holding
-    uncovered items. `items` are real, selected, uncovered items only.
+    """The single cleanup step for the busiest area of uncovered items.
 
-    Size is used ONLY to say which real, selected, large item is not
-    worth moving. Coarse-area membership never proves the smaller items
-    are physically around, on or beside it: sharing a part of the photo
-    does not make a chair and a bowl belong with a shelf, and nothing
-    here knows the large item is a usable surface, so the wording keeps
-    to "in the area"."""
+    Size only marks which large item is not worth moving. Sharing a
+    coarse area does not prove smaller items sit on or beside it (a chair
+    and a bowl do not belong with a shelf), so the wording keeps to
+    "in the area"."""
     large = [item for item in items if _is_large(item)]
     smaller = [item for item in items if not _is_large(item)]
 
@@ -327,36 +294,23 @@ def _make_action(priority: int, title: str, instruction: str) -> ReorganiseActio
 
 def build_deterministic_checklist(selected_items: list[DetectedItem], scene_label: str) -> list[ReorganiseAction]:
     """
-    Pure and fully deterministic given the same inputs: no model, no
-    randomness, no wall-clock dependence. Raises ValueError (never
-    AttributeError/TypeError) on invalid caller input.
+    Production checklist: deterministic, no model. Raises ValueError
+    (never AttributeError/TypeError) on invalid caller input.
 
-    Shape, in priority order and capped at MAX_ACTIONS, most useful
-    first:
-      1. one action per repeated label (two or more items sharing an
-         effective label), first-seen order;
-      2. one action per compatible category group (find_compatible_groups)
-         not already covered by a repeated label;
-      3. at most ONE cleanup action, for the busiest area that still
-         holds items no group covered (an item already told where it
-         belongs is never narrated again);
-      4. a closing whole-space check naming the detected scene type, only while
-         there is capacity: it never displaces an evidence-backed step.
-    Every title is a complete imperative and every instruction one
-    sentence that adds to it, naming only detected labels, real counts,
-    coarse photo areas and the scene type; positions and full label
-    inventories are left to the structured data, never narrated.
+    Priority order, capped at MAX_ACTIONS:
+      1. one action per repeated effective label, first-seen order;
+      2. one per compatible category group not already covered;
+      3. at most one cleanup action for the busiest area of uncovered
+         items;
+      4. a closing whole-space check, only while there is capacity.
     """
     _validate_fallback_inputs(selected_items, scene_label)
 
     drafts: list[tuple[str, str]] = []
     covered_ids: set[str] = set()
 
-    # 1. Repeated labels, first-seen order. The real label is kept
-    # ("book", "picture frame"); "the <label> items" avoids guessing a
-    # plural for arbitrary, possibly user-corrected labels. The
-    # instruction adds the real count and the reason, never where the
-    # items were found.
+    # 1. "the <label> items" avoids guessing a plural for a possibly
+    # user-corrected label.
     by_label: dict[str, list[DetectedItem]] = {}
     for item in selected_items:
         by_label.setdefault(item.effective_label.strip(), []).append(item)
@@ -370,9 +324,7 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
         )
         covered_ids.update(item.item_id for item in items)
 
-    # 2. Compatible category groups not already covered by a repeated
-    # label: still evidence-backed (find_compatible_groups), no label
-    # inventory in the prose.
+    # 2. Compatible category groups.
     for rule, items in find_compatible_groups(selected_items):
         if all(item.item_id in covered_ids for item in items):
             continue
@@ -387,11 +339,8 @@ def build_deterministic_checklist(selected_items: list[DetectedItem], scene_labe
         area_id, area_items = group_items_by_area(remaining)[0]
         drafts.append(_cleanup_action(area_id, area_items))
 
-    # 4. The closing check, only if it fits. Inclusive wording: "the
-    # space", never the classified room type, so a garage, balcony or
-    # study reads as naturally as a bedroom. scene_label is still
-    # validated above (a blank one is a caller error) but no longer
-    # appears in the prose.
+    # 4. The closing check, only if it fits. Says "the space" rather than
+    # the classified room type so a garage or balcony reads naturally.
     drafts.append(
         (
             "Do a final space check",

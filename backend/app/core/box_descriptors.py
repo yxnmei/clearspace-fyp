@@ -1,15 +1,11 @@
 """
-Pure logic: derive a coarse human-readable size/position hint from a
-normalized bounding box. No model loading — unit-testable in milliseconds.
+Derive a coarse size/position hint from a normalized bounding box.
 
-Exists because same-labelled detections (e.g. six "picture frame" boxes in
-one image) otherwise look identical to the LLM reasoning stage, which then
-has no basis to treat them as distinct items — some models responded by
-inventing non-schema decisions like "keep one, donate others" instead of
-judging each independently (observed in a 2026-08-01 real-detection run).
-This doesn't identify *what* makes two same-label items different, only
-roughly *where* and *how big* each one is — enough for a prompt to stop
-presenting duplicates as interchangeable text.
+Same-labelled detections (e.g. six "picture frame" boxes) otherwise look
+identical to the LLM, and some models then invented non-schema decisions
+like "keep one, donate others" instead of judging each item (observed in
+a 2026-08-01 real-detection run). Rough where/how-big is enough to stop
+duplicates reading as interchangeable.
 """
 
 from __future__ import annotations
@@ -36,13 +32,9 @@ def _position_label(cx: float, cy: float) -> str:
     if row == "middle":
         return col
     if col == "center":
-        # Bare "upper"/"lower" read as ambiguous — easy to mistake for "top
-        # third of the frame, any column" rather than "top third, center
-        # column specifically" (found during the 2026-08-09 manual
-        # position_zone annotation of evaluation/labels/labels.json).
-        # "left"/"right" alone don't have the same problem — "the left
-        # side, vertically centered" is the natural reading — so only this
-        # branch needed the explicit "-center" suffix.
+        # Bare "upper"/"lower" reads as "top third, any column" (found in
+        # the 2026-08-09 manual position annotation); "left"/"right" alone
+        # have no such ambiguity, so only this branch gets "-center".
         return f"{row}-center"
     return f"{row}-{col}"
 
@@ -54,13 +46,8 @@ class BoxDescriptor:
 
 
 def describe_box_parts(box_xyxy: tuple[float, float, float, float]) -> BoxDescriptor:
-    """
-    box_xyxy must be normalized to [0, 1] (see grounding_dino.RawDetection).
-    relative_size/position separately, not one combined string — added for
-    app.core.schemas.DetectedItem, which carries them as two distinct
-    fields (see app/services/analysis_service.py). describe_box() below is
-    now a thin wrapper over this; no behaviour change to its own output.
-    """
+    """box_xyxy normalized to [0, 1]. Returns size and position as the
+    two separate fields DetectedItem carries."""
     x1, y1, x2, y2 = box_xyxy
     area_fraction = max(0.0, x2 - x1) * max(0.0, y2 - y1)
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
@@ -68,10 +55,7 @@ def describe_box_parts(box_xyxy: tuple[float, float, float, float]) -> BoxDescri
 
 
 def describe_box(box_xyxy: tuple[float, float, float, float]) -> str:
-    """
-    Returns something like "large, upper-left" — coarse and cheap on
-    purpose; this exists to make same-labelled items distinguishable in an
-    LLM prompt, not to be a precise spatial description.
-    """
+    """E.g. "large, upper-left". Deliberately coarse: enough to tell
+    same-labelled items apart in a prompt, not a precise description."""
     parts = describe_box_parts(box_xyxy)
     return f"{parts.relative_size}, {parts.position}"

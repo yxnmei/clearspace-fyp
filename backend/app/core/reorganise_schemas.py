@@ -1,21 +1,14 @@
 """
-Pure core domain schemas for the Reorganise plan — content only.
+Content schemas for the zone-based Reorganise plan.
 
-Deliberately excludes: PlanProvenance as a field (assigned later, by
-app/services/reorganise_service.py, never by this module or by raw LLM
-output); model name/prompt version (service-level identity, not plan
-content); bytes/base64/HTTP-transport fields (owned by the API layer).
-This keeps the dependency direction intact: app/core must never import
-app/services (DeclutterResult lives in app/services/declutter_service.py,
-so anything that needs it — DirectReorganisePayload/BothReorganisePayload
-— cannot live here either).
+ReorganisePlan/ReorganiseZone are the research path only; production uses
+the deterministic checklist (provenance deterministic_direct).
+PlanProvenance is shared vocabulary for both.
 
-Reuses ItemId/NonEmptyStr from app.core.schemas rather than redefining
-them — one shared identity vocabulary, not a second one drifting
-alongside it. item_id is the only identity ReorganiseZone ever carries;
-nothing here reads or compares label text (see
-reorganise_semantic_conversion.py's own docstring for where and why that
-rule is enforced).
+Provenance, model identity and transport fields are deliberately not plan
+content. app/core never imports app/services, so payloads that need
+DeclutterResult live in the services layer. item_id is the only identity
+a zone carries; label text is never compared.
 """
 
 from __future__ import annotations
@@ -26,52 +19,32 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.core.schemas import ItemId, NonEmptyStr
 
-# Naming convention for a zone holding items that don't need to move —
-# see reorganise_semantic_conversion.build_deterministic_fallback_plan(),
-# which always uses exactly this zone. A real LLM-produced plan is free
-# to use it too, but nothing here requires that; the zone's meaning comes
-# entirely from its name and instruction text, not from special-cased
-# schema behavior.
+# Zone name used by the deterministic fallback plan; a naming convention,
+# not special-cased schema behaviour.
 KEEP_IN_PLACE_ZONE_NAME = "Keep in place"
 
 
 class PlanProvenance(str, Enum):
-    """How a ReorganisePlan was actually produced — assigned by the
-    service (app/services/reorganise_service.py), never by this
-    module, never accepted as part of raw LLM plan content, and never a
-    field on ReorganisePlan itself (see that class's own docstring below).
-    This is a shared vocabulary type only; placing it here (core) while
-    only ever being assigned by service-level orchestration mirrors
-    ItemValidity's own existing placement/assignment split in
-    app/core/schemas.py + app/services/declutter_service.py exactly."""
+    """How a plan was produced. Assigned by the service layer, never
+    accepted from model output and never a field on ReorganisePlan."""
 
     RAW_VALID = "raw_valid"
     MECHANICALLY_REPAIRED = "mechanically_repaired"
     RECOVERY_USED = "recovery_used"
     DETERMINISTIC_FALLBACK = "deterministic_fallback"
-    # No LLM call was made AT ALL — the deterministic plan was built
-    # directly, by policy, not after a model failed. Distinct from
-    # DETERMINISTIC_FALLBACK on purpose: that value means "two planner
-    # attempts were made and both were rejected", which would be a lie
-    # here. The 2026-08-20 planner screen found no model able to produce
-    # a semantically valid 28-item plan, so production stopped paying for
-    # two doomed attempts; see backend/evaluation/README.md. The LLM
-    # path itself is retained and still reachable for research (pass a
-    # planner to run_reorganise_pipeline).
+    # Production: no model call at all, by policy. Distinct from
+    # DETERMINISTIC_FALLBACK, which means planner attempts ran and were
+    # rejected. The 2026-08-20 planner screen found no model able to
+    # produce a valid 28-item plan (backend/evaluation/README.md).
     DETERMINISTIC_DIRECT = "deterministic_direct"
 
 
 class ReorganiseZone(BaseModel):
-    """One named grouping of selected items in the reorganisation plan.
-    `item_ids` are the only identity carried here — this class never
-    reads, stores, or compares label text.
+    """One named grouping of selected items, identified by item_id only.
 
-    extra="forbid": this is LLM-facing content — a raw plan is validated
-    directly against this shape (see parse_and_validate_plan()). Without
-    this, pydantic's default behavior would silently ignore an
-    unrecognised field, which is exactly how a stray "provenance" or
-    similar metadata key in raw LLM output could slip through unnoticed
-    instead of being rejected as malformed."""
+    extra="forbid": raw model output is validated directly against this
+    shape, so a stray key such as "provenance" is rejected rather than
+    silently ignored."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,22 +62,11 @@ class ReorganiseZone(BaseModel):
 
 
 class ReorganisePlan(BaseModel):
-    """Core plan CONTENT only — see module docstring for what is
-    deliberately excluded (provenance, model identity, HTTP/bytes
-    fields).
+    """Plan content only (extra="forbid", as for ReorganiseZone).
 
-    Self-consistency (this class's own validator: no duplicate/blank zone
-    names, no item_id repeated across zones) is a DIFFERENT, narrower
-    check than authoritative selected-set completeness — this class has
-    no way to know what the authoritative selected-item set even is, so
-    it cannot and does not check "every selected item is accounted for."
-    That check lives at the parse_and_validate_plan() boundary in
-    reorganise_semantic_conversion.py, the only place that actually
-    receives the authoritative set.
-
-    extra="forbid": see ReorganiseZone's docstring — this is LLM-facing
-    content; PlanProvenance/model identity/etc. must never be smuggled in
-    as an unrecognised field rather than rejected outright."""
+    Validates self-consistency only. Completeness against the selected
+    set is checked by parse_and_validate_plan(), the only place that
+    receives that set."""
 
     model_config = ConfigDict(extra="forbid")
 

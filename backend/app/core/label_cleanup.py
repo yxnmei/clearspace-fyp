@@ -1,15 +1,11 @@
 """
-Pure logic: turns Grounding DINO's raw (possibly compound) labels into
-clean item labels. No model loading here — this is exactly the kind of
-function tests/unit/ should cover in milliseconds.
+Turn Grounding DINO's raw, possibly compound labels into clean item
+labels.
 
-Replaces v1's naive first-token extraction: "book notebook magazine
-document" was reduced to just "book",
-discarding real information. This version is vocabulary-aware — it
-checks the compound phrase against a known multi-word item list before
-falling back to first-token, and always returns the *discarded* tokens
-too so callers can decide whether to keep them (e.g. show "book" as the
-primary label but keep "notebook, magazine, document" as detail text).
+Plain first-token extraction loses information ("book notebook magazine
+document" becomes just "book") and splits real multi-word items, so known
+multi-word labels are checked first and the discarded tokens are always
+returned for callers to keep as detail text.
 """
 
 from __future__ import annotations

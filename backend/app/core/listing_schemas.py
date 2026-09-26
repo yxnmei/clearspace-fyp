@@ -1,39 +1,22 @@
 """
-Pure core domain schemas for marketplace listing drafts — V1, content
-only.
+Content schemas for marketplace listing drafts.
 
-Scope is deliberately narrow. A V1 listing draft carries exactly:
-  - a trusted item_id and effective_label, attached by application code
-    from the confirmed eligibility join (NEVER taken from model output);
-  - a model-generated title and description, and nothing else the model
-    produced;
-  - a generated / unavailable status with a sanitised unavailable reason;
-  - a bounded per-item attempt count.
+The model returns only a title and a description. The item_id and
+effective_label are attached by application code from the confirmed
+eligibility join, never taken from model output. item_id is the only
+identity; label text is never used to match, select or deduplicate.
 
-Seller-supplied listing details (ListingItemDetails, below) are a
-separate, request-side concept: a listing name and a declared condition
-the person types or picks, sent to the model as data and never produced
-by it. They are listing metadata only; they never change the detected
-label, the decision or the confirmation. The model still returns exactly
-a title and a description.
+Seller-supplied details (ListingItemDetails) are request-side data sent
+to the model, never produced by it, and never change the label, decision
+or confirmation.
 
-Deliberately excluded, and not to be added: price, category, brand,
-model number, age, dimensions, accessories, ownership, location, contact
-details, any model-inferred condition, and any marketplace-publishing or
-Carousell-integration field. Signed source/confirmation proof is also
-explicitly deferred — see app/services/listing_service.py's module
-docstring for the honest limit that recomputation validates internal
-consistency but cannot cryptographically stop a client fabricating a
-whole consistent source payload.
+Deliberately excluded: price, category, brand, model number, dimensions,
+location, contact details, any model-inferred condition, and any
+marketplace-publishing field. Signed source/confirmation proof is
+deferred (see the listing service).
 
-Dependency direction: app/core must never import app/services, so the
-listing-generation RESULT that wraps a ConfirmationResult lives in
-app/services/listing_service.py, not here. This module holds only the
-pure, model-free content schemas. ItemId / NonEmptyStr are reused from
-app.core.schemas — one shared identity vocabulary, never a second one.
-
-item_id is the only identity a listing draft carries; label text is
-display data and is never used to match, select, or deduplicate.
+app/core never imports app/services, so the result wrapper that holds a
+ConfirmationResult lives in the listing service, not here.
 """
 
 from __future__ import annotations
@@ -44,27 +27,21 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, String
 
 from app.core.schemas import ItemId, NonEmptyStr
 
-# The hard ceiling on per-item model attempts, independent of config.
-# settings.listing_llm_max_attempts is validated to 1..5; this is the
-# structural upper bound the result schemas enforce so a hand-built
-# ListingDraft can never claim an implausible attempt count.
+# Structural ceiling, independent of config, so a hand-built ListingDraft
+# can never claim an implausible attempt count.
 LISTING_MAX_ATTEMPTS_CEILING = 5
 
-# A genuine integer in 1..LISTING_MAX_ATTEMPTS_CEILING. StrictInt rejects
-# bool, float, and numeric strings — an attempt count of `True`, `1.0` or
-# "1" is a construction mistake, not something to coerce.
+# StrictInt: True, 1.0 or "1" is a construction mistake, not something to
+# coerce (bool is an int subclass).
 _StrictAttempts = Annotated[StrictInt, Field(ge=1, le=LISTING_MAX_ATTEMPTS_CEILING)]
 
-# Trimmed, non-empty, length-bounded generated text. The model is asked
-# for a short title and a two/three-sentence description; these bounds
-# reject blank, whitespace-only, and runaway output alike. They are
-# presentation bounds, not correctness claims about the content.
+# Presentation bounds rejecting blank and runaway output, not claims about
+# content quality.
 ListingTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=120)]
 ListingDescription = Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=1200)]
 
-# Sanitised, closed vocabulary for why one item's draft could not be
-# produced. Raw model output and transport error text never appear
-# anywhere near a response — every failure collapses to one of these.
+# Sanitised reasons: raw model output and transport error text never
+# reach a response; every failure collapses to one of these.
 ListingUnavailableReason = Literal[
     "timeout",
     "service_unavailable",
@@ -72,9 +49,8 @@ ListingUnavailableReason = Literal[
     "generation_failed",
 ]
 
-# The seller's declared condition. "not_specified" is the default and
-# means exactly that: the model is told nothing about condition and must
-# not state or imply one. Never inferred from the image or the label.
+# Seller-declared only, never inferred. With "not_specified" the model is
+# told nothing about condition and must not imply one.
 ListingCondition = Literal["not_specified", "new", "like_new", "good", "fair", "well_used"]
 
 LISTING_CONDITION_PHRASES: dict[str, str] = {
@@ -90,18 +66,11 @@ ListingName = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 
 
 class ListingItemDetails(BaseModel):
-    """Seller-supplied details for ONE item's listing, keyed by item_id.
+    """Seller-supplied details for one item's listing, keyed by item_id.
 
-    listing_name: the person's own name for the item as it should appear
-    in the listing (defaults client-side to the reviewed label; None here
-    means "use the detected label"). condition: the declared condition,
-    "not_specified" by default.
-
-    These are listing metadata only. They never change the detected
-    label, the decision, the confirmation or eligibility: the service
-    derives the eligible Sell set server-side and simply ignores details
-    for any item that is not in it. extra="forbid" so a price, brand or
-    any other speculative field is a validation error, not a passenger."""
+    listing_name None means "use the detected label". Details never
+    affect eligibility: the service derives the Sell set server-side and
+    ignores details for items outside it."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -111,17 +80,12 @@ class ListingItemDetails(BaseModel):
 
 
 class ListingDraftContent(BaseModel):
-    """EXACTLY what the listing model is allowed to return: one JSON
-    object with a `title` and a `description`, and no other field.
+    """Exactly what the listing model may return: a title and a description.
 
-    extra="forbid" is load-bearing, not decorative — it is what makes the
-    model structurally unable to return an identity field (`item_id`,
-    `id`, `label`, ...) or any speculative listing field (`price`,
-    `condition`, `brand`, ...). Any such key makes the whole object
-    invalid, so application code falls back to an unavailable outcome for
-    that item rather than trusting a single model-supplied value.
-    Identity is attached by application code afterwards, from the trusted
-    eligibility join — never read from here."""
+    extra="forbid" is load-bearing: any identity field (`item_id`,
+    `label`, ...) or speculative field (`price`, `condition`, ...) makes
+    the whole object invalid, so that item becomes unavailable rather than
+    trusting a model-supplied value."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -130,31 +94,13 @@ class ListingDraftContent(BaseModel):
 
 
 class ListingDraft(BaseModel):
-    """One eligible item's V1 listing draft.
+    """One eligible item's listing draft. item_id / effective_label are
+    trusted values from the eligibility join, never from model output.
 
-    item_id / effective_label are trusted values attached by
-    app/services/listing_service.py from the confirmed eligibility join
-    (DetectedItem.item_id / DetectedItem.effective_label). They are never
-    taken from model output.
-
-    status == "generated": title and description are present and valid,
-    unavailable_reason is None, was_repaired is a genuine bool.
-    status == "unavailable": title and description are both None,
-    unavailable_reason names a sanitised cause, was_repaired is None.
-
-    was_repaired: for a generated draft, whether the model's raw JSON
-    needed mechanical repair (a trailing-comma fix or extraction from
-    surrounding prose/fences) before it parsed — carried straight from
-    the listing model result, not inferred. None for an unavailable
-    draft (no content was produced, so the question does not apply).
-
-    attempts: how many model calls were spent on this one item — at
-    least 1, never more than LISTING_MAX_ATTEMPTS_CEILING. The
-    result-level ListingGenerationResult additionally pins this against
-    the request's configured max_attempts.
-
-    extra="forbid": this is a fresh listing-domain schema, so an unknown
-    field is a construction mistake, not something to ignore."""
+    was_repaired: whether the model's raw JSON needed mechanical repair
+    before parsing; None when unavailable (no content was produced).
+    attempts: model calls spent on this item; the service result also
+    pins it against the configured max_attempts."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -164,8 +110,7 @@ class ListingDraft(BaseModel):
     title: ListingTitle | None = None
     description: ListingDescription | None = None
     unavailable_reason: ListingUnavailableReason | None = None
-    # StrictBool: an int 1/0 or the string "true" must NOT be silently
-    # coerced — a generated draft's repair flag has to be a real bool.
+    # StrictBool: 1/0 or "true" must not be coerced into the repair flag.
     was_repaired: StrictBool | None = None
     attempts: _StrictAttempts
 

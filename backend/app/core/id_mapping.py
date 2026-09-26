@@ -1,16 +1,11 @@
 """
-Pure logic: map an LLM response's item_number values onto this run's
-item_id values, and flag every way that mapping can fail — missing,
-duplicated, malformed, or unexpected item numbers — rather than silently
-dropping, misattributing, or arbitrarily picking-a-winner for an item. No
-model calls here; app/models/mistral_llm.py passes parsed responses into
-this function.
+Map an LLM response's item_number values onto this run's item_id values,
+flagging missing, duplicated, malformed and unexpected numbers rather
+than dropping, misattributing or picking a winner.
 
-Deliberately decision-content-agnostic: this stage only resolves identity
-(item_number -> item_id). Whether the returned `decision` string is one of
-the four legal values, and whether `reason` is non-empty, is a separate
-concern — see core/semantic_conversion.py, which turns a successfully
-mapped item into a validated AiDecision. Not duplicated here.
+Identity only: item_id comes from the requested number, never from the
+returned label, which is never used to match or dedupe. Decision/reason
+content is validated separately by semantic_conversion.
 """
 
 from __future__ import annotations
@@ -27,29 +22,16 @@ from app.core.schemas import (
 
 def map_item_numbers(raw_items: list[dict], number_to_id: dict[int, str]) -> ItemNumberMappingResult:
     """
-    raw_items: freshly-parsed LLM response elements (e.g. from
-    json_repair.extract_json) — not yet trusted to have the right shape.
-    number_to_id: this call's expected {item_number: item_id} mapping —
-    for a chunked LLM call (see mistral_llm.classify_items), this is the
-    chunk's own expected numbers, not necessarily the whole image's.
+    raw_items: parsed, untrusted LLM response elements. number_to_id: this
+    call's expected numbers (for a chunked call, the chunk's own).
 
-    Duplicate item_numbers are treated as invalid, not resolved by "first
-    occurrence wins": if an expected item_number appears more than once,
-    NEITHER occurrence is exposed in `mapped` — there's no way to know
-    which one is correct, and silently preferring one would hide a real
-    model failure. The item_number is reported as DUPLICATE and is
-    implicitly eligible for recovery (it's absent from `mapped`, exactly
-    like a MISSING item — a caller can compute the recovery set as
-    `set(number_to_id) - {m.item_number for m in result.mapped}`).
-
-    See ItemNumberMappingResult.is_complete for the single boolean that
-    tells a caller whether every requested item_number was safely
-    resolved, so a partial mapping can never be mistaken for a full one.
+    A duplicated item_number maps NEITHER occurrence: there is no way to
+    know which is correct. Like a missing one, it is absent from `mapped`
+    and so eligible for recovery. Use ItemNumberMappingResult.is_complete
+    so a partial mapping is never mistaken for a full one.
     """
-    # First pass: bucket every raw element that names a real, requested
-    # item_number, so duplicates can be detected before anything is
-    # committed to `mapped`. Anything that can't even be read as a
-    # requested item_number is flagged immediately and never bucketed.
+    # First pass: bucket by requested item_number so duplicates are found
+    # before anything is committed to `mapped`.
     candidates: dict[int, list[dict]] = defaultdict(list)
     warnings: list[MappingWarning] = []
 

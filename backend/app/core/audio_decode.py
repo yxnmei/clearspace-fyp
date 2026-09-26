@@ -1,28 +1,18 @@
 """
-Pure audio validation and decoding for POST /transcribe.
+Audio validation and decoding for POST /transcribe.
 
-One decode, shared by both speech-to-text backends. The upload becomes a
-mono float32 waveform at 16 kHz exactly once, and that same array is
-handed to whichever model is selected — so a WER difference measured by
-evaluation/scripts/compare_stt.py is a MODEL difference, not a decoder
-difference. Letting openai-whisper decode via the ffmpeg CLI while
-faster-whisper decodes via PyAV would confound the one comparison this
-feature exists to make.
+The upload is decoded once to a 16 kHz mono float32 waveform and the same
+array goes to whichever speech backend is selected, so a measured WER
+difference is a model difference, not a decoder difference. Audio is
+never written to disk; both backends accept an in-memory waveform.
 
-Audio is NEVER written to disk. Both model APIs accept an in-memory
-waveform (whisper.transcribe's `audio` is str | ndarray | Tensor, and
-WhisperModel.transcribe's is str | BinaryIO | ndarray), so no temporary
-file is involved on either path.
+PyAV and numpy are imported lazily inside the decode call, so importing
+this module (or the routes) loads neither. PyAV is imported directly,
+never via faster_whisper.audio, so decoding is independent of either
+backend.
 
-This module imports no model library. PyAV and numpy are imported LAZILY
-inside the decode call, so importing this module — or app.api.routes —
-pulls in neither. PyAV is imported directly and never through
-faster_whisper.audio, keeping decoding independent of either supported
-speech-to-text backend.
-
-Error messages are fixed, bounded strings. No decoder text, no file
-path, and no fragment of the payload ever reaches a message a caller
-could surface.
+Error messages are fixed strings: no decoder text, path or payload
+fragment reaches a caller.
 """
 
 from __future__ import annotations
@@ -50,15 +40,11 @@ SUPPORTED_AUDIO_MEDIA_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Declared base type -> the demuxer names PyAV may legitimately report
-# for it. A declared type that decodes as something else is rejected:
-# without this, "audio/webm" carrying WAV bytes passes the allowlist and
-# the mismatch is only ever discovered by whatever consumes the result.
-#
-# The values are FFmpeg demuxer names, which are comma-joined families
-# ("matroska,webm"), so agreement is checked by token intersection. WebM
-# and Matroska share one demuxer and cannot be told apart by name, so
-# audio/webm accepts both tokens.
+# Declared base type -> demuxer names PyAV may report for it, so
+# "audio/webm" carrying WAV bytes is rejected. FFmpeg demuxer names are
+# comma-joined families ("matroska,webm"), so agreement is checked by
+# token intersection; WebM and Matroska share one demuxer, so audio/webm
+# accepts both.
 CONTAINER_FAMILIES: dict[str, frozenset[str]] = {
     "audio/wav": frozenset({"wav"}),
     "audio/x-wav": frozenset({"wav"}),
@@ -77,9 +63,8 @@ TARGET_SAMPLE_RATE = 16000
 
 
 class AudioValidationError(ValueError):
-    """Base for every rejection here. A ValueError subclass for the same
-    reason ImageValidationError is one — existing `except ValueError`
-    callers keep working regardless of which module raises."""
+    """Base for every rejection here; a ValueError subclass so existing
+    `except ValueError` callers keep working."""
 
 
 class UnsupportedAudioTypeError(AudioValidationError):
@@ -92,26 +77,21 @@ class MalformedAudioError(AudioValidationError):
 
 
 class AudioContainerMismatchError(AudioValidationError):
-    """The bytes decode as a real container, but not the family the
-    declared media type promised — e.g. WAV bytes sent as audio/webm.
-    Its own type, so a mismatch is never reported as generic corruption
-    and never as an unsupported type."""
+    """A real container, but not the family the declared type promised
+    (e.g. WAV bytes sent as audio/webm). Distinct from corruption and
+    from an unsupported type."""
 
 
 class AudioTooLongError(AudioValidationError):
-    """Decoded audio exceeds the allowed duration.
-
-    Raised from the DECODED sample count, never from container metadata:
-    a header can claim any duration it likes, and one that understates
-    its length would walk straight past a metadata-only check.
-    """
+    """Decoded audio exceeds the allowed duration. Judged from the
+    decoded sample count, never container metadata, which a header can
+    understate."""
 
 
 @dataclass(frozen=True)
 class DecodedAudio:
-    """Immutable decode result. `waveform` is a 1-D float32 numpy array of
-    mono samples at `sample_rate`; its annotation is Any so this module
-    needs no numpy import to be imported itself."""
+    """`waveform` is a 1-D float32 numpy array, annotated Any so importing
+    this module needs no numpy."""
 
     waveform: Any
     sample_rate: int
@@ -119,13 +99,8 @@ class DecodedAudio:
 
 
 def normalise_media_type(raw_media_type: Any) -> str:
-    """"audio/webm;codecs=opus" -> "audio/webm".
-
-    Browsers append codec parameters to a recorded blob's Content-Type,
-    so a naive equality check against the allowlist rejects every real
-    Chrome recording. Comparing the base type is the fix; the parameters
-    carry nothing this validation needs.
-    """
+    """"audio/webm;codecs=opus" -> "audio/webm". Browsers append codec
+    parameters, so exact matching would reject every Chrome recording."""
     if not isinstance(raw_media_type, str):
         raise UnsupportedAudioTypeError("audio media type is missing")
     base = raw_media_type.split(";", 1)[0].strip().lower()
@@ -143,13 +118,9 @@ def validate_media_type(raw_media_type: Any) -> str:
 
 
 def check_container_matches_media_type(container_format_name: Any, base_media_type: str) -> None:
-    """Raise AudioContainerMismatchError unless the demuxer PyAV chose
-    belongs to the family the declared type promised.
-
-    `container_format_name` is a PyAV/FFmpeg internal string and is used
-    ONLY for this comparison — it never appears in a message, because
-    that would leak decoder detail to a caller.
-    """
+    """Raise AudioContainerMismatchError unless PyAV's demuxer belongs to
+    the declared type's family. The format name never appears in a
+    message, so no decoder detail leaks."""
     allowed = CONTAINER_FAMILIES.get(base_media_type)
     if allowed is None:  # pragma: no cover - allowlist and map kept in step by a test
         raise UnsupportedAudioTypeError("audio media type is not supported")
@@ -161,16 +132,13 @@ def check_container_matches_media_type(container_format_name: Any, base_media_ty
 
 
 def decode_audio_bytes(audio_bytes: Any, media_type: Any, *, max_seconds: int) -> DecodedAudio:
-    """Validate, then decode ONCE to mono float32 at TARGET_SAMPLE_RATE.
+    """Validate, then decode once to mono float32 at TARGET_SAMPLE_RATE.
 
-    Decoding stops as soon as the sample budget is exceeded — the frame
-    loop breaks rather than decoding a long file to completion and
-    measuring afterwards, so an oversized upload costs a bounded amount
-    of work instead of however long its full decode takes.
-
-    Raises UnsupportedAudioTypeError, MalformedAudioError or
-    AudioTooLongError, never a decoder exception, and never writes to
-    disk.
+    The budget is enforced on the running decoded sample count and the
+    frame loop stops as soon as it is exceeded, so oversized audio costs
+    bounded work. Invalid audio raises an AudioValidationError subclass,
+    never a decoder exception; an invalid max_seconds is a caller error
+    (ValueError).
     """
     if not isinstance(audio_bytes, bytes) or not audio_bytes:
         raise MalformedAudioError("audio payload is empty")
@@ -179,8 +147,7 @@ def decode_audio_bytes(audio_bytes: Any, media_type: Any, *, max_seconds: int) -
 
     base_media_type = validate_media_type(media_type)
 
-    # Lazy, and deliberately not `from faster_whisper.audio import
-    # decode_audio` — that package is evaluation-only.
+    # Lazy, and deliberately not faster_whisper.audio (see module docstring).
     import av
     import numpy as np
 
@@ -191,9 +158,7 @@ def decode_audio_bytes(audio_bytes: Any, media_type: Any, *, max_seconds: int) -
 
     try:
         with av.open(io.BytesIO(audio_bytes)) as container:
-            # Cross-checked before decoding: a declared type that does
-            # not match the real container is rejected on the header,
-            # never after a full decode.
+            # Rejected on the header, before any decoding.
             check_container_matches_media_type(
                 getattr(container.format, "name", None), base_media_type
             )

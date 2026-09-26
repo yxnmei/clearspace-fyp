@@ -1,25 +1,12 @@
 """
-Pure, shared image-content validation: given raw bytes and a claimed
-media type, verify the bytes genuinely decode as an image in that exact
-format. No base64 handling lives here — base64 is a wire-transport
-concern specific to whichever HTTP layer receives a request; this module
-only ever sees real bytes.
+Shared outbound image validation: verify raw bytes decode as an image in
+exactly the claimed format. Base64 is a transport concern handled by the
+HTTP layer; this module only sees real bytes.
 
-Used by:
-  - app/models/image_gen_client.py — validates the caller-supplied
-    outbound image before it is ever sent to the remote service
-    (_validate_image delegates here).
-  - app/services/reorganise_pipeline_service.py — validates the
-    resubmitted original image before deterministic plan construction and
-    remote image generation, so malformed image data reaches neither.
-
-One implementation, not two that drift — the same discipline already
-applied to ItemId/NonEmptyStr in app/core/schemas.py. The client's own
-validation of the INBOUND remote response
-image (inside image_gen_client._parse_generation_response) is a
-separate, pre-existing block and is deliberately left untouched by this
-module's introduction — only the caller-supplied OUTBOUND image
-validation (_validate_image) was refactored to use this.
+One implementation used by both the image-generation client (before an
+image is sent to the remote service) and the reorganise pipeline (before
+plan construction and generation), so the two cannot drift. Validation of
+the INBOUND remote response image stays separate, inside the client.
 """
 
 from __future__ import annotations
@@ -33,26 +20,18 @@ SUPPORTED_IMAGE_MEDIA_TYPES: dict[str, str] = {"image/png": "PNG", "image/jpeg":
 
 
 class ImageValidationError(ValueError):
-    """image_bytes is not genuine, non-empty, decodable bytes whose
-    actual format matches the claimed image_media_type. A ValueError
-    subclass — existing `except ValueError`/`pytest.raises(ValueError)`
-    callers (e.g. app/models/image_gen_client.py's existing test suite)
-    keep working unchanged regardless of which module raises it."""
+    """image_bytes are not non-empty, decodable bytes in the claimed
+    format. Subclasses ValueError so existing `except ValueError` callers
+    keep working."""
 
 
 def validate_image_bytes(image_bytes: Any, image_media_type: Any) -> None:
     """
-    Raises ImageValidationError (never a raw exception) for:
-      - image_bytes not real, non-empty bytes.
-      - image_media_type not one of SUPPORTED_IMAGE_MEDIA_TYPES.
-      - image_bytes that Pillow cannot decode/verify as an image at all
-        (truncated, corrupt, or not image data).
-      - image_bytes that decode successfully but to a DIFFERENT actual
-        format than the one claimed (e.g. JPEG bytes claimed as PNG).
-
-    Returns None on success — this function's only job is validation, not
-    decoding for reuse; callers that need the decoded image open it again
-    themselves.
+    Raise ImageValidationError (never a raw exception) for empty or
+    non-bytes input, an unsupported media type, bytes Pillow cannot
+    decode/verify, or bytes whose actual format differs from the claim
+    (e.g. JPEG bytes claimed as PNG). Validation only: callers that need
+    the decoded image open it themselves.
     """
     if not isinstance(image_bytes, bytes) or not image_bytes:
         raise ImageValidationError("image_bytes must be non-empty bytes")
