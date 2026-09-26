@@ -86,18 +86,17 @@ function pickMimeType() {
   return null;
 }
 
-// api/client.js's request() throws `${method} ${path} failed: ${status}
-// ${body}`, so the status and the backend's own detail are readable
-// here, for ROUTING only. Neither is ever returned: every branch below
+// ApiError keeps status and the parsed backend detail separate from its
+// generic message. They are used here for routing only; every branch
 // resolves to one of the fixed VOICE_MESSAGES strings.
 function messageForError(error) {
-  const raw = typeof error?.message === "string" ? error.message : "";
-  const status = Number(raw.match(/failed:\s*(\d{3})\b/)?.[1]);
+  const status = Number(error?.status);
+  const detail = typeof error?.detail === "string" ? error.detail.toLowerCase() : "";
 
   if (status === 415 || status === 400) return VOICE_MESSAGES.unsupportedAudio;
   if (status === 413) return VOICE_MESSAGES.tooLong;
   if (status === 503) {
-    return raw.includes("transcription is busy") ? VOICE_MESSAGES.busy : VOICE_MESSAGES.unavailable;
+    return detail.includes("transcription is busy") ? VOICE_MESSAGES.busy : VOICE_MESSAGES.unavailable;
   }
   return VOICE_MESSAGES.failed;
 }

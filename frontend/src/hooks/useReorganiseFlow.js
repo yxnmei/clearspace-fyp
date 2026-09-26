@@ -7,6 +7,9 @@ import {
   validateCorrectedLabel,
 } from "../lib/reorganiseLabelCorrections";
 
+const ANALYSIS_ERROR = "We couldn't analyse your space.";
+const TIDY_PLAN_ERROR = "We couldn't create your tidy plan.";
+
 // Dedicated Direct Reorganise state machine, a SEPARATE hook from
 // useDeclutterFlow rather than branches added to it, matching this
 // project's existing per-workflow-hook convention. Reuses the same
@@ -161,7 +164,7 @@ export function useReorganiseFlow() {
         if (uploadGenerationRef.current !== generation) {
           return; // same staleness guard on the failure path, a stale rejection is discarded too
         }
-        setUploadError(err instanceof Error ? err.message : "Reorganise upload failed");
+        setUploadError(ANALYSIS_ERROR);
         setPhase("upload"); // return to (retain) the upload form, file/context stay for a retry
       }
     },
@@ -315,7 +318,7 @@ export function useReorganiseFlow() {
       // untouched, a failed generate() must never erase the user's
       // upload/selection work; returning to "selecting" (not a dead-end
       // error phase) lets them retry immediately without re-uploading.
-      setGenerateError(err instanceof Error ? err.message : "Tidy-plan generation failed");
+      setGenerateError(TIDY_PLAN_ERROR);
       setPhase("selecting");
       return null;
     } finally {

@@ -189,7 +189,7 @@ describe("useReorganiseFlow, upload lifecycle", () => {
   });
 
   test("a failed upload returns to the upload phase with a concise error, retaining the picked file", async () => {
-    client.uploadImage.mockRejectedValue(new Error("upload exploded"));
+    client.uploadImage.mockRejectedValue(new Error("<html>proxy failure</html>"));
     const { result } = renderHook(() => useReorganiseFlow());
 
     await act(async () => {
@@ -197,7 +197,7 @@ describe("useReorganiseFlow, upload lifecycle", () => {
     });
 
     expect(result.current.phase).toBe("upload");
-    expect(result.current.uploadError).toMatch(/upload exploded/);
+    expect(result.current.uploadError).toBe("We couldn't analyse your space.");
     expect(result.current.file).not.toBeNull(); // the user's picked file is not thrown away
     expect(result.current.analysis).toBeNull(); // no stale analysis is ever shown
   });
@@ -344,14 +344,14 @@ describe("useReorganiseFlow, generate", () => {
 
   test("a generate() failure preserves file/analysis/selection and returns to selecting", async () => {
     const result = await uploadedFlow();
-    client.generateReorganisation.mockRejectedValue(new Error("network exploded"));
+    client.generateReorganisation.mockRejectedValue(new Error("Traceback: reorganise_pipeline_service.py"));
 
     await act(async () => {
       await result.current.generate();
     });
 
     expect(result.current.phase).toBe("selecting");
-    expect(result.current.generateError).toMatch(/network exploded/);
+    expect(result.current.generateError).toBe("We couldn't create your tidy plan.");
     expect(result.current.file).not.toBeNull();
     expect(result.current.analysis).toBeTruthy();
     expect(result.current.selectedItemIds.length).toBeGreaterThan(0);

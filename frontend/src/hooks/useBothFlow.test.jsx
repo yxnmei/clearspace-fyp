@@ -217,7 +217,7 @@ describe("useBothFlow, upload", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("network down");
+    expect(result.current.error).toBe("We couldn't analyse your space.");
   });
 
   test("duplicate-labelled items resolve independently, joined purely by item_id", async () => {
@@ -394,7 +394,7 @@ describe("useBothFlow, generate request shape", () => {
     });
 
     expect(result.current.generationStatus).toBe("error");
-    expect(result.current.generateError).toMatch(/confirmed_keep_ids/);
+    expect(result.current.generateError).toBe("We couldn't create your tidy plan.");
   });
 });
 
@@ -664,14 +664,14 @@ describe("useBothFlow, ownership token concurrency", () => {
 describe("useBothFlow, recoverable generation errors", () => {
   test("a generate() failure preserves confirmation, file, context, and overrides", async () => {
     const { result } = await confirmedFlow();
-    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
+    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("<html>ngrok failure</html>"));
 
     await act(async () => {
       await result.current.generate();
     });
 
     expect(result.current.generationStatus).toBe("error");
-    expect(result.current.generateError).toMatch(/service unreachable/);
+    expect(result.current.generateError).toBe("We couldn't create your tidy plan.");
     expect(result.current.confirmation).not.toBeNull(); // untouched
     expect(result.current.confirmationStatus).toBe("confirmed");
     expect(result.current.file).not.toBeNull();

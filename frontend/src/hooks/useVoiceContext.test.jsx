@@ -58,6 +58,14 @@ function audioFile(type = "audio/wav", name = "note.wav") {
   return new File(["fake audio bytes"], name, { type });
 }
 
+function apiError(status, detail = null) {
+  return Object.assign(new Error("The service could not complete the request. Please try again."), {
+    name: "ApiError",
+    status,
+    detail,
+  });
+}
+
 /** Start a recording and let getUserMedia + recorder.start() settle. */
 async function startRecording(result) {
   await act(async () => {
@@ -782,8 +790,8 @@ describe("useVoiceContext, malformed 200 responses", () => {
 });
 
 describe("useVoiceContext, error mapping", () => {
-  async function failWith(message) {
-    client.transcribeAudio.mockRejectedValue(new Error(message));
+  async function failWith(error) {
+    client.transcribeAudio.mockRejectedValue(error);
     const { result } = renderHook(() => useVoiceContext());
     await act(async () => {
       await result.current.transcribeFile(audioFile());
@@ -792,51 +800,51 @@ describe("useVoiceContext, error mapping", () => {
   }
 
   test("415 asks for another recording or file", async () => {
-    const result = await failWith('POST /transcribe failed: 415 {"detail":"audio format is not supported"}');
+    const result = await failWith(apiError(415, "audio format is not supported"));
     expect(result.current.error).toBe(VOICE_MESSAGES.unsupportedAudio);
   });
 
   test("a container mismatch maps to the same record-again message", async () => {
     const result = await failWith(
-      'POST /transcribe failed: 415 {"detail":"audio does not match its declared format"}',
+      apiError(415, "audio does not match its declared format"),
     );
     expect(result.current.error).toBe(VOICE_MESSAGES.unsupportedAudio);
   });
 
   test("400 maps to the same record-again message", async () => {
-    const result = await failWith('POST /transcribe failed: 400 {"detail":"audio could not be read"}');
+    const result = await failWith(apiError(400, "audio could not be read"));
     expect(result.current.error).toBe(VOICE_MESSAGES.unsupportedAudio);
   });
 
   test("413 says the clip is too long", async () => {
-    const result = await failWith('POST /transcribe failed: 413 {"detail":"audio is too long"}');
+    const result = await failWith(apiError(413, "audio is too long"));
     expect(result.current.error).toBe(VOICE_MESSAGES.tooLong);
   });
 
   test("a busy 503 asks the user to wait and retry", async () => {
-    const result = await failWith('POST /transcribe failed: 503 {"detail":"transcription is busy"}');
+    const result = await failWith(apiError(503, "transcription is busy"));
     expect(result.current.error).toBe(VOICE_MESSAGES.busy);
   });
 
   test("an unavailable 503 points back at typed context", async () => {
-    const result = await failWith('POST /transcribe failed: 503 {"detail":"transcription is unavailable"}');
+    const result = await failWith(apiError(503, "transcription is unavailable"));
     expect(result.current.error).toBe(VOICE_MESSAGES.unavailable);
   });
 
   test("a network failure offers a retry and promises context is untouched", async () => {
-    const result = await failWith("Failed to fetch");
+    const result = await failWith(new TypeError("Failed to fetch"));
     expect(result.current.error).toBe(VOICE_MESSAGES.failed);
   });
 
   test("no message ever contains a status code, a response body or a stack trace", async () => {
-    const bodies = [
-      'POST /transcribe failed: 415 {"detail":"audio format is not supported"}',
-      'POST /transcribe failed: 500 {"detail":"Traceback: app/services/transcription_service.py"}',
-      'POST /transcribe failed: 503 {"detail":"transcription is unavailable"}',
+    const errors = [
+      apiError(415, "audio format is not supported"),
+      apiError(500, "Traceback: app/services/transcription_service.py"),
+      apiError(503, "transcription is unavailable"),
     ];
 
-    for (const body of bodies) {
-      const result = await failWith(body);
+    for (const error of errors) {
+      const result = await failWith(error);
       const shown = result.current.error;
       expect(shown).toBeTruthy();
       expect(Object.values(VOICE_MESSAGES)).toContain(shown);
@@ -846,7 +854,7 @@ describe("useVoiceContext, error mapping", () => {
   });
 
   test("a failed transcription leaves no pending transcript behind", async () => {
-    const result = await failWith("Failed to fetch");
+    const result = await failWith(new TypeError("Failed to fetch"));
     expect(result.current.hasPendingTranscript).toBe(false);
     expect(result.current.isBusy).toBe(false);
   });
@@ -966,7 +974,7 @@ describe("useVoiceContext, stale responses", () => {
       result.current.discard();
     });
     await act(async () => {
-      reject(new Error("POST /transcribe failed: 503 {}"));
+      reject(apiError(503));
       await inFlight;
     });
 

@@ -736,10 +736,13 @@ describe("DeclutterPage wizard, Listings step (Stage 4B)", () => {
     await toConfirmed(user, { decision: "sell" });
     await user.click(screen.getByRole("button", { name: /continue to results/i }));
 
-    client.generateListings.mockRejectedValueOnce(new Error("Listing service unreachable"));
+    client.generateListings.mockRejectedValueOnce(new Error("<html>proxy failure</html>"));
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't generate the listing drafts.")
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/html|proxy failure/i);
     expect(screen.getByRole("alert")).toHaveTextContent(/confirmed declutter decisions are unchanged/i);
 
     client.generateListings.mockResolvedValueOnce(
@@ -1203,13 +1206,14 @@ describe("DeclutterPage Analyse space screen", () => {
 
   test("error: Analysis unsuccessful with one alert that points back to the preserved photo and context; no auto retry", async () => {
     const user = userEvent.setup();
-    client.uploadImage.mockRejectedValueOnce(new Error("The analysis service is unavailable."));
+    client.uploadImage.mockRejectedValueOnce(new Error("Traceback: app/api/routes.py"));
     render(<DeclutterPage />);
     await submitPhoto(user);
 
     await waitFor(() => expect(analyseHeading("Analysis unsuccessful")).toBeInTheDocument());
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(screen.getByRole("alert")).toHaveTextContent(/the analysis service is unavailable/i);
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't analyse your space.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/traceback|routes\.py/i);
     expect(screen.getByRole("alert")).toHaveTextContent(/your selected photo and context are still on upload photo/i);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /what we found/i })).not.toBeInTheDocument();

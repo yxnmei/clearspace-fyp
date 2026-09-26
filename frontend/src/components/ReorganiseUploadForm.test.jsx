@@ -27,6 +27,14 @@ function audioFile() {
   return new File(["fake audio bytes"], "note.wav", { type: "audio/wav" });
 }
 
+function apiError(status, detail = null) {
+  return Object.assign(new Error("The service could not complete the request. Please try again."), {
+    name: "ApiError",
+    status,
+    detail,
+  });
+}
+
 function transcribeResolves(transcript) {
   client.transcribeAudio.mockResolvedValue({
     transcript,
@@ -185,9 +193,7 @@ describe("ReorganiseUploadForm, voice context", () => {
 
   test("an unavailable transcription service points back at typed context and changes nothing", async () => {
     const user = userEvent.setup();
-    client.transcribeAudio.mockRejectedValue(
-      new Error('POST /transcribe failed: 503 {"detail":"transcription is unavailable"}'),
-    );
+    client.transcribeAudio.mockRejectedValue(apiError(503, "transcription is unavailable"));
     const onSubmit = vi.fn();
     render(<ReorganiseUploadForm phase="upload" error={null} onSubmit={onSubmit} />);
 

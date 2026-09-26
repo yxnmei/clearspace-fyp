@@ -24,6 +24,12 @@ import {
   setItemExcluded as setItemExcludedEntry,
 } from "../api/confirmationContract";
 
+const ANALYSIS_ERROR = "We couldn't analyse your space.";
+const LABEL_CORRECTION_ERROR = "We couldn't update that label.";
+const CONFIRMATION_ERROR = "We couldn't confirm your decisions.";
+const LISTING_GENERATION_ERROR = "We couldn't generate the listing drafts.";
+const LISTING_REGENERATION_ERROR = "We couldn't regenerate that listing draft.";
+
 // Per-flow state + logic pulled into a hook from the start (§4), rather
 // than living inline inside a growing DeclutterPage component. Backend
 // POST /upload, POST /confirm and POST /override are all implemented,
@@ -260,7 +266,7 @@ export function useDeclutterFlow({
         if (flowGenerationRef.current !== generation) {
           return; // same staleness guard on the failure path
         }
-        setError(err instanceof Error ? err.message : "Declutter upload failed");
+        setError(ANALYSIS_ERROR);
         setStatus("error");
       }
     },
@@ -406,7 +412,7 @@ export function useDeclutterFlow({
         // correction text stays in the UI's own local input state (this
         // hook never held it).
         setCorrectingItemId(null);
-        setCorrectionError({ itemId, message: err instanceof Error ? err.message : "Label correction failed" });
+        setCorrectionError({ itemId, message: LABEL_CORRECTION_ERROR });
         return null;
       }
     },
@@ -500,7 +506,7 @@ export function useDeclutterFlow({
       // deliberately left untouched here, a failed confirmation must
       // never erase review work already done.
       setConfirmationStatus("error");
-      setConfirmationError(err instanceof Error ? err.message : "Decision confirmation failed");
+      setConfirmationError(CONFIRMATION_ERROR);
       return null;
     }
   }, [correctingItemId, flow.declutter, flow.runId, overridesById, invalidateListing]);
@@ -670,7 +676,7 @@ export function useDeclutterFlow({
         if (listingGenerationRef.current !== generation) {
           return null; // stale rejection discarded too -- no state change
         }
-        setListingError(err instanceof Error ? err.message : "Listing draft generation failed");
+        setListingError(LISTING_GENERATION_ERROR);
         setListingPhase("error");
         return null;
       } finally {
@@ -704,7 +710,7 @@ export function useDeclutterFlow({
           });
         } catch (err) {
           if (listingGenerationRef.current !== generation) return null;
-          setListingError(err instanceof Error ? err.message : "Listing draft generation failed");
+          setListingError(LISTING_GENERATION_ERROR);
           return null;
         }
         if (listingGenerationRef.current !== generation) return null; // stale: write nothing
@@ -816,7 +822,7 @@ export function useDeclutterFlow({
         setRegeneratingItemId(null);
         setRegenerationError({
           itemId,
-          message: err instanceof Error ? err.message : "Listing draft regeneration failed",
+          message: LISTING_REGENERATION_ERROR,
         });
         return null;
       } finally {

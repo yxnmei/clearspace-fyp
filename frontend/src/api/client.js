@@ -6,11 +6,28 @@ import { fileToBase64 } from "../utils/fileEncoding";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  constructor(status, detail = null) {
+    super("The service could not complete the request. Please try again.");
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`${options.method ?? "GET"} ${path} failed: ${res.status} ${body}`);
+    let detail = null;
+    try {
+      const payload = await res.json();
+      if (payload && typeof payload === "object" && "detail" in payload) {
+        detail = payload.detail;
+      }
+    } catch {
+      // A proxy may return HTML or plain text. Never copy it into the error.
+    }
+    throw new ApiError(res.status, detail);
   }
   return res.json();
 }

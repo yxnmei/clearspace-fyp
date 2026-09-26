@@ -59,6 +59,14 @@ function audioFile(type = "audio/wav", name = "note.wav") {
   return new File(["fake audio bytes"], name, { type });
 }
 
+function apiError(status, detail = null) {
+  return Object.assign(new Error("The service could not complete the request. Please try again."), {
+    name: "ApiError",
+    status,
+    detail,
+  });
+}
+
 function transcribeResolves(transcript) {
   client.transcribeAudio.mockResolvedValue({
     transcript,
@@ -333,14 +341,14 @@ describe("VoiceContextInput, blank transcript", () => {
 
 describe("VoiceContextInput, errors", () => {
   test.each([
-    ['POST /transcribe failed: 503 {"detail":"transcription is busy"}', VOICE_MESSAGES.busy],
-    ['POST /transcribe failed: 503 {"detail":"transcription is unavailable"}', VOICE_MESSAGES.unavailable],
-    ['POST /transcribe failed: 415 {"detail":"audio format is not supported"}', VOICE_MESSAGES.unsupportedAudio],
-    ['POST /transcribe failed: 413 {"detail":"audio is too long"}', VOICE_MESSAGES.tooLong],
-    ["Failed to fetch", VOICE_MESSAGES.failed],
-  ])("%s is shown as a concise optional-feature message", async (thrown, expected) => {
+    [apiError(503, "transcription is busy"), VOICE_MESSAGES.busy],
+    [apiError(503, "transcription is unavailable"), VOICE_MESSAGES.unavailable],
+    [apiError(415, "audio format is not supported"), VOICE_MESSAGES.unsupportedAudio],
+    [apiError(413, "audio is too long"), VOICE_MESSAGES.tooLong],
+    [new TypeError("Failed to fetch"), VOICE_MESSAGES.failed],
+  ])("$name is shown as a concise optional-feature message", async (thrown, expected) => {
     const user = userEvent.setup();
-    client.transcribeAudio.mockRejectedValue(new Error(thrown));
+    client.transcribeAudio.mockRejectedValue(thrown);
     render(<Host initialContext="typed original" />);
 
     await uploadAudio(user);

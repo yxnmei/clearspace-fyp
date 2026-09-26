@@ -5,6 +5,8 @@ import { serialiseDecisionOverrides } from "../api/confirmationContract";
 import { normaliseConfirmedGenerateResponse } from "../api/reorganiseContract";
 import { useDeclutterFlow } from "./useDeclutterFlow";
 
+const TIDY_PLAN_ERROR = "We couldn't create your tidy plan.";
+
 // Both workflow state machine (R6), COMPOSES useDeclutterFlow rather
 // than copying it (required correction 5): declutter/review/confirm is
 // exactly Declutter's own hook, configured to hit path="both" and
@@ -197,7 +199,7 @@ export function useBothFlow({ listingApi } = {}) {
       // overrides are deliberately left untouched here, a failed
       // generate() must never erase confirmed work already done, so a
       // retry can call generate() again immediately without re-confirming.
-      setGenerateError(err instanceof Error ? err.message : "Tidy-plan generation failed");
+      setGenerateError(TIDY_PLAN_ERROR);
       setGenerationStatus("error");
       return null;
     } finally {

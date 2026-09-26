@@ -203,14 +203,17 @@ describe("ReorganisePage screen-by-screen flow", () => {
 
   test("a generation error remains retryable on the Generate screen", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
-    client.generateReorganisation.mockRejectedValueOnce(new Error("plan service down"));
+    client.generateReorganisation.mockRejectedValueOnce(new Error("Traceback: reorganise_pipeline_service.py"));
     render(<ReorganisePage />);
 
     await analyseRoom();
     await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/traceback|pipeline_service/i);
     expect(currentStep()).toBe("Tidy plan");
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
   });
@@ -280,7 +283,10 @@ describe("ReorganisePage checklist and storage suggestions", () => {
     await continueToGenerate();
     await userEvent.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/unselected|item_999/i);
     expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
   });
@@ -410,7 +416,7 @@ describe("ReorganisePage Upload photo and Analyse space screens", () => {
   });
 
   test("error: Analysis unsuccessful, one alert pointing back to the preserved photo and context, no auto retry", async () => {
-    client.uploadImage.mockRejectedValueOnce(new Error("The analysis service is unavailable."));
+    client.uploadImage.mockRejectedValueOnce(new Error("<html>ngrok proxy failure</html>"));
     render(<ReorganisePage />);
     await userEvent.upload(screen.getByLabelText(/space photo/i), makeFile());
     await userEvent.type(screen.getByLabelText(/context for the ai/i), "desk by the window");
@@ -419,7 +425,8 @@ describe("ReorganisePage Upload photo and Analyse space screens", () => {
     await waitFor(() => expect(analyseHeading("Analysis unsuccessful")).toBeInTheDocument());
     const alerts = screen.getAllByRole("alert").filter((a) => a.closest("[hidden]") === null);
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toHaveTextContent(/the analysis service is unavailable/i);
+    expect(alerts[0]).toHaveTextContent("We couldn't analyse your space.");
+    expect(alerts[0]).not.toHaveTextContent(/html|ngrok|proxy failure/i);
     expect(alerts[0]).toHaveTextContent(/your selected photo and context are still on upload photo/i);
     expect(screen.queryByRole("heading", { name: /what we found/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /continue to select items/i })).toBeDisabled();
@@ -525,7 +532,9 @@ describe("ReorganisePage Tidy plan screen (cleanup pass)", () => {
   test("loading and failure use the tidy plan terms in the button and the tracker, and retry keeps the selection", async () => {
     let rejectPlan;
     client.uploadImage.mockResolvedValue(makeUploadResponse());
-    client.generateReorganisation.mockImplementationOnce(() => new Promise((_, reject) => { rejectPlan = () => reject(new Error("plan service down")); }));
+    client.generateReorganisation.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectPlan = () => reject(new Error("internal stack trace")); })
+    );
     render(<ReorganisePage />);
     await analyseRoom();
     await continueToGenerate();
@@ -538,7 +547,9 @@ describe("ReorganisePage Tidy plan screen (cleanup pass)", () => {
     expect(screen.queryByText(/generating…|writing your checklist/i)).not.toBeInTheDocument();
 
     rejectPlan();
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/plan service down/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
     expect(within(stepper()).getByText("The tidy plan didn't finish.")).toBeInTheDocument();
     expect(within(stepper()).getByText("Your selection is unchanged. Try again below.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();

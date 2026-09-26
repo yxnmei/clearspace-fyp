@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  ApiError,
   confirmDecisions,
   generateConfirmedReorganisation,
   generateListings,
@@ -215,7 +216,7 @@ describe("overrideItem", () => {
     ).rejects.toThrow("Failed to fetch");
   });
 
-  test("a non-ok response propagates as a thrown Error, like every other client function", async () => {
+  test("a non-ok response exposes structured status and detail with a safe message", async () => {
     mockFetchOnce({ detail: "not an expected item" }, { ok: false, status: 422 });
 
     await expect(
@@ -226,7 +227,12 @@ describe("overrideItem", () => {
         itemId: "item_099",
         correctedLabel: "hoodie",
       })
-    ).rejects.toThrow(/422/);
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      message: "The service could not complete the request. Please try again.",
+      status: 422,
+      detail: "not an expected item",
+    });
   });
 });
 
@@ -248,6 +254,31 @@ describe("uploadImage", () => {
     expect(form.get("path")).toBe("reorganise");
     expect(form.get("image")).toBeTruthy();
     expect(form.has("context")).toBe(false); // null context is omitted, same as Declutter's convention
+  });
+
+  test("a non-JSON error body is never copied into the thrown error", async () => {
+    const rawBody = "<html>proxy failure: upstream stack trace</html>";
+    const text = vi.fn().mockResolvedValue(rawBody);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token '<'")),
+        text,
+      })
+    );
+
+    const error = await uploadImage({ file: makeFile(), path: "declutter", context: null }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      message: "The service could not complete the request. Please try again.",
+      status: 502,
+      detail: null,
+    });
+    expect(error.message).not.toContain(rawBody);
+    expect(text).not.toHaveBeenCalled();
   });
 
   test("declutter path is unaffected", async () => {
@@ -407,7 +438,7 @@ describe("generateReorganisation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("a non-ok response propagates as a thrown Error", async () => {
+  test("a non-ok response rejects with structured status and detail", async () => {
     mockFetchOnce({ detail: "invalid reorganise generation request" }, { ok: false, status: 422 });
 
     await expect(
@@ -418,7 +449,7 @@ describe("generateReorganisation", () => {
         file: makeFile(),
         inputImageSha256: "a".repeat(64),
       })
-    ).rejects.toThrow(/422/);
+    ).rejects.toMatchObject({ status: 422, detail: "invalid reorganise generation request" });
   });
 });
 
@@ -551,7 +582,7 @@ describe("generateConfirmedReorganisation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("a non-ok response propagates as a thrown Error", async () => {
+  test("a non-ok response rejects with structured status and detail", async () => {
     mockFetchOnce({ detail: "no items were confirmed as Keep" }, { ok: false, status: 409 });
 
     await expect(
@@ -563,7 +594,7 @@ describe("generateConfirmedReorganisation", () => {
         file: makeFile(),
         inputImageSha256: "a".repeat(64),
       })
-    ).rejects.toThrow(/409/);
+    ).rejects.toMatchObject({ status: 409, detail: "no items were confirmed as Keep" });
   });
 
   test("generateReorganisation and generateConfirmedReorganisation hit distinct endpoints", async () => {
@@ -664,10 +695,13 @@ describe("transcribeAudio", () => {
     await expect(transcribeAudio({ audioBlob: audioBlob() })).resolves.toMatchObject({ transcript: "" });
   });
 
-  test("a non-ok response rejects with the status, which callers map to a safe message", async () => {
+  test("a non-ok response rejects with status and detail for safe caller routing", async () => {
     mockFetchOnce({ detail: "transcription is busy" }, { ok: false, status: 503 });
 
-    await expect(transcribeAudio({ audioBlob: audioBlob() })).rejects.toThrow(/503/);
+    await expect(transcribeAudio({ audioBlob: audioBlob() })).rejects.toMatchObject({
+      status: 503,
+      detail: "transcription is busy",
+    });
   });
 
   test("a network failure propagates", async () => {
@@ -796,12 +830,12 @@ describe("generateListings", () => {
     }
   });
 
-  test("a non-ok response rejects with the status", async () => {
+  test("a non-ok response rejects with structured status and detail", async () => {
     mockFetchOnce({ detail: "invalid listing request" }, { ok: false, status: 422 });
 
     await expect(
       generateListings({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER })
-    ).rejects.toThrow(/422/);
+    ).rejects.toMatchObject({ status: 422, detail: "invalid listing request" });
   });
 
   test("a network failure propagates", async () => {
@@ -930,12 +964,12 @@ describe("regenerateListing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("a non-ok response rejects with the status", async () => {
+  test("a non-ok response rejects with structured status and detail", async () => {
     mockFetchOnce({ detail: "item is not eligible" }, { ok: false, status: 422 });
 
     await expect(
       regenerateListing({ runId: "run1", analysis: LISTING_ANALYSIS, declutter: LISTING_DECLUTTER, itemId: "item_001" })
-    ).rejects.toThrow(/422/);
+    ).rejects.toMatchObject({ status: 422, detail: "item is not eligible" });
   });
 
   test("a network failure propagates", async () => {

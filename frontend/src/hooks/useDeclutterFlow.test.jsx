@@ -224,7 +224,7 @@ describe("useDeclutterFlow", () => {
   });
 
   test("upload failure enters error state", async () => {
-    client.uploadImage.mockRejectedValue(new Error("network down"));
+    client.uploadImage.mockRejectedValue(new Error("<html>proxy failure</html>"));
     const { result } = renderHook(() => useDeclutterFlow());
 
     await act(async () => {
@@ -232,7 +232,8 @@ describe("useDeclutterFlow", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("network down");
+    expect(result.current.error).toBe("We couldn't analyse your space.");
+    expect(result.current.error).not.toMatch(/html|proxy/i);
   });
 
   test("decision override updates reviewItems", async () => {
@@ -319,7 +320,7 @@ describe("useDeclutterFlow", () => {
 
   test("confirmation failure preserves overrides and Declutter data", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
-    client.confirmDecisions.mockRejectedValue(new Error("service unavailable"));
+    client.confirmDecisions.mockRejectedValue(new Error("Traceback: confirmation_service.py"));
     const { result } = renderHook(() => useDeclutterFlow());
     await act(async () => {
       await result.current.submit({ file: makeFile(), context: null });
@@ -334,7 +335,7 @@ describe("useDeclutterFlow", () => {
     });
 
     expect(result.current.confirmationStatus).toBe("error");
-    expect(result.current.confirmationError).toBe("service unavailable");
+    expect(result.current.confirmationError).toBe("We couldn't confirm your decisions.");
     expect(result.current.declutter).not.toBeNull();
     expect(result.current.overridesById.item_001.decision).toBe("donate");
   });
@@ -615,7 +616,7 @@ describe("useDeclutterFlow correctLabel", () => {
 
   test("failure leaves existing flow and decision overrides unchanged, and surfaces a concise error", async () => {
     client.uploadImage.mockResolvedValue(makeUploadResponse());
-    client.overrideItem.mockRejectedValue(new Error("service unavailable"));
+    client.overrideItem.mockRejectedValue(new Error("POST /override failed: 500 internal stack"));
     const { result } = renderHook(() => useDeclutterFlow());
     await act(async () => {
       await result.current.submit({ file: makeFile(), context: null });
@@ -629,7 +630,10 @@ describe("useDeclutterFlow correctLabel", () => {
     });
 
     expect(result.current.correctingItemId).toBeNull();
-    expect(result.current.correctionError).toEqual({ itemId: "item_001", message: "service unavailable" });
+    expect(result.current.correctionError).toEqual({
+      itemId: "item_001",
+      message: "We couldn't update that label.",
+    });
     expect(result.current.declutter.ai_decisions[0].decision).toBe("keep"); // untouched
     expect(result.current.overridesById.item_001.decision).toBe("donate"); // untouched
   });
@@ -1398,7 +1402,7 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
 
   test("batch failure: error status, but confirmation and Declutter data are preserved", async () => {
     const { result, listingApi, confirmResponse } = await primeConfirmed(TWO_SELL);
-    listingApi.generateListings.mockRejectedValue(new Error("listing service unavailable"));
+    listingApi.generateListings.mockRejectedValue(new Error("<html>upstream listing failure</html>"));
     const confirmationBefore = result.current.confirmation;
     const declutterBefore = result.current.declutter;
 
@@ -1407,7 +1411,7 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
     });
 
     expect(result.current.listingStatus).toBe("error");
-    expect(result.current.listingError).toMatch(/unavailable/);
+    expect(result.current.listingError).toBe("We couldn't generate the listing drafts.");
     expect(result.current.listingResult).toBeNull();
     expect(result.current.confirmation).toBe(confirmationBefore);
     expect(result.current.confirmationStatus).toBe("confirmed");
@@ -1515,7 +1519,7 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
     });
     const draftsBefore = result.current.listingResult.drafts;
 
-    listingApi.regenerateListing.mockRejectedValue(new Error("regen boom"));
+    listingApi.regenerateListing.mockRejectedValue(new Error("Traceback: listing_service.py"));
     await act(async () => {
       await result.current.regenerateListingDraft("item_003");
     });
@@ -1525,7 +1529,10 @@ describe("useDeclutterFlow, marketplace listing domain (Stage 3)", () => {
       "Edited description that is long enough."
     );
     expect(result.current.regeneratingItemId).toBeNull();
-    expect(result.current.regenerationError).toEqual({ itemId: "item_003", message: "regen boom" });
+    expect(result.current.regenerationError).toEqual({
+      itemId: "item_003",
+      message: "We couldn't regenerate that listing draft.",
+    });
     expect(result.current.listingStatus).toBe("ready");
   });
 
@@ -2133,6 +2140,30 @@ describe("useDeclutterFlow, listing drafts reconcile by item_id across confirmat
     expect(drafts.find((d) => d.item_id === "item_002").title).toBe("Oak chair");
     expect(drafts.find((d) => d.item_id === "item_003").edited_description).toBe("My own description of the book.");
     expect(result.current.missingListingItemIds).toEqual([]);
+    expect(result.current.regeneratingItemId).toBeNull();
+  });
+
+  test("a failed new-item listing request never exposes its raw error", async () => {
+    const { result, listingApi } = await primeReady(TWO_SELL);
+    act(() => {
+      result.current.setDecisionOverride("item_002", "sell");
+    });
+    const NOW_THREE_SELL = [
+      { id: "item_001", ai: "sell", label: "lamp" },
+      { id: "item_002", ai: "keep", decision: "sell", label: "chair" },
+      { id: "item_003", ai: "sell", label: "book" },
+    ];
+    await reconfirmAs(result, NOW_THREE_SELL);
+    listingApi.regenerateListing.mockRejectedValue(new Error("<html>upstream stack trace</html>"));
+
+    await act(async () => {
+      await result.current.generateListingDrafts();
+    });
+
+    expect(result.current.listingError).toBe("We couldn't generate the listing drafts.");
+    expect(result.current.listingError).not.toMatch(/html|stack trace/i);
+    expect(result.current.listingDrafts.map((draft) => draft.item_id)).toEqual(["item_001", "item_003"]);
+    expect(result.current.missingListingItemIds).toEqual(["item_002"]);
     expect(result.current.regeneratingItemId).toBeNull();
   });
 

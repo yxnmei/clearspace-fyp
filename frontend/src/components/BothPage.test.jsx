@@ -285,12 +285,14 @@ describe("BothPage screen-by-screen flow", () => {
 
   test("a generation failure preserves confirmation and offers a retry", async () => {
     const user = userEvent.setup();
-    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("service unreachable"));
+    client.generateConfirmedReorganisation.mockRejectedValueOnce(new Error("<html>upstream failure</html>"));
     render(<BothPage />);
     await reachActions(user);
 
     await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/service unreachable/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
     expect(screen.getByRole("button", { name: /try again/i })).toBeEnabled();
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
   });
@@ -343,12 +345,14 @@ describe("BothPage independent final actions", () => {
 
   test("a listing failure does not disable Reorganise", async () => {
     const user = userEvent.setup();
-    client.generateListings.mockRejectedValueOnce(new Error("listing service unreachable"));
+    client.generateListings.mockRejectedValueOnce(new Error("Traceback: listing_service.py"));
     render(<BothPage />);
     await reachActions(user, KEEP_AND_SELL);
 
     await user.click(screen.getByRole("button", { name: /generate listing drafts/i }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't generate the listing drafts.")
+    );
     expect(screen.getByRole("button", { name: /create tidy plan/i })).toBeEnabled();
   });
 
@@ -454,7 +458,10 @@ describe("BothPage checklist and storage suggestions", () => {
 
     await user.click(screen.getByRole("button", { name: /create tidy plan/i }));
 
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unselected/i));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/unselected|item_002/i);
     expect(screen.queryByRole("heading", { name: "Your tidy plan" })).not.toBeInTheDocument();
     // listings remain independently available regardless
     expect(screen.getByRole("heading", { name: "Marketplace listings" })).toBeInTheDocument();
@@ -658,7 +665,7 @@ describe("BothPage Results composition", () => {
     let rejectTidy;
     client.generateConfirmedReorganisation.mockImplementationOnce(
       () => new Promise((_, reject) => {
-        rejectTidy = () => reject(new Error("tidy service unreachable"));
+        rejectTidy = () => reject(new Error("<html>ngrok failure</html>"));
       })
     );
     render(<BothPage />);
@@ -679,7 +686,9 @@ describe("BothPage Results composition", () => {
     expect(listings()).not.toHaveAttribute("aria-busy");
 
     rejectTidy();
-    await waitFor(() => expect(within(tidyUp()).getByRole("alert")).toHaveTextContent(/tidy service unreachable/i));
+    await waitFor(() =>
+      expect(within(tidyUp()).getByRole("alert")).toHaveTextContent("We couldn't create your tidy plan.")
+    );
     expect(within(tidyUp()).getByRole("button", { name: "Try again" })).toBeEnabled();
     expect(within(stepper()).getByText("The tidy plan didn't finish.")).toBeInTheDocument();
     expect(generateListings()).toBeEnabled();
@@ -692,7 +701,7 @@ describe("BothPage Results composition", () => {
     let rejectListings;
     client.generateListings.mockImplementationOnce(
       () => new Promise((_, reject) => {
-        rejectListings = () => reject(new Error("listing service unreachable"));
+        rejectListings = () => reject(new Error("Traceback: listing_service.py"));
       })
     );
     render(<BothPage />);
@@ -706,7 +715,11 @@ describe("BothPage Results composition", () => {
     expect(within(tidyUp()).queryByRole("status")).not.toBeInTheDocument();
 
     rejectListings();
-    await waitFor(() => expect(within(listings()).getByRole("alert")).toHaveTextContent(/listing service unreachable/i));
+    await waitFor(() =>
+      expect(within(listings()).getByRole("alert")).toHaveTextContent(
+        "We couldn't generate the listing drafts."
+      )
+    );
     expect(createTidyPlan()).toBeEnabled();
     expect(within(tidyUp()).queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Tidy up" })).toHaveLength(1);
@@ -938,14 +951,15 @@ describe("BothPage Upload photo and Analyse space screens", () => {
 
   test("error: Analysis unsuccessful with one alert pointing back to the preserved photo and context, no auto retry", async () => {
     const user = userEvent.setup();
-    client.uploadImage.mockRejectedValueOnce(new Error("The analysis service is unavailable."));
+    client.uploadImage.mockRejectedValueOnce(new Error("<html>proxy error</html>"));
     render(<BothPage />);
     await submitPhoto(user);
 
     await waitFor(() => expect(analyseHeading("Analysis unsuccessful")).toBeInTheDocument());
     const alerts = screen.getAllByRole("alert");
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toHaveTextContent(/the analysis service is unavailable/i);
+    expect(alerts[0]).toHaveTextContent("We couldn't analyse your space.");
+    expect(alerts[0]).not.toHaveTextContent(/html|proxy error/i);
     expect(alerts[0]).toHaveTextContent(/your selected photo and context are still on upload photo/i);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /continue to decide items/i })).toBeDisabled();
