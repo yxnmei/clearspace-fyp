@@ -1,8 +1,8 @@
 """
 Deterministic, pure, GPU-independent resolution policy — Option A (see
 colab_service/README.md's "Resolution policy (Option A)" section for
-why Option A over Option B, "aspect-preserving resize with padding",
-was chosen for this first pass).
+why Option A was chosen over Option B, "aspect-preserving resize with
+padding").
 
 Never claims exact aspect-ratio preservation, and never claims zero
 stretching. Rounding a scaled size to a multiple of 8 (a hard SD/VAE

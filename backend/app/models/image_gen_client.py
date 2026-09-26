@@ -15,7 +15,7 @@ Two things exist here specifically to avoid v1's dead-tunnel failure mode
 (a raw connection error surfacing mid-demo, from not designing for an
 already-known risk):
   1. check_health() — a fast, separate, strictly-validated call the
-     frontend can hit proactively (R4's GET /image-gen/health) rather
+     frontend can hit proactively through GET /image-gen/health rather
      than only discovering the tunnel is dead when a user clicks
      Reorganise.
   2. generate() always calls check_health() first and raises
@@ -50,8 +50,8 @@ from app.core.schemas import NonEmptyStr
 # Transport contract version — code-level, deliberately NOT configurable
 # through .env: this identifies the SHAPE of the request/response this
 # client speaks, not an environment-specific setting. Bump only alongside
-# an actual contract change, together with whatever Colab implementation
-# is meant to satisfy it (R7).
+# an actual contract change, together with the Colab implementation that
+# satisfies it.
 IMAGE_GEN_API_VERSION = "v1"
 
 _SUPPORTED_MEDIA_TYPES: dict[str, str] = {"image/png": "PNG", "image/jpeg": "JPEG"}
@@ -71,7 +71,7 @@ _RUN_ID_ADAPTER: TypeAdapter[str] = TypeAdapter(NonEmptyStr)
 # The complete, exact set of top-level keys a /generate response may
 # contain. Policy (deliberately explicit, not silent): an unexpected
 # extra field is REJECTED, not ignored — contract drift between this
-# client and whatever Colab implementation R7 builds should be loud, not
+# client and the Colab implementation should be loud, not
 # silently tolerated. See _parse_generation_response.
 _EXPECTED_RESPONSE_KEYS: frozenset[str] = frozenset(
     {
@@ -144,7 +144,7 @@ class ImageGenResponseError(ImageGenError):
 
 class GenerationResult(BaseModel):
     """A fully validated, trusted /generate response. Bytes stay internal
-    and raw — base64 conversion for the browser is R4's API-layer
+    and raw — base64 conversion for the browser is the API layer's
     concern, not this transport client's.
 
     Immutable (frozen) and field/cross-field validated so a contradictory
@@ -226,7 +226,7 @@ def _validate_run_id(run_id: Any) -> str:
 
 def _validate_image(image_bytes: Any, image_media_type: Any) -> None:
     """Delegates to app.core.image_validation.validate_image_bytes — the
-    same Pillow decode/verify/format-match logic R4's reorganise pipeline
+    same Pillow decode/verify/format-match logic the Reorganise pipeline
     uses on the resubmitted original image before planning (see that
     module's own docstring for why it's shared rather than duplicated).
     ImageValidationError is a ValueError subclass, so this function's own
@@ -263,7 +263,7 @@ def _validate_seed(value: Any) -> None:
 def check_health() -> bool:
     """
     Lightweight GET against the remote service's /health endpoint. Called
-    both by R4's GET /image-gen/health (so the UI can show availability
+    both by GET /image-gen/health (so the UI can show availability
     up front) and internally by generate() before committing to a full
     request. Uses image_gen_health_timeout_s, deliberately short — a slow
     health check defeats the point of having one.
@@ -429,7 +429,7 @@ def _parse_generation_response(
         # This proves request correlation ONLY — that the response's hash
         # matches the hash of what THIS client sent. It does not, and
         # cannot, prove the remote diffusion pipeline actually used the
-        # prompt when generating the image; see module docs / R7.
+        # prompt when generating the image; see the module contract above.
         raise ImageGenResponseError("Image generation service's prompt_sha256 does not match the request.")
 
     input_image_sha256 = data["input_image_sha256"]
@@ -491,12 +491,12 @@ def generate(
     _parse_generation_response) before returning a trusted
     GenerationResult.
 
-    §7 gotcha this guards against specifically: verify the remote service
-    actually reads `prompt` rather than silently falling back to a
-    hardcoded default (this was broken and unnoticed for a while in v1).
+    Known pitfall this guards against: a remote service that silently
+    ignores `prompt` and falls back to a hardcoded default (this happened,
+    unnoticed, in v1).
     This client always sends the CALLER's exact prompt (only outer
-    whitespace trimmed) and never substitutes anything — R7's real smoke
-    test must separately confirm the remote pipeline's OWN behavior
+    whitespace trimmed) and never substitutes anything — a real smoke test
+    must separately confirm the remote pipeline's OWN behavior
     (a same-image/different-prompt sensitivity check), since this
     client's own correctness can't prove that on its own.
 

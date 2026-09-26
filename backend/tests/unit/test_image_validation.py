@@ -1,8 +1,8 @@
 """
 Unit tests for app/core/image_validation.validate_image_bytes() — the
-shared, pure Pillow-based image-content validator used by both R3
-(app/models/image_gen_client.py's _validate_image) and R4
-(app/services/reorganise_pipeline_service.py). No HTTP, no model, no
+shared, pure Pillow-based image-content validator used by both
+app/models/image_gen_client.py and
+app/services/reorganise_pipeline_service.py. No HTTP, no model, no
 network anywhere in this file.
 """
 

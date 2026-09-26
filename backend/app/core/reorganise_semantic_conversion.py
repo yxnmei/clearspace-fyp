@@ -13,8 +13,8 @@ already established for detection/decision identity elsewhere in this
 codebase (id_mapping.py, instance_matching.py).
 
 No orchestration here: this module does not decide whether to retry an
-LLM call or when to fall back — that is app/services/reorganise_service.py's
-job (R2), which calls parse_and_validate_plan() once per attempt and
+LLM call or when to fall back — app/services/reorganise_service.py calls
+parse_and_validate_plan() once per attempt and
 build_deterministic_fallback_plan() only after every attempt it's willing
 to make has failed. This module only ever answers "is this one raw
 object, on its own, a valid, complete plan" and "here is a deterministic
@@ -212,11 +212,11 @@ def build_deterministic_fallback_plan(
     """
     Pure and fully deterministic given the same inputs — no LLM call, no
     randomness, no wall-clock/run_id dependence. Intended for
-    app/services/reorganise_service.py (R2) to call only after both the
+    app/services/reorganise_service.py to call only after both the
     raw planning call and one bounded recovery attempt fail
     parse_and_validate_plan() — this function has no opinion about
     PlanProvenance at all (it never sets or references it); assigning
-    PlanProvenance.DETERMINISTIC_FALLBACK is R2's service-level job, not
+    PlanProvenance.DETERMINISTIC_FALLBACK is the service's job, not
     this function's.
 
     Takes full DetectedItem objects, not bare ids: an image-generation

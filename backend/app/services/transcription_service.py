@@ -5,7 +5,7 @@ single-flight guard.
 Composes app.core.audio_decode and a caller-supplied transcriber. Like
 every other service here it never imports fastapi and never imports a
 model module directly, so it stays callable from an evaluation script
-without going through HTTP (PROJECT_SPEC.md §4).
+without going through HTTP.
 
 WHY THERE IS NO TIMEOUT. A timeout around a worker thread does not stop
 CPU-bound inference: `wait_for` abandons the waiter, the thread runs to

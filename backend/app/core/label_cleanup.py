@@ -3,8 +3,8 @@ Pure logic: turns Grounding DINO's raw (possibly compound) labels into
 clean item labels. No model loading here — this is exactly the kind of
 function tests/unit/ should cover in milliseconds.
 
-Replaces v1's naive first-token extraction (§3 step 5 explicitly calls
-this out): "book notebook magazine document" was reduced to just "book",
+Replaces v1's naive first-token extraction: "book notebook magazine
+document" was reduced to just "book",
 discarding real information. This version is vocabulary-aware — it
 checks the compound phrase against a known multi-word item list before
 falling back to first-token, and always returns the *discarded* tokens

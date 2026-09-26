@@ -37,7 +37,7 @@ KEEP_IN_PLACE_ZONE_NAME = "Keep in place"
 
 class PlanProvenance(str, Enum):
     """How a ReorganisePlan was actually produced — assigned by the
-    service (app/services/reorganise_service.py, R2), never by this
+    service (app/services/reorganise_service.py), never by this
     module, never accepted as part of raw LLM plan content, and never a
     field on ReorganisePlan itself (see that class's own docstring below).
     This is a shared vocabulary type only; placing it here (core) while

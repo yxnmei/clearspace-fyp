@@ -83,8 +83,8 @@ def test_mechanically_repaired_response_tags_every_item_number(monkeypatch):
 
 
 def test_missing_item_recovered_is_tagged_recovery_used(monkeypatch):
-    # Main response only returns item 1 — item 2 silently dropped, same
-    # real-world failure mode DEVLOG.md 2026-08-07 documents. classify_items
+    # Main response only returns item 1 — item 2 silently dropped, the same
+    # real-world failure mode observed on 2026-08-07. classify_items
     # issues its own targeted single-item recovery call for item 2.
     fake_ollama, calls = _fake_ollama(
         [

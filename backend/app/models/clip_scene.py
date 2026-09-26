@@ -1,9 +1,9 @@
 """
-Scene classification: CLIP zero-shot (chosen, §2 — 97.6% confidence on the
-test image; Places365 comparison marked "run early this time" in §2, not
+Scene classification: CLIP zero-shot (chosen after 97.6% confidence on the
+test image; the planned Places365 comparison is not
 yet done — see evaluation/scripts/compare_scene_classifiers.py).
 
-§7 gotcha, fixed from day one here rather than discovered later: CLIP
+Prompting constraint, fixed from day one here rather than discovered later: CLIP
 zero-shot accuracy improves with templated prompts. Feed the template
 below, never a bare label — this was identified but never implemented
 in the v1 build.
@@ -17,7 +17,7 @@ from PIL import Image
 
 from app.config import get_settings
 
-# §7: template, not bare labels — "a photo of a {}" is CLIP's own reference
+# Template, not bare labels — "a photo of a {}" is CLIP's own reference
 # template family from Radford et al. (2021); a bare label measurably
 # underperforms it in zero-shot settings.
 PROMPT_TEMPLATE = "a photo of a {}"
@@ -43,8 +43,8 @@ _model_cache = None  # (model, preprocess) tuple, loaded lazily and cached at
 
 def load_model():
     """
-    Loads CLIP (device="cpu" — no local GPU, per §5/DEVLOG environment
-    check). The `clip` package has no PyPI release — installed via
+    Loads CLIP on CPU because the local environment has no GPU. The
+    `clip` package has no PyPI release — installed via
     `pip install git+https://github.com/openai/CLIP.git`, see README.
     """
     global _model_cache
@@ -64,12 +64,12 @@ def load_model():
 def classify_scene(image_bytes: bytes, candidates: list[str] = ROOM_TYPE_CANDIDATES) -> dict:
     """
     Returns {"label": str, "confidence": float, "all_scores": dict[str, float]}.
-    All scores are returned, not just the top-1 — needed for the §8
+    All scores are returned, not just the top-1 — needed for the
     per-stage evaluation (confidence distribution, not just pass/fail).
 
     Zero-shot: no room-type-specific training, just cosine similarity
     between the image embedding and each candidate's *templated* text
-    embedding (§7 — never a bare label, see PROMPT_TEMPLATE above),
+    embedding (never a bare label, see PROMPT_TEMPLATE above),
     softmax-normalized across candidates into a probability distribution.
     """
     import clip

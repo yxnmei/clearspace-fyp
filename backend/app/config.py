@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     grounding_dino_weights_path: str = "weights/groundingdino_swint_ogc.pth"
     detection_box_threshold: float = 0.35
     detection_text_threshold: float = 0.25
-    # Passed through to the reasoning prompt rather than discarded after
-    # detection — see §3 step 5, confidence-gating.
+    # Passed through to the confidence-gated reasoning prompt rather than
+    # discarded after detection.
     detection_low_confidence_cutoff: float = 0.45
 
     # --- scene classification ---
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # --- LLM reasoning ---
     ollama_host: str = "http://localhost:11434"
-    llm_model_name: str = "phi4-mini"  # evidence-backed production default — see PROJECT_SPEC.md §2, 2026-08-05 comparison
+    llm_model_name: str = "phi4-mini"  # evidence-backed production default from the 2026-08-05 comparison
     llm_temperature: float = 0.2
     llm_max_retries: int = 2  # for JSON-validity failures, see core/json_repair.py
     # A single N-item JSON array gets more fragile as N grows — one dropped
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     # production simply cannot express it.
     stt_local_files_only: bool = True
 
-    # --- image generation (remote Colab/ngrok service — see §5) ---
+    # --- image generation (remote Colab/ngrok service) ---
     image_gen_base_url: str = "https://REPLACE-ME.ngrok-free.app"  # reserved/static domain, not the rotating free kind
     image_gen_health_timeout_s: float = 3.0
     image_gen_request_timeout_s: float = 180.0

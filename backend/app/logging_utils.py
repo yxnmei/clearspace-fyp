@@ -17,7 +17,7 @@ which appends one JSON line to logs/runs.jsonl:
      "ok": true, "meta": {"n_objects": 21}, "ts": "2026-07-30T20:47:00Z"}
 
 `meta` is free-form per stage — callers record relevant values such as
-object counts, JSON validity, or token counts without changing this shared
+object counts or JSON validity without changing this shared
 logging module for every new metric.
 """
 
@@ -69,7 +69,7 @@ def stage_timer(run_id: str, stage: str) -> Iterator[_StageHandle]:
     """
     Context manager wrapping one pipeline stage. Records duration and
     success/failure regardless of whether the stage raises — a failed
-    stage is exactly the kind of data point the §8 evaluation work needs
+    stage is exactly the kind of data point the evaluation work needs
     (JSON-validity rate, timeout rate), not something to silently drop.
     """
     handle = _StageHandle(run_id=run_id, stage=stage)

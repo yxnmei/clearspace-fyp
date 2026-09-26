@@ -271,8 +271,8 @@ def test_invalid_image_returns_400_without_invoking_real_model_loaders():
     # All three providers overridden with fake loaders that would prove
     # themselves invoked via CallRecorder — asserting zero calls after
     # the request is what proves image validation happens strictly
-    # before any model callable is ever invoked, per this task's
-    # explicit requirement (the provider *loaders* are still resolved —
+    # before any model callable is ever invoked (the provider *loaders*
+    # are still resolved —
     # that's cheap and expected — but the classify/detect functions
     # themselves must never run).
     scene_fn = CallRecorder(return_value=DEFAULT_SCENE)
@@ -357,11 +357,11 @@ def test_declutter_reasoning_error_returns_503():
 
 
 # NOTE: the "reorganise path returns 501" placeholder that used to live
-# here was removed once /upload's reorganise path was implemented (R4) —
+# here was removed once /upload's reorganise path was implemented —
 # see tests/system/test_upload_reorganise.py for the real, fake-backed
 # replacement (analysis-only, no LLM-classifier call, real 200 response).
 # The "both path returns 501" placeholder that used to live here was
-# removed the same way once /upload's both path was implemented (R6) —
+# removed the same way once /upload's both path was implemented —
 # see tests/system/test_upload_both.py for the real, fake-backed
 # replacement (full declutter-triage response + input_image_sha256).
 

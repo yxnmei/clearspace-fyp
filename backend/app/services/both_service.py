@@ -1,10 +1,10 @@
 """
-Orchestration for the Both workflow's generation boundary (R6) — composes
+Orchestration for the Both workflow's generation boundary — composes
 app.services.confirmation_service.confirm_declutter_result() and
 app.services.reorganise_pipeline_service.run_reorganise_pipeline() into
 one call, deriving selected_item_ids ENTIRELY server-side from the
 confirmed, non-excluded Keep decisions — never from client input. This is
-the one place PROJECT_SPEC's Both-workflow requirement ("only confirmed,
+the one place the Both-workflow requirement ("only confirmed,
 non-excluded Keep items reach Reorganise, server-derived, never
 client-supplied") is enforced:
 
@@ -45,7 +45,7 @@ this module returns raw internal domain data only — BothGenerationResult
 wraps a real ConfirmationResult and a real ReorganisePipelineResult,
 never a browser-facing DTO — and never imports fastapi, so it stays
 reachable from a future evaluation script exactly like every other
-services/ function (PROJECT_SPEC.md §4).
+service function.
 
 Independent input validation (binding, matches reorganise_pipeline_service.py's
 own stated philosophy): run_id/analysis/declutter consistency and the

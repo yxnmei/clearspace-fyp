@@ -314,7 +314,7 @@ def test_missing_message_key_is_a_response_error(monkeypatch):
 def test_importing_the_module_does_not_import_ollama():
     """`ollama` is imported lazily, inside _make_client — importing the
     module (as the POST /listings loader does) must not pull it in.
-    Checked in a fresh interpreter so an unrelated test in this session
+    Checked in a fresh interpreter so another test in the same process
     that already imported ollama can't mask a regression."""
     import subprocess
     from pathlib import Path

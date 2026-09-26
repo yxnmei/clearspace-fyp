@@ -44,8 +44,8 @@ IMAGE_ENV = "CLEARSPACE_INTEGRATION_IMAGE"
 # backend/ — this file is backend/tests/integration/conftest.py.
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# The gitignored local convention (tests/system/README.md, DEVLOG.md): the
-# same image every documented manual real-model run has used. Only a
+# The local convention uses the same image for every documented manual
+# real-model run. This is only a
 # default; CLEARSPACE_INTEGRATION_IMAGE overrides it so the test is not
 # tied to one machine.
 DEFAULT_IMAGE = BACKEND_ROOT / "data" / "test_images" / "bedroom02.jpg"

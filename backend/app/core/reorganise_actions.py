@@ -2,7 +2,7 @@
 Pure logic for the Reorganise ACTION CHECKLIST: the strict content schema
 the checklist model must satisfy, the conversion of a raw (already-JSON-
 parsed, not-yet-trusted) object into trusted actions, and the fully
-deterministic fallback checklist used when no trusted model output exists.
+deterministic checklist used in production.
 
 A checklist is a short, prioritised list of things to do, not a plan of
 zones, coordinates or item assignments. Nothing here partitions items,
@@ -12,7 +12,7 @@ image prompt (see app.core.reorganise_image_prompt) or a storage product
 (see app.core.reorganise_storage).
 
 No orchestration here: whether a model is called at all, how many times
-(at most once), and when the fallback is used is
+(at most once), and when the deterministic checklist is used is
 app/services/reorganise_actions_service.py's job. This module only ever
 answers "is this one raw object, on its own, a valid checklist" and "here
 is a deterministic checklist built directly from detected data."
@@ -36,7 +36,7 @@ MAX_ACTIONS = 5
 # response must reach to be trusted: selections of fewer than
 # SMALL_SELECTION_THRESHOLD items may answer with 1 to 3 actions; anything
 # larger must answer with 3 to 5. A shorter answer is not "partly usable",
-# it is rejected as invalid_actions and the deterministic fallback is used
+# it is rejected as invalid_actions and the deterministic checklist is used
 # instead (still bounded by the general MIN_ACTIONS..MAX_ACTIONS schema).
 SMALL_SELECTION_THRESHOLD = 3
 SMALL_ACTION_RANGE = (1, 3)
@@ -68,7 +68,7 @@ _BoundedDetail = Annotated[str, StringConstraints(strip_whitespace=True, min_len
 # retailers, links, money, and removing or disposing of a selected item
 # (every selected item is something the user chose to keep). A match is
 # an `forbidden_content` rejection, which the service turns into the
-# deterministic fallback, never a partially accepted checklist.
+# deterministic checklist, never a partially accepted model result.
 _FORBIDDEN_CONTENT_RE = re.compile(
     r"(?:\b(?:buy|buys|buying|purchase|purchases|purchasing|shop|shopping|order online|"
     r"amazon|ikea|carousell|shopee|lazada|taobao|daiso|muji|price|prices|priced)\b"
@@ -212,7 +212,7 @@ def parse_and_validate_actions(raw: Any, *, min_actions: int = MIN_ACTIONS) -> A
     return ActionConversionResult(actions=list(action_list.actions), errors=[])
 
 
-# --- deterministic fallback checklist ------------------------------------
+# --- deterministic production checklist ----------------------------------
 #
 # Built only from real detected data: the coarse area each selected item
 # sits in (its `position`), its effective label and its relative size.

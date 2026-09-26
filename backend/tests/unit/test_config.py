@@ -656,8 +656,8 @@ def test_listing_bounds_defaults():
     assert settings.listing_llm_timeout_s == 60.0
     assert settings.listing_llm_num_predict == 512
     assert settings.listing_llm_max_attempts == 3
-    # provisional convenience defaults — mirror Declutter's values, but
-    # are their own knobs (see config.py's comment / this milestone).
+    # Provisional convenience defaults mirror Declutter's values but
+    # remain independent configuration knobs.
     assert settings.listing_llm_model_name == "phi4-mini"
     assert settings.listing_llm_temperature == 0.2
 

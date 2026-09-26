@@ -2,7 +2,7 @@
 FastAPI entrypoint. Deliberately thin — no model calls, no orchestration
 logic here. HTTP concerns live in app/api/routes.py; everything routes
 delegates to lives in app/services so the same functions are callable
-from evaluation scripts without going through HTTP at all (see §4).
+from evaluation scripts without going through HTTP at all.
 """
 
 import logging
@@ -89,5 +89,5 @@ app.include_router(router)
 
 @app.get("/health")
 def health() -> dict:
-    """Backend liveness — separate from the Colab/ngrok image-gen health check in routes.py (§5)."""
+    """Backend liveness — separate from the Colab/ngrok image-gen health check in routes.py."""
     return {"status": "ok"}

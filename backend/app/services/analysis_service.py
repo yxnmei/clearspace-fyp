@@ -1,7 +1,7 @@
 """
 Shared image-analysis foundation for Declutter, Reorganise, and Both —
-`analyse_image()`. Per PROJECT_SPEC.md §4's "one implementation, not two
-that drift" principle: every path that needs scene classification and
+`analyse_image()`. Following the "one implementation, not two that drift"
+principle, every path that needs scene classification and
 object detection calls this, none reimplements it.
 
 Dependency injection, not direct imports: `scene_classifier`/`detector`
@@ -13,12 +13,12 @@ Two reasons, both deliberate:
      these Protocols structurally (same call signature, same return
      shape), so callers pass them in directly with zero adapter code.
   2. Tests can supply fakes that share no import with the real modules —
-     app.models.grounding_dino imports torch/numpy at module top level
-     (see this task's pre-implementation report), so avoiding that import
+     app.models.grounding_dino imports torch/numpy at module top level,
+     so avoiding that import
      entirely, not just avoiding calling load_model(), is what actually
      keeps unit tests fast and independent of the ML stack.
 
-Failure policy (stated before implementation, per this task's report):
+Failure policy:
   - Invalid image (can't decode at all) -> InvalidImageError, fatal.
   - Scene classifier raises, or returns something SceneClassification
     can't validate -> SceneClassificationError (cause preserved).
@@ -29,9 +29,9 @@ Failure policy (stated before implementation, per this task's report):
     detector response -> recorded as an AnalysisWarning, that detection
     skipped, the rest of the analysis proceeds. The only soft-failure path.
 
-Duplicate/NMS policy: none applied here, deliberately — see this task's
-pre-implementation report point 5. There is no NMS or box-merging
-anywhere in this codebase today; DEVLOG.md (2026-08-01) records confirming
+Duplicate/NMS policy: none applied here, deliberately. There is no NMS or
+box-merging anywhere in this codebase today; a 2026-08-01 real-detection
+run confirmed
 that apparent duplicate detections (six "picture frame" boxes in one
 image) were genuinely six distinct real objects, not detector artifacts
 — which is why core/box_descriptors.py exists (to help distinguish real
@@ -163,7 +163,7 @@ def analyse_image(
     detector: ObjectDetector,
 ) -> AnalysisResult:
     """
-    Processing order (per this task's Requirements — every step present
+    Processing order (every step remains present
     and in this order, even where a step is currently a documented no-op):
 
       1. validate input image

@@ -1,7 +1,7 @@
 """
-Orchestration for the Reorganise GENERATION boundary (R4): selection
+Orchestration for the Reorganise generation boundary: selection
 validation, image-correlation, the action checklist, the deterministic
-focus areas and storage suggestions, and exactly one R3 image-generation
+focus areas and storage suggestions, and exactly one remote image-generation
 call, composed into one internal result. This is the pipeline Direct
 Reorganise's /generate route calls, and the SAME pipeline Both calls,
 differing only in how selected_item_ids is derived (client-supplied
@@ -46,7 +46,7 @@ invocation. GET /image-gen/health (routes.py) uses a completely separate
 injected health-check callable, never shared with this module.
 
 Image validation and hash correlation both happen HERE, before any model
-is called: never delegated to R3's generate() and never only checked by
+is called: never delegated to the image-generation client and never only checked by
 the API-layer request schema (whose checks this module deliberately
 duplicates, so this function stays safe to call directly, outside
 FastAPI, with no schema validation having run at all).

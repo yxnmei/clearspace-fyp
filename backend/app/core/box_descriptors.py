@@ -6,7 +6,7 @@ Exists because same-labelled detections (e.g. six "picture frame" boxes in
 one image) otherwise look identical to the LLM reasoning stage, which then
 has no basis to treat them as distinct items — some models responded by
 inventing non-schema decisions like "keep one, donate others" instead of
-judging each independently (see DEVLOG.md, 2026-08-01 real-detection run).
+judging each independently (observed in a 2026-08-01 real-detection run).
 This doesn't identify *what* makes two same-label items different, only
 roughly *where* and *how big* each one is — enough for a prompt to stop
 presenting duplicates as interchangeable text.
@@ -38,8 +38,8 @@ def _position_label(cx: float, cy: float) -> str:
     if col == "center":
         # Bare "upper"/"lower" read as ambiguous — easy to mistake for "top
         # third of the frame, any column" rather than "top third, center
-        # column specifically" (found during manual position_zone
-        # annotation of evaluation/labels/labels.json, DEVLOG.md 2026-08-09).
+        # column specifically" (found during the 2026-08-09 manual
+        # position_zone annotation of evaluation/labels/labels.json).
         # "left"/"right" alone don't have the same problem — "the left
         # side, vertically centered" is the natural reading — so only this
         # branch needed the explicit "-center" suffix.

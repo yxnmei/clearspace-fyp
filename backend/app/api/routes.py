@@ -2,18 +2,18 @@
 HTTP layer only. Every handler here should be a thin wrapper: parse the
 request, call one function in app/services, shape the response. No model
 loading, no prompt construction, no orchestration logic — that all lives
-in services/ so it's reachable from evaluation scripts too (§4).
+in services/ so it's reachable from evaluation scripts too.
 
 Endpoints mirror the current workflows:
   POST /upload           -> scene classification + detection + (declutter) LLM classification
   POST /confirm           -> deterministic user decision confirmation + confirmed Keep-item handoff
   POST /override     -> re-run LLM reasoning for one item after user edits its label
   POST /transcribe    -> speech-to-text transcript for user review before it affects context
-  POST /generate        -> deterministic action checklist (no LLM call) + focus areas + storage suggestions + R3 image-gen via Colab/ngrok (Direct Reorganise, R4)
-  POST /generate/confirmed -> server-derived Keep-item selection + the same checklist/areas/suggestions/R3 generation (Both, R6)
+  POST /generate        -> deterministic action checklist (no LLM call) + focus areas + storage suggestions + Colab/ngrok image generation (Direct Reorganise)
+  POST /generate/confirmed -> server-derived Keep-item selection + the same checklist/areas/suggestions/image generation (Both)
   POST /listings       -> server-derived Sell-item eligibility + marketplace listing drafts
   POST /listings/{item_id}/regenerate -> regenerate one eligible listing draft
-  GET  /image-gen/health -> §5: surfaced proactively in the UI, not just on failure
+  GET  /image-gen/health -> surfaced proactively in the UI, not just on failure
 
 /upload's declutter path is the first real vertical slice: it composes
 the existing, already-tested app.services.analysis_service.analyse_image()
@@ -22,7 +22,7 @@ label-cleanup/prompt/mapping/semantic/recovery logic is reimplemented
 here, only HTTP parsing, dependency resolution, and error-type -> status-
 code translation.
 
-/upload's reorganise path (R4) composes the SAME analyse_image() — never
+/upload's reorganise path composes the SAME analyse_image() — never
 a second implementation — but never calls run_declutter() or the LLM-
 classifier loader at all: Direct Reorganise skips Keep/Sell/Donate/
 Discard triage entirely, letting the user select items to preserve
@@ -33,7 +33,7 @@ claims to belong to — see ReorganiseUploadResponse and
 app/services/reorganise_pipeline_service.py's own module docstring for
 what that hash mechanism does and does not prove.
 
-/upload's both path (R6) runs the SAME two real pipeline stages as the
+/upload's both path runs the SAME two real pipeline stages as the
 other two paths, never reimplemented — declutter's own run_declutter()
 call (identical to path="declutter") PLUS reorganise's own
 input_image_sha256 computation (identical to path="reorganise") — since
@@ -41,11 +41,11 @@ Both needs a completed Declutter triage pass to confirm against AND the
 hash a later /generate/confirmed request will be checked against. See
 BothUploadResponse.
 
-/generate (R4) is a thin route wrapper around
+/generate is a thin route wrapper around
 app.services.reorganise_pipeline_service.run_reorganise_pipeline() — all
 selection/image/hash validation, the deterministic focus areas / storage
 suggestions / image prompt, the deterministic action checklist (no
-model call, provenance "deterministic_direct"), and the single R3
+model call, provenance "deterministic_direct"), and the single remote
 image-generation call happen there, never reimplemented here. This
 route's own job is exactly three things: (1) parse/validate the JSON
 request shape, (2) resolve the one model-boundary dependency (the image
@@ -54,9 +54,9 @@ below), (3) convert the pipeline's raw GenerationResult.image_bytes
 to base64 for the browser. Base64 conversion happens ONLY here — the
 service layer never imports base64 for this purpose and never touches
 fastapi at all, so it stays reachable from a future evaluation script
-exactly like every other services/ function (PROJECT_SPEC.md §4).
+exactly like every other service function.
 
-/generate/confirmed (R6, Both) is the ONLY place selection for Both's
+/generate/confirmed (Both) is the ONLY place selection for Both's
 generation step is derived: app/services/both_service.run_both_generation()
 composes confirm_declutter_result() (app/services/confirmation_service.py,
 unchanged, reused verbatim) and run_reorganise_pipeline()
@@ -199,7 +199,7 @@ class DeclutterUploadResponse(BaseModel):
     narrowly means a caller can't accidentally construct one claiming to
     represent a Reorganise/Both result. path="reorganise" returns a 200,
     but with the differently-shaped ReorganiseUploadResponse below, never
-    this class; path="both" (R6) likewise returns a 200, with the
+    this class; path="both" likewise returns a 200, with the
     separate BothUploadResponse below, never this class."""
 
     run_id: NonEmptyStr
@@ -215,7 +215,7 @@ class DeclutterUploadResponse(BaseModel):
 
 
 class ReorganiseUploadResponse(BaseModel):
-    """The response contract for path="reorganise" (R4) — shared
+    """The response contract for path="reorganise" — shared
     analysis only, deliberately no `declutter` field at all: Direct
     Reorganise never runs Keep/Sell/Donate/Discard triage. Mirrors
     DeclutterUploadResponse's run_id-consistency discipline.
@@ -241,7 +241,7 @@ class ReorganiseUploadResponse(BaseModel):
 
 
 class BothUploadResponse(BaseModel):
-    """The response contract for path="both" (R6) — declutter's full
+    """The response contract for path="both" — declutter's full
     Keep/Sell/Donate/Discard triage pipeline, reused verbatim from
     path="declutter" (same run_declutter() call, same DeclutterResult
     shape), PLUS input_image_sha256, reused verbatim from
@@ -335,11 +335,11 @@ def upload(
     Literal[...] annotation above makes it a request-validation failure
     (automatic 422) before FastAPI calls this function.
 
-    path == "reorganise" (R4) shares analyse_image() with declutter —
+    path == "reorganise" shares analyse_image() with declutter —
     same scene_classifier/detector loaders, same real service call — but
     never resolves or calls the llm_classifier loader at all; Direct
     Reorganise has no use for Declutter's Keep/Sell/Donate/Discard
-    reasoning. path == "both" (R6) shares run_declutter() with declutter
+    reasoning. path == "both" shares run_declutter() with declutter
     (same llm_classifier loader, same real service call) AND computes
     input_image_sha256 like reorganise does — see BothUploadResponse.
     """
@@ -711,7 +711,7 @@ def transcribe(
         raise HTTPException(status_code=503, detail="transcription is unavailable") from exc
 
 
-# --- /generate (R4) -------------------------------------------------------
+# --- /generate ------------------------------------------------------------
 
 # There is deliberately NO checklist-model dependency here. Both
 # generation routes pass action_generator=None and get the deterministic
@@ -743,7 +743,7 @@ def get_image_generator_provider() -> ImageGenerator:
 
 
 class GenerateRequest(BaseModel):
-    """Request body for POST /generate (R4) — JSON, not multipart:
+    """Request body for POST /generate — JSON, not multipart:
     alongside the raw image this carries the large, already-validated
     AnalysisResult round-tripped from /upload (path="reorganise"), the
     same discipline OverrideRequest/ConfirmationRequest already
@@ -758,10 +758,10 @@ class GenerateRequest(BaseModel):
     app/services/reorganise_pipeline_service.py).
 
     denoise_strength/controlnet_conditioning_scale/seed are deliberately
-    NOT fields here — R4 always uses R3's configured defaults; these are
-    provisional generation-tuning values, not an ordinary user decision.
-    R3's generate() already supports overriding them programmatically
-    (for R7/evaluation use) without a public request field.
+    NOT fields here — the route uses the image-generation client's
+    configured defaults. These are provisional generation-tuning values,
+    not an ordinary user decision. The client's generate() supports
+    programmatic evaluation overrides without a public request field.
 
     extra="forbid": a client submitting denoise_strength/seed/any other
     unrecognised field must get a loud 422, never a silent 200 that lets
@@ -826,17 +826,17 @@ class GenerateRequest(BaseModel):
 
 class GeneratedImagePayload(BaseModel):
     """API-facing, browser-consumable shape of a validated GenerationResult
-    (R3) — the ONLY place in this codebase that base64-encodes generated
+    — the ONLY place in this codebase that base64-encodes generated
     image bytes for transport (see this module's own docstring). Preserves
-    every validated R3 metadata field so it stays visible/auditable —
+    every validated generation metadata field so it stays visible/auditable —
     provenance, model identifiers, both correlation hashes, and timing —
     never just the image itself. Never exposes the ngrok URL, a raw
     exception, or the raw remote response body — every field here is
     read from the already-validated GenerationResult, never raw HTTP.
 
-    Field constraints deliberately MIRROR GenerationResult's own (R3) —
+    Field constraints deliberately MIRROR GenerationResult's own —
     this API contract must never be able to directly represent a value
-    R3 itself would reject. api_version is pinned to the exact code-level
+    the client itself would reject. api_version is pinned to the exact code-level
     constant (not any non-empty string); both hashes reuse the shared
     Sha256Hex format; denoise_strength/controlnet_conditioning_scale/
     generation_ms are range- and finiteness-checked; seed is rejected if
@@ -975,7 +975,7 @@ def generate_reorganisation(
 
     All selection/image/hash validation, the deterministic derivations
     (checklist, focus areas, storage suggestions, image prompt) and the
-    single R3 image-generation call happen inside
+    single image-generation call happen inside
     run_reorganise_pipeline() (see
     app/services/reorganise_pipeline_service.py) — this handler's only
     job is request parsing, dependency resolution, base64<->bytes
@@ -1008,11 +1008,11 @@ def generate_reorganisation(
     return GenerateResponse.from_pipeline_result(pipeline_result)
 
 
-# --- /generate/confirmed (R6, Both) -----------------------------------------
+# --- /generate/confirmed (Both) -------------------------------------------
 
 
 class ConfirmedGenerateRequest(BaseModel):
-    """Request body for POST /generate/confirmed (Both, R6) — JSON, not
+    """Request body for POST /generate/confirmed (Both) — JSON, not
     multipart. Carries the INPUTS to confirmation (declutter + overrides),
     never confirmation's OUTPUT: this endpoint always re-derives
     confirmed_keep_ids server-side via
@@ -1133,7 +1133,7 @@ def generate_confirmed_reorganisation(
     run_both_generation() before the pipeline or image_generator run.
 
     All confirmation-derivation, selection/image/hash validation, the
-    checklist and the single R3 image-generation call happen inside
+    checklist and the single image-generation call happen inside
     run_both_generation() (see app/services/both_service.py) — this
     handler's only job is request parsing, dependency resolution,
     base64<->bytes conversion, and error-type -> status-code translation,
@@ -1175,7 +1175,7 @@ def generate_confirmed_reorganisation(
     return ConfirmedGenerateResponse.from_both_result(result)
 
 
-# --- /image-gen/health (R4) ------------------------------------------------
+# --- /image-gen/health -----------------------------------------------------
 
 
 class HealthChecker(Protocol):
@@ -1187,7 +1187,7 @@ def get_health_checker_provider() -> HealthChecker:
     route must never share a callable with /generate's image_generator,
     and /generate must never call this provider either. See
     app/services/reorganise_pipeline_service.py's own docstring for why
-    the pipeline never performs its own health pre-check: R3's generate()
+    the pipeline never performs its own health pre-check: the client's generate()
     already does that internally."""
     return _image_gen_check_health
 
@@ -1201,7 +1201,7 @@ def image_gen_health(
     health_checker: HealthChecker = Depends(get_health_checker_provider),
 ) -> ImageGenHealthResponse:
     """
-    §5: a lightweight pre-flight check the frontend calls up front (before
+    A lightweight pre-flight check the frontend calls up front (before
     the user ever clicks Reorganise), not just something wrapped in a
     try/except around the real generation call. Always 200 — a 503 here
     would conflate "the ClearSpace backend itself is unhealthy" (what
@@ -1211,7 +1211,7 @@ def image_gen_health(
     already never raises (see app/models/image_gen_client.py). Cannot
     currently distinguish "offline" from "reachable but contract-
     incompatible" — both collapse to `available: false`, a known,
-    documented limitation of R3's boolean-only health contract, not a
+    documented limitation of the client's boolean-only health contract, not a
     defect introduced here.
     """
     return ImageGenHealthResponse(available=health_checker())

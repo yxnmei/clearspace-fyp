@@ -2,7 +2,7 @@
 Pure logic: extract/repair JSON from raw LLM text output. No model calls —
 unit-testable in milliseconds against fixture strings in tests/unit/.
 
-Exists as its own module because JSON-validity rate is a first-class §8
+Exists as its own module because JSON-validity rate is a first-class
 evaluation metric ("for the LLM stage specifically — JSON-validity rate
 and distribution-vs-target deviation, not just a pass/fail impression").
 Centralising the parsing here means every candidate model in
@@ -23,7 +23,7 @@ _JSON_BLOCK_RE = re.compile(r"\{.*\}|\[.*\]", re.DOTALL)
 # phi4-mini reliably appends one when asked for a JSON array containing
 # exactly one element, e.g. '[{"item_number": 10, ...},]' — and does it on
 # every retry, not just occasionally, since it's a formatting habit, not a
-# one-off slip (DEVLOG.md 2026-08-07 completeness-recovery investigation:
+# one-off slip (confirmed by the 2026-08-07 completeness-recovery investigation:
 # every item that stayed missing after a targeted single-item recovery call
 # turned out to have this exact defect in its raw response).
 _TRAILING_COMMA_RE = re.compile(r",(\s*[\]}])")

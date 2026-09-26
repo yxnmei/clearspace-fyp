@@ -23,7 +23,7 @@ also structurally different from Declutter's per-item classification
 (one JSON object describing a whole plan, never chunked across multiple
 calls) — bolting a second, differently-shaped responsibility onto that
 file would compound the naming confusion rather than leave room to fix
-it later. See PROJECT_SPEC.md/DEVLOG.md's R2 design note.
+it later.
 
 Exactly one Ollama call per invocation, deliberately: this module has NO
 internal retry loop and does not read settings.llm_max_retries. The one

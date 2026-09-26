@@ -1,5 +1,5 @@
 """
-System/API tests for POST /upload (both path, R6). Fakes only, at the
+System/API tests for POST /upload (both path). Fakes only, at the
 model-callable boundary (the same scene_classifier/detector/llm_classifier
 Protocols analyse_image()/run_declutter() already accept) — never a real
 CLIP/Grounding DINO/Ollama call. Mirrors tests/system/test_upload_declutter.py's

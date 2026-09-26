@@ -89,8 +89,7 @@ def confirm_decisions(
 
 def confirmed_keep_ids(confirmed: list[ConfirmedDecision]) -> list[str]:
     """The item_ids Reorganise/Both should receive: confirmed Keep,
-    excluding anything the user excluded during review — see
-    PROJECT_SPEC.md's Both-workflow requirement that overrides
+    excluding anything the user excluded during review, so overrides
     demonstrably change what reaches Reorganise.
 
     Returns item_id strings ONLY — never a label, never a DetectedItem.

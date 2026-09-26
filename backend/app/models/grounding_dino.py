@@ -1,9 +1,9 @@
 """
-Object detection: Grounding DINO (chosen, §2 — 21 vs 3 objects detected
+Object detection: Grounding DINO (chosen after detecting 21 vs 3 objects
 against YOLOv8s on the same test image).
 
 YOLOv8s is NOT reimplemented here — that comparison is already evidenced
-and done; §2 says don't re-litigate settled comparisons without a specific
+and done; don't re-litigate settled comparisons without a specific
 reason. If a genuine reason comes up later, put the YOLOv8s path in
 evaluation/scripts/, not here, so app/models/ stays "the model actually
 used in the shipped pipeline," not a grab-bag of every candidate tried.
@@ -30,7 +30,7 @@ from app.config import get_settings
 # via evaluation/scripts/visualize_detections.py eyeballing real detections:
 # a wall painting labeled "document", a circular wall decoration labeled
 # "clock", a hanging necklace labeled "cable", and a guitar-in-gig-bag
-# labeled "tool" (DEVLOG.md 2026-08-07). "balloon" is also a real
+# labeled "tool" in the 2026-08-07 run. "balloon" is also a real
 # ground-truth item in evaluation/labels/labels.json with no matching term.
 #
 # Deliberately NOT added: "clothes hanger" for the clothes-on-hangers case
@@ -44,7 +44,7 @@ from app.config import get_settings
 # multi-word near-duplicate can out-compete a clean single-word term
 # rather than reinforce it). "guitar" alone is the only evidenced case;
 # not guessing ahead of the data with a broader catch-all term.
-# Not yet re-verified against real detections — see DEVLOG.md follow-up.
+# Not yet re-verified against real detections.
 DOMESTIC_VOCABULARY_PROMPT = (
     "chair . table . desk . lamp . laptop . monitor . keyboard . mouse . "
     "cable . charger . book . notebook . magazine . document . bottle . cup . "
@@ -71,7 +71,7 @@ _model_cache = None  # loaded lazily, cached at module level — the checkpoint
 # not the process working directory. settings.grounding_dino_*_path default to
 # relative strings (e.g. "weights/..."); resolving those against os.getcwd()
 # meant launching uvicorn/pytest from the repo root instead of backend/ caused
-# a real startup 503 (see DEVLOG.md / tests/system/README.md, 2026-08-11).
+# a real startup 503 (see tests/system/README.md, 2026-08-11).
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -88,7 +88,7 @@ def _resolve_backend_path(configured: str) -> Path:
 def load_model():
     """
     Loads Grounding DINO from weights/ (see config.grounding_dino_*_path).
-    CPU-only (device="cpu") — no local GPU, per §5/DEVLOG environment check.
+    CPU-only (device="cpu") because the local environment has no GPU.
     """
     global _model_cache
     if _model_cache is not None:

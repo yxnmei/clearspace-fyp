@@ -1,5 +1,5 @@
 """
-System/API tests for POST /generate/confirmed (Both, R6). Fakes only,
+System/API tests for POST /generate/confirmed (Both). Fakes only,
 never a real Ollama or Colab/HTTP call. Uses a real POST /upload
 (path="both") call first to obtain a genuine AnalysisResult +
 DeclutterResult + input_image_sha256, then builds /generate/confirmed

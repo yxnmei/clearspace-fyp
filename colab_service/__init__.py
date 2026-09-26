@@ -1,5 +1,5 @@
 """
-ClearSpace's Colab-hosted image-generation service (R7).
+ClearSpace's Colab-hosted image-generation service.
 
 A separate, independently-deployed runtime from backend/ — it is cloned
 into a Colab VM and run there, never imported by or into backend/. It has

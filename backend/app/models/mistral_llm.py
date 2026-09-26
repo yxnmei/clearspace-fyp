@@ -1,10 +1,10 @@
 """
 LLM reasoning: local Ollama models, wired up under this mistral_llm.py
-filename from the first candidate tried (§2) — retained as-is, not
-renamed, per this task's explicit scope boundary.
+filename from the first candidate tried. The filename is historical; the
+module serves whichever Ollama model is configured.
 
 phi4-mini is the evidence-backed production default (app.config.Settings
-.llm_model_name; PROJECT_SPEC.md §2, 2026-08-05 comparison) — chosen as
+.llm_model_name; 2026-08-05 comparison) — chosen as
 the least-bad of five candidates, not as conclusively superior. The other
 four candidates from that comparison remain preserved below in
 COMPARISON_MODELS, including mistral itself, so
@@ -30,17 +30,17 @@ from app.core.json_repair import extract_json_detailed
 from app.core.schemas import ItemValidity
 from app.logging_utils import stage_timer
 
-# §2 comparison set — kept here as the single source of truth for which
+# Comparison set — kept here as the single source of truth for which
 # model names the eval harness iterates over, so evaluation/scripts/
 # imports this instead of re-listing the models inline.
 COMPARISON_MODELS = ["mistral", "qwen3:8b", "gemma2:2b", "phi4-mini", "deepseek-r1:7b"]
 
-# Frontier hosted models considered and rejected (§2) — infeasible for
+# Frontier hosted models considered and rejected — infeasible for
 # local CPU inference and conceptually mismatched with the local-privacy
 # design. Not in COMPARISON_MODELS; don't add without revisiting that
 # constraint explicitly.
 
-CLASSIFICATION_PROMPT_VERSION = "v2"  # bump on any prompt-template change — versioned per §3 step 5
+CLASSIFICATION_PROMPT_VERSION = "v2"  # bump on any prompt-template change
 
 
 @dataclass
@@ -78,7 +78,7 @@ def build_classification_prompt(
 ) -> str:
     """
     Confidence-gated: passes each item's detection confidence into the
-    prompt rather than discarding it after detection (§3 step 5) — a
+    prompt rather than discarding it after detection — a
     low-confidence "cable" detection should be able to influence the
     LLM's willingness to assert e.g. "visibly broken" the way v1's
     confidence-blind prompt couldn't. `confidence` is optional per item
@@ -91,7 +91,7 @@ def build_classification_prompt(
     indistinguishable text to the model — it has no basis to judge them
     differently, and some models responded by inventing a non-schema
     collective decision like "keep one, donate others" instead (real-
-    detection run, DEVLOG.md 2026-08-01). Each item also gets an explicit
+    detection run, 2026-08-01). Each item also gets an explicit
     number, echoed back in the response, so duplicates can be told apart
     even though their label text is identical.
 
@@ -99,7 +99,7 @@ def build_classification_prompt(
     "picture frame"s all landing in the same coarse position bucket) still
     render as 100%-identical text even with numbering — found in practice
     to make weaker models silently drop one instead of treating it as
-    separate (DEVLOG.md 2026-08-07). Those get an explicit "instance X of Y"
+    separate (2026-08-07 run). Those get an explicit "instance X of Y"
     tag so every line is textually unique, not just numerically distinct.
 
     `start_number` offsets the numbering — used when classify_items() splits
@@ -113,14 +113,14 @@ def build_classification_prompt(
     all — just an explicit instruction to commit to a confident per-item
     call instead of defaulting to keep — beat both an "aggressive"
     (sell/discard-leaning) and a "conservative" (keep-leaning) framing on
-    discard/donate agreement (DEVLOG.md 2026-08-08). That instruction is
+    discard/donate agreement (2026-08-08 comparison). That instruction is
     baked in here as a base-prompt line so every request benefits from it,
     including the common case where `user_context` is None, rather than
     requiring a user to type an equivalent framing themselves. Not yet
     re-verified against `compare_llm_reasoning.py`'s numbers — a
     system-prompt version of this instruction isn't guaranteed to
     reproduce the user_context-string version's effect exactly; treat as
-    unconfirmed until re-run (see DEVLOG.md).
+    unconfirmed until re-run.
     """
     settings = get_settings()
     lines = [
@@ -226,7 +226,7 @@ def _classify_one_call(
         # constrains output to a single top-level object, which made every
         # tested model (except deepseek-r1) collapse a requested N-item array
         # into one object regardless of prompt wording — confirmed by testing
-        # the same prompt with and without format="json" during §3 step 4.
+        # the same prompt with and without format="json" during comparison testing.
         # extract_json_detailed()'s existing repair fallback handles any
         # stray prose.
         response = client.chat(
@@ -271,7 +271,7 @@ def classify_items(
     valid JSON, correctly shaped, and still silently missing an item — found
     in practice on real detections, where two same-label items sharing a
     coarse position bucket sometimes causes one to just vanish with no
-    error (DEVLOG.md 2026-08-07). Any missing item_number — whether because
+    error (2026-08-07 run). Any missing item_number — whether because
     it was dropped from an otherwise-valid chunk response, or because the
     whole chunk call failed validity outright (every item in it treated as
     "missing") — gets one targeted single-item recovery call (its own retry
@@ -279,7 +279,7 @@ def classify_items(
     to be redone. A whole-chunk failure still marks the overall result
     is_valid_json=False even if every one of its items is later recovered
     individually — the original call needed rescuing, which is worth
-    surfacing honestly rather than papering over (DEVLOG.md 2026-08-07).
+    surfacing honestly rather than papering over (2026-08-07 run).
     """
     settings = get_settings()
     resolved_model = model_name or settings.llm_model_name
@@ -329,7 +329,7 @@ def classify_items(
                 # "missing" and gets its own recovery attempt below, same as
                 # an item silently dropped from an otherwise-valid response.
                 # Previously this branch gave up on the chunk entirely with
-                # no recovery attempt at all (DEVLOG.md 2026-08-07).
+                # no recovery attempt at all (2026-08-07 run).
                 all_chunks_valid = False
 
             for missing_n in sorted(expected_numbers - returned_numbers):

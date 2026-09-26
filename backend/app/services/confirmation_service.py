@@ -36,7 +36,7 @@ class IncompleteDeclutterError(RuntimeError):
     decision for a STILL_INVALID item, so it cannot be wrapped into a
     ConfirmedDecision without either fabricating one (unacceptable) or
     redesigning ConfirmedDecision to make ai_decision/ai_reason optional
-    (out of scope for this task — a deliberate future extension point,
+    (not supported here — a deliberate future extension point,
     not casually done here). Rejecting the whole confirmation request
     outright — rather than silently omitting the unresolved item and
     producing a partial Keep handoff — is the safer, honest choice: a

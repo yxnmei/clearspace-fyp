@@ -20,8 +20,7 @@ backend/app/config.py's image_gen_request_timeout_s). This needs no
 backend change at all: app.models.image_gen_client.generate() already
 maps any non-2xx status to ImageGenServiceError, which
 reorganise_pipeline_service.py already maps to a plan-preserving
-image_status="unavailable" — confirmed by inspection during this
-project's R7 audit, not assumed.
+image_status="unavailable", as confirmed by inspection.
 
 Sanitized failures: two exception handlers below replace FastAPI's
 default behavior specifically because it is NOT safe here by default —

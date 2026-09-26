@@ -38,8 +38,8 @@ to the pipeline call, like denoise_strength/controlnet_conditioning_scale/seed.
 Output format is always PNG (lossless, and schemas.build_generate_response()
 is written assuming PNG — see that function's own docstring for why).
 generation_ms measures depth extraction PLUS the pipeline call together
-— the whole server-side compute after request validation, matching R7's
-contract requirement that this be the honest end-to-end generation time,
+— the whole server-side compute after request validation, so it records
+the honest end-to-end generation time,
 not just the diffusion step count's own internal timing.
 """
 

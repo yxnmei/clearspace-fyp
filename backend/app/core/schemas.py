@@ -61,8 +61,8 @@ ItemId = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^item
 
 class RunContext(BaseModel):
     """One analysis session. Re-uploading the same image is a new session
-    with a new run_id — there is no server-side session store (no DB, by
-    design, see PROJECT_SPEC.md non-goals), so identity only needs to stay
+    with a new run_id — there is no server-side session store or database,
+    so identity only needs to stay
     stable for the lifetime of one round-tripped session, not across runs.
     run_id rejects empty/whitespace-only values (NonEmptyStr)."""
 
@@ -89,8 +89,8 @@ class BoundingBox(BaseModel):
 
 class Decision(str, Enum):
     """The 4-way decision enum. Deliberately NOT extended with a 5th
-    `not_applicable` value yet — PROJECT_SPEC.md §1.1 documents that as a
-    deliberately deferred design direction, reassessed only after
+    `not_applicable` value yet — that design direction remains deliberately
+    deferred and should be reassessed only after
     Declutter, Reorganise, and Both all work end-to-end. Actionability
     (whether an item is even a real decluttering candidate) is represented
     separately, on DetectedItem.item_role, not folded into this enum."""
@@ -378,7 +378,7 @@ class SceneClassification(BaseModel):
     the field names/shape match its real return dict exactly
     ({"label", "confidence", "all_scores"}), so no adapter is needed
     between the real function and this model. all_scores keeps every
-    candidate's score, not just the top-1 — needed for the §8 per-stage
+    candidate's score, not just the top-1 — needed for per-stage
     evaluation (confidence distribution, not just pass/fail)."""
 
     label: NonEmptyStr

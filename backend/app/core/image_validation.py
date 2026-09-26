@@ -6,16 +6,16 @@ concern specific to whichever HTTP layer receives a request; this module
 only ever sees real bytes.
 
 Used by:
-  - app/models/image_gen_client.py (R3) — validates the caller-supplied
+  - app/models/image_gen_client.py — validates the caller-supplied
     outbound image before it is ever sent to the remote service
     (_validate_image delegates here).
-  - app/services/reorganise_pipeline_service.py (R4) — validates the
+  - app/services/reorganise_pipeline_service.py — validates the
     resubmitted original image before deterministic plan construction and
     remote image generation, so malformed image data reaches neither.
 
-One implementation, not two that drift, per PROJECT_SPEC.md §4 — the
-same discipline already applied to ItemId/NonEmptyStr in
-app/core/schemas.py. R3's own validation of the INBOUND remote response
+One implementation, not two that drift — the same discipline already
+applied to ItemId/NonEmptyStr in app/core/schemas.py. The client's own
+validation of the INBOUND remote response
 image (inside image_gen_client._parse_generation_response) is a
 separate, pre-existing block and is deliberately left untouched by this
 module's introduction — only the caller-supplied OUTBOUND image

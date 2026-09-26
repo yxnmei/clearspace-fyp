@@ -1,5 +1,5 @@
 """
-System/API tests for POST /generate and GET /image-gen/health (R4).
+System/API tests for POST /generate and GET /image-gen/health.
 Fakes only — never a real Ollama or Colab/HTTP call. Uses a real
 POST /upload (path="reorganise") call first to obtain a genuine
 AnalysisResult + input_image_sha256, then builds /generate requests from
@@ -691,7 +691,7 @@ def test_driving_generate_never_imports_ollama_or_any_reorganise_model():
     single image-generation call still happens.
 
     A subprocess, not an in-process sys.modules check: other tests in
-    this session import ollama for unrelated reasons (Declutter's own
+    the same process import ollama for unrelated reasons (Declutter's own
     wrapper, the evaluation harness), which would make an in-process
     assertion meaningless.
     """

@@ -1,7 +1,7 @@
 """
-Orchestration for the Reorganise PLANNING boundary (R2 — image generation
-is R4's job, once app/models/image_gen_client.py's real generate() and
-the route layer exist; nothing here touches images, HTTP, or Colab).
+Orchestration for the Reorganise planning boundary. Image generation
+belongs to app/services/reorganise_pipeline_service.py; nothing here
+touches images, HTTP, or Colab.
 
 This file previously held label-based `run_reorganise()`/
 `score_generation_fidelity()` stubs (raising NotImplementedError, keyed
@@ -47,15 +47,15 @@ app.services.declutter_service's own SceneClassifier/ObjectDetector/
 LLMClassifier pattern exactly. This module never imports
 app.models.reorganise_llm or ollama at all — the real
 generate_reorganise_plan_once() already satisfies this Protocol
-structurally, so production wiring (R4) passes it in directly with zero
+structurally, so the former production wiring passed it in directly with zero
 adapter code, and this module's own tests stay free of ollama's
 dependency surface entirely.
 
 No stage_timer here, deliberately — stage_timer (app/logging_utils.py)
-writes to logs/runs.jsonl on every call, which R2's unit tests (fake-
+writes to logs/runs.jsonl on every call, which this module's unit tests (fake-
 planner-backed, no real request) must never do. StageTiming is built
 directly from time.perf_counter() and returned in-memory only; a future
-caller (R4's route layer) decides whether/how to log it.
+caller decides whether and how to log it.
 """
 
 from __future__ import annotations
@@ -73,11 +73,11 @@ from app.core.reorganise_semantic_conversion import (
 )
 from app.core.schemas import DetectedItem, NonEmptyStr, StageTiming
 
-_MAX_ISSUE_DETAIL_LENGTH = 500  # matches R1's own bounded-detail convention
+_MAX_ISSUE_DETAIL_LENGTH = 500  # matches semantic conversion's bounded-detail convention
 _TRUNCATION_SUFFIX = "…(truncated)"
 
 # Bounded, non-empty detail — schema-enforced (not just by _bounded()'s
-# own truncation at construction sites), same discipline as R1's own
+# own truncation at construction sites), matching
 # reorganise_semantic_conversion._BoundedDetail.
 _BoundedIssueDetail = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=_MAX_ISSUE_DETAIL_LENGTH)
@@ -142,7 +142,7 @@ PlanningIssueKind = Literal["call_failed", "invalid_json", "semantic_invalid"]
 
 class PlanningIssue(BaseModel):
     """One structured, bounded reason a single attempt didn't produce a
-    trusted plan directly. `conversion_errors` (R1's own structured
+    trusted plan directly. `conversion_errors` (the structured
     PlanConversionError list) is populated only for semantic_invalid —
     call_failed/invalid_json have no structured conversion errors to
     report, and are rejected if given any (enforced below, not merely
@@ -172,7 +172,7 @@ class ReorganisePlanningResult(BaseModel):
     directly construct a contradictory result):
       - Exactly one stage timing, with stage == "reorganise_plan" —
         always, regardless of provenance. This result represents exactly
-        this one planning boundary; a future caller (R4) may wrap it with
+        this one planning boundary; a future caller may wrap it with
         broader generation timings without mutating what this field means.
       - model_name/prompt_version are either both present (non-blank) or
         both None — never one without the other, and never fabricated:

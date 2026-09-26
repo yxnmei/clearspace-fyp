@@ -109,8 +109,8 @@ def test_confirmation_input_error_is_a_value_error_subclass():
 
 
 def test_keep_to_discard_override_removes_item_from_downstream_keep_set():
-    # Mirrors PROJECT_SPEC's Both-handoff requirement: an AI Keep overridden
-    # to Discard must not reach Reorganise.
+    # Both-handoff rule: an AI Keep overridden to Discard must not reach
+    # Reorganise.
     ai_decisions = [_ai("item_001", "keep")]
     overrides = [DecisionOverride(item_id="item_001", decision=Decision.DISCARD)]
     confirmed = confirm_decisions(ai_decisions, overrides)

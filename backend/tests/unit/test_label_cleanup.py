@@ -1,6 +1,6 @@
 """
 Unit (Verification — "are we building it right?"): pure logic, no model
-loading, runs in milliseconds. See §6.
+loading, runs in milliseconds.
 """
 
 from app.core.label_cleanup import clean_label

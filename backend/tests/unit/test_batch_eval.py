@@ -8,8 +8,8 @@ _default_scene_classifier/_default_detector/_default_llm_classifier,
 which only run when run_batch() is called WITHOUT injected fakes. Every
 functional test below injects fakes explicitly and therefore never
 touches those lazy-loading branches at all — real model *invocation* is
-a separate, deliberately unverified runtime path in this environment (no
-local Ollama/GPU here — see this task's final report).
+a separate, deliberately unverified runtime path in this environment,
+which has no local Ollama or GPU.
 """
 
 from __future__ import annotations
@@ -199,8 +199,7 @@ def test_run_batch_with_empty_labels_never_resolves_real_defaults():
     # guard). Proves the resolution is lazy relative to genuine need, not
     # just relative to module import time. Real-default resolution itself
     # (the `labels` non-empty case) is intentionally not exercised by any
-    # unit test — see this task's final report on the unverified runtime
-    # path.
+    # unit test; that runtime path remains deliberately unverified here.
     report = batch_eval.run_batch([], Path("."))
     assert report["n_images"] == 0
     assert report["per_image_results"] == []

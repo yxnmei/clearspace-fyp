@@ -1,5 +1,5 @@
 """
-System/API tests for POST /upload (reorganise path, R4). Fakes only, at
+System/API tests for POST /upload (reorganise path). Fakes only, at
 the model-callable boundary (the same scene_classifier/detector
 Protocols analyse_image() already accepts) — never a real CLIP/Grounding
 DINO call. Mirrors tests/system/test_upload_declutter.py's own
@@ -246,7 +246,7 @@ def test_declutter_path_still_returns_declutter_shape():
     assert llm_fn.calls  # declutter DOES call the LLM classifier
 
 
-# path="both" is implemented as of R6 — see tests/system/test_upload_both.py
+# path="both" is covered in tests/system/test_upload_both.py
 # for its full coverage (declutter-shaped response + input_image_sha256,
 # duplicate labels, error mapping). This file keeps only a minimal
 # regression check that "both" still shares analyse_image() AND

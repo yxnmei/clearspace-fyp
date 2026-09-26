@@ -557,7 +557,7 @@ def test_direct_construction_with_eligible_sell_items_in_wrong_order_is_rejected
 
 
 # ===========================================================================
-# Phase 2 - generate_listing_drafts(): bounded, model-backed generation
+# Batch generation: generate_listing_drafts()
 # ===========================================================================
 
 
@@ -1189,7 +1189,7 @@ def test_direct_construction_run_id_mismatch_is_rejected():
 
 
 # ===========================================================================
-# Phase 3 - regenerate_one_listing_draft(): true single-item regeneration
+# Single-item regeneration: regenerate_one_listing_draft()
 # ===========================================================================
 
 

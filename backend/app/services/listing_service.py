@@ -1,6 +1,6 @@
 """
-Marketplace listing drafts — server-side eligibility (Phase 1) and
-bounded, model-backed draft generation (Phase 2).
+Marketplace listing drafts — server-side eligibility and bounded,
+model-backed draft generation.
 
 Given an already-committed AnalysisResult, its matching DeclutterResult,
 and zero or more user DecisionOverrides:
@@ -295,7 +295,7 @@ def derive_listing_eligibility(
 
 
 # ===========================================================================
-# Phase 2 — bounded, model-backed listing-draft generation
+# Batch generation — bounded, model-backed listing drafts
 # ===========================================================================
 
 
@@ -598,7 +598,7 @@ def generate_listing_drafts(
 
 
 # ===========================================================================
-# Phase 3 — true single-item regeneration
+# Single-item regeneration
 # ===========================================================================
 
 

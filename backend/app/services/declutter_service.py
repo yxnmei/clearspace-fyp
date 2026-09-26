@@ -7,8 +7,8 @@ got there.
 
 This module is the shared implementation called by both app/api/routes.py
 (HTTP) and evaluation/scripts/batch_eval.py (batch eval,
-no HTTP layer) — see PROJECT_SPEC.md §4's "evaluation scripts call the
-same services/ functions" principle. Never duplicate this logic inside a
+no HTTP layer). Evaluation scripts call the same service function rather
+than duplicating this logic inside a
 route handler or an eval script directly.
 
 Dependency injection, not a direct import of app.models.mistral_llm:
@@ -52,8 +52,8 @@ analysis_service.py):
 No NMS/actionability heuristic implemented here: item_role filtering uses
 whatever app/services/analysis_service.py already assigned (currently
 always "actionable", by default — see DetectedItem.item_role_source) —
-this module adds no new heuristic and does not implement the deferred
-`not_applicable` decision value (PROJECT_SPEC.md §1.1).
+this module adds no new heuristic and does not implement the deliberately
+deferred `not_applicable` decision value.
 """
 
 from __future__ import annotations
@@ -362,8 +362,8 @@ def run_declutter(
     llm_classifier call (main pass and every targeted recovery) —
     production leaves it None (resolves to config.llm_model_name /
     phi4-mini inside classify_items); evaluation scripts can pin a
-    specific candidate while still calling this exact same function
-    (PROJECT_SPEC.md §4's "one implementation, not two that drift").
+    specific candidate while still calling this exact same function —
+    one implementation rather than two that could drift.
 
     Zero actionable items -> llm_classifier is never called at all; a
     trivially complete, empty DeclutterResult is returned directly (see
@@ -544,7 +544,7 @@ def reclassify_item(
     fresh, standalone, user-requested reclassification must truthfully
     report whatever classify_items() itself observed for this one call
     (RAW_VALID / MECHANICALLY_REPAIRED / RECOVERY_USED / STILL_INVALID),
-    per this task's explicit requirement. The actual identity and content
+    so validity reflects this one call. The actual identity and content
     validation — map_item_numbers(), convert_mapped_items_to_ai_decisions()
     — IS reused directly, unchanged; only the validity-assignment step
     differs from _targeted_recovery's.

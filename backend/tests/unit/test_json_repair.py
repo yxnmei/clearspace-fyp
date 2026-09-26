@@ -23,8 +23,8 @@ def test_garbage_input_reports_invalid_not_raise():
 
 
 def test_trailing_comma_before_closing_bracket_is_repaired():
-    # The exact shape phi4-mini produces for single-item arrays — real
-    # example pulled from a live run, see DEVLOG.md 2026-08-07.
+    # The exact shape phi4-mini produced for single-item arrays in a
+    # 2026-08-07 live run.
     raw = '[{"item_number": 10, "label": "pillow", "decision": "keep", "reason": "still useful"},]'
     parsed, ok = extract_json(raw)
     assert ok is True

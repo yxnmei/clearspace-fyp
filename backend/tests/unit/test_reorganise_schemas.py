@@ -120,7 +120,7 @@ def test_extra_zone_field_rejected():
 @pytest.mark.parametrize("sneaky_field", ["provenance", "model_name", "prompt_version"])
 def test_raw_provenance_or_model_metadata_cannot_be_silently_accepted(sneaky_field):
     # These are exactly the fields PlanProvenance/service identity must
-    # come from the SERVICE (R2), never from raw LLM content — see
+    # come from the service, never from raw LLM content — see
     # reorganise_schemas.py's module docstring.
     raw = {"zones": [_zone().model_dump()], "image_prompt": "A tidy room.", sneaky_field: "raw_valid"}
     with pytest.raises(ValidationError):
